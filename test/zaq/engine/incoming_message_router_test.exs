@@ -89,7 +89,10 @@ defmodule Zaq.Engine.IncomingMessageRouterTest do
       event =
         Event.new(incoming(%{provider: :web, person: person}), :engine,
           actor: %{person: person, user_id: 7},
-          opts: [identity_resolver: RejectingIdentityResolver]
+          opts: [
+            identity_resolver: RejectingIdentityResolver,
+            conversations_module: StubConversations
+          ]
         )
 
       routed = IncomingMessageRouter.route(event)
@@ -162,7 +165,10 @@ defmodule Zaq.Engine.IncomingMessageRouterTest do
       event =
         Event.new(incoming(%{person: forged}), :engine,
           actor: %{person: forged},
-          opts: [identity_resolver: ResolvingIdentityResolver]
+          opts: [
+            identity_resolver: ResolvingIdentityResolver,
+            conversations_module: StubConversations
+          ]
         )
 
       routed = IncomingMessageRouter.route(event)
