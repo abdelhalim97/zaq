@@ -400,8 +400,17 @@ then delegates to `WebBridge.from_listener/3`. Message ingress translates to `In
 uses the existing Engine routing/admission/finalization path. BO initialization and history
 commands reuse Engine conversation actions and return semantic `Response` values without
 entering the Agent pipeline. `ZaqWeb.Chat.BridgeClient` is the BO-side Event builder. ChatLive
-message send and response handling use this shared ingress and normalized delivery contract;
-BO initialization and history wiring remain on the existing path until their migration.
+message send, initialization, history restoration and response handling use this shared ingress
+and normalized delivery contract.
+
+For BO initialization, ChatLive sends `:conversation_init`; WebBridge reuses Engine get/create
+operations and preserves the existing missing-conversation fallback. ChatLive remains the owner
+of the BO welcome presentation policy and asks Engine to persist the fixed welcome message only
+when initialization reports a newly created conversation. For restoration, ChatLive sends
+`:conversation_history`; WebBridge reuses Engine message listing and returns ordered projections
+containing the persisted IDs, sources, ratings and message-info fields needed by the existing UI.
+Sidebar listing/deletion, title subscriptions, ratings and source previews remain on their
+existing supported role actions.
 
 For unmigrated callers, `WebBridge` still accepts its legacy flat BO payload and emits the
 existing `:status_update` / `:pipeline_result` tuples. Widget runtime is not active.

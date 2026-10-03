@@ -162,25 +162,30 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
   end
 
   def handle_event("load_conversation", %{"id" => id}, socket) do
-    with conv when not is_nil(conv) <-
-           dispatch(:engine, :conversation, %{action: :get!, conversation_id: id}),
-         db_messages when is_list(db_messages) <-
-           dispatch(:engine, :conversation, %{action: :messages, conversation: conv}) do
-      ui_messages = build_ui_messages_from_db(db_messages)
-      history = build_history_from_db_messages(db_messages)
+    response =
+      dispatch_web_command(
+        %{request_id: generate_id(), type: :conversation_history, conversation_id: id},
+        socket.assigns.current_user
+      )
 
-      subscribe_to_conversation(id)
+    case response do
+      %Response{type: :conversation_history, payload: %{messages: db_messages}} ->
+        ui_messages = build_ui_messages_from_db(db_messages)
+        history = build_history_from_db_messages(db_messages)
 
-      {:noreply,
-       socket
-       |> assign(:messages, ui_messages)
-       |> assign(:history, history)
-       |> assign(:current_conversation_id, id)
-       |> assign(:status, :idle)
-       |> assign(:status_message, "")
-       |> assign(:streaming_response_active, false)}
-    else
-      _ -> {:noreply, socket}
+        subscribe_to_conversation(id)
+
+        {:noreply,
+         socket
+         |> assign(:messages, ui_messages)
+         |> assign(:history, history)
+         |> assign(:current_conversation_id, id)
+         |> assign(:status, :idle)
+         |> assign(:status_message, "")
+         |> assign(:streaming_response_active, false)}
+
+      _ ->
+        {:noreply, socket}
     end
   end
 
@@ -772,47 +777,43 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
   end
 
   defp resolve_or_create_conversation(socket) do
-    case resolve_conversation(socket.assigns.current_user, socket.assigns.current_conversation_id) do
-      {:ok, conv} -> {:ok, conv.id}
-      err -> err
-    end
-  end
-
-  defp resolve_conversation(current_user, nil), do: create_fresh_conversation(current_user)
-
-  defp resolve_conversation(current_user, conversation_id) do
-    case dispatch(:engine, :conversation, %{action: :get, conversation_id: conversation_id}) do
-      %{} = conv -> {:ok, conv}
-      _ -> create_fresh_conversation(current_user)
-    end
-  end
-
-  defp create_fresh_conversation(current_user) do
-    channel_user_id =
-      if current_user, do: "bo_user_#{current_user.id}", else: "bo_anonymous"
-
-    user_id = if current_user, do: current_user.id, else: nil
-
     attrs =
-      %{channel_user_id: channel_user_id, channel_type: "bo"}
-      |> then(fn a -> if user_id, do: Map.put(a, :user_id, user_id), else: a end)
+      %{
+        request_id: generate_id(),
+        type: :conversation_init,
+        conversation_id: socket.assigns.current_conversation_id
+      }
 
-    case dispatch(:engine, :conversation, %{action: :create, attrs: attrs}) do
-      {:ok, conv} = ok ->
-        persist_welcome_message(conv)
-        ok
+    case dispatch_web_command(attrs, socket.assigns.current_user) do
+      %Response{
+        type: :conversation_initialized,
+        conversation_id: conversation_id,
+        payload: payload
+      } ->
+        if Map.get(payload, :created, false), do: persist_welcome_message(conversation_id)
+        {:ok, conversation_id}
 
-      other ->
-        other
+      %Response{type: :error, payload: %{code: reason}} ->
+        {:error, reason}
+
+      _ ->
+        {:error, :conversation_unavailable}
     end
   end
 
-  defp persist_welcome_message(conv) do
+  defp persist_welcome_message(conversation_id) do
     dispatch(:engine, :conversation, %{
       action: :add_message,
-      conversation: conv,
+      conversation_id: conversation_id,
       attrs: %{role: "assistant", content: @welcome_body, metadata: %{"welcome" => true}}
     })
+  end
+
+  defp dispatch_web_command(attrs, current_user) do
+    BridgeClient.dispatch_command(attrs, bo_actor(current_user),
+      consumer: :bo,
+      node_router: node_router()
+    )
   end
 
   # ── Helpers ────────────────────────────────────────────────────────

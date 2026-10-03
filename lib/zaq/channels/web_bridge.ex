@@ -295,7 +295,7 @@ defmodule Zaq.Channels.WebBridge do
          sink_opts,
          actor
        ) do
-    with %Conversation{} = conversation <-
+    with %{id: _id} = conversation <-
            dispatch_conversation(
              %{action: :get, conversation_id: conversation_id},
              sink_opts,
@@ -332,7 +332,7 @@ defmodule Zaq.Channels.WebBridge do
            sink_opts,
            actor
          ) do
-      %Conversation{} = conversation ->
+      %{id: _id} = conversation ->
         {:ok, conversation, %{created: false}}
 
       nil ->
@@ -348,7 +348,7 @@ defmodule Zaq.Channels.WebBridge do
 
   defp create_conversation(context, sink_opts, actor, details) do
     with {:ok, user_id} <- actor_user_id(context.actor),
-         {:ok, %Conversation{} = conversation} <-
+         {:ok, %{id: _id} = conversation} <-
            dispatch_conversation(
              %{
                action: :create,
@@ -421,6 +421,11 @@ defmodule Zaq.Channels.WebBridge do
       content: message.content,
       sources: message.sources,
       confidence_score: message.confidence_score,
+      model: message.model,
+      prompt_tokens: message.prompt_tokens,
+      completion_tokens: message.completion_tokens,
+      total_tokens: message.total_tokens,
+      latency_ms: message.latency_ms,
       metadata: message.metadata,
       trace: message.trace,
       ratings: Enum.map(message.ratings, &rating_projection/1),

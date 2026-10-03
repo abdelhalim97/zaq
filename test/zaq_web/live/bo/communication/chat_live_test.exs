@@ -10,7 +10,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
   alias Zaq.Agent.{Answering, Retrieval, ServerManager}
   alias Zaq.Agent.MCP
   alias Zaq.Agent.PromptTemplate
-  alias Zaq.Channels.Web.{Context, Response}
+  alias Zaq.Channels.Web.{Command, Context, Response}
   alias Zaq.Channels.Web.Message, as: WebMessage
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.Message
@@ -125,6 +125,13 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
            :conversation
          ),
          do: {Zaq.Engine.Conversations, :add_message, [conversation, attrs]}
+
+    defp legacy_call(
+           %{action: :add_message, conversation_id: conversation_id, attrs: attrs},
+           :engine,
+           :conversation
+         ),
+         do: {Zaq.Engine.Conversations, :add_message, [conversation_id, attrs]}
 
     defp legacy_call(%{action: :delete, conversation_id: id}, :engine, :conversation),
       do: {Zaq.Engine.Conversations, :delete_conversation_by_id, [id]}
@@ -386,7 +393,8 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
              request: %{payload: %WebMessage{} = web_message, context: %Context{} = web_context}
            } =
              Enum.find(NodeRouterFake.dispatches(), fn event ->
-               event.next_hop.destination == :channels and event.opts[:action] == :web_ingress
+               event.next_hop.destination == :channels and event.opts[:action] == :web_ingress and
+                 match?(%{payload: %WebMessage{}}, event.request)
              end)
 
     assert web_message.mode == :sync
@@ -436,6 +444,22 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
     {:ok, view, _html} = live(conn, ~p"/bo/chat")
 
     render_hook(view, "load_conversation", %{"id" => conv.id})
+
+    assert_eventually(fn ->
+      Enum.any?(NodeRouterFake.dispatches(), fn
+        %Event{
+          next_hop: %{destination: :channels},
+          opts: opts,
+          request: %{
+            payload: %Command{type: :conversation_history, conversation_id: conversation_id}
+          }
+        } ->
+          Keyword.get(opts, :action) == :web_ingress and conversation_id == conv.id
+
+        _ ->
+          false
+      end)
+    end)
 
     assert_eventually(fn ->
       state = :sys.get_state(view.pid)
@@ -2666,7 +2690,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
     end)
   end
 
-  test "pipeline_result falls back to new conversation when get_conversation returns non-map", %{
+  test "pipeline_result applies to a loaded conversation after a later lookup failure", %{
     conn: conn,
     user: user
   } do
@@ -2679,11 +2703,6 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
 
     {:ok, _} = Conversations.add_message(conv, %{role: "assistant", content: "A1"})
 
-    # get_conversation returns non-map → triggers create_fresh_conversation fallback
-    NodeRouterFake.put(:engine, Zaq.Engine.Conversations, :get_conversation, fn [_id] ->
-      {:error, :not_found}
-    end)
-
     pipeline_result_stubs("conv-fallback", user)
 
     {:ok, view, _html} = live(conn, ~p"/bo/chat")
@@ -2693,6 +2712,10 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
     assert_eventually(fn ->
       state = :sys.get_state(view.pid)
       state.socket.assigns.current_conversation_id == conv.id
+    end)
+
+    NodeRouterFake.put(:engine, Zaq.Engine.Conversations, :get_conversation, fn [_id] ->
+      {:error, :not_found}
     end)
 
     send(view.pid, {
@@ -2778,15 +2801,28 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
 
       Enum.any?(dispatches, fn
         %Event{
-          next_hop: %{destination: :engine},
+          next_hop: %{destination: :channels},
           opts: opts,
-          request: %{action: :get, conversation_id: ^conv_id}
+          request: %{
+            payload: %Command{type: :conversation_init, conversation_id: ^conv_id}
+          }
         } ->
-          Keyword.get(opts, :action) == :conversation
+          Keyword.get(opts, :action) == :web_ingress
 
         _ ->
           false
       end) and
+        Enum.any?(dispatches, fn
+          %Event{
+            next_hop: %{destination: :engine},
+            opts: opts,
+            request: %{action: :get, conversation_id: ^conv_id}
+          } ->
+            Keyword.get(opts, :action) == :conversation
+
+          _ ->
+            false
+        end) and
         not Enum.any?(dispatches, fn
           %Event{request: %{action: :create}} -> true
           _ -> false
