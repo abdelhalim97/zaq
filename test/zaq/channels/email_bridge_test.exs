@@ -1618,14 +1618,19 @@ defmodule Zaq.Channels.EmailBridgeTest do
 
   describe "from_listener/3" do
     setup do
-      previous_pipeline = Application.get_env(:zaq, :email_bridge_pipeline_module)
-      previous_router = Application.get_env(:zaq, :email_bridge_router_module)
-      previous_node_router = Application.get_env(:zaq, :email_bridge_node_router_module)
+      keys = [
+        :email_bridge_pipeline_module,
+        :email_bridge_router_module,
+        :email_bridge_node_router_module
+      ]
+
+      previous = Map.new(keys, &{&1, Application.fetch_env(:zaq, &1)})
 
       on_exit(fn ->
-        Application.put_env(:zaq, :email_bridge_pipeline_module, previous_pipeline)
-        Application.put_env(:zaq, :email_bridge_router_module, previous_router)
-        Application.put_env(:zaq, :email_bridge_node_router_module, previous_node_router)
+        Enum.each(previous, fn
+          {key, {:ok, value}} -> Application.put_env(:zaq, key, value)
+          {key, :error} -> Application.delete_env(:zaq, key)
+        end)
       end)
 
       :ok
