@@ -2976,7 +2976,7 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
       on_exit(fn -> Application.put_env(:zaq, :channels, previous) end)
 
-      assert {:ok, %{action: :updated, message_id: 52}} =
+      assert {:ok, %{action: :updated, message_id: "52"}} =
                JidoChatBridge.upsert_message(
                  %{provider: "mattermost", provider_atom: :mattermost},
                  %{
