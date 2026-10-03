@@ -10,6 +10,7 @@ defmodule Zaq.Channels.Web.Response do
 
   @types [
     :widget_initialized,
+    :conversation_initialized,
     :conversation_created,
     :conversation_history,
     :typing,
@@ -45,6 +46,7 @@ defmodule Zaq.Channels.Web.Response do
 
   @type response_type ::
           :widget_initialized
+          | :conversation_initialized
           | :conversation_created
           | :conversation_history
           | :typing

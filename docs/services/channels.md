@@ -394,10 +394,16 @@ Trusted values remain separate from adapter-decoded payloads:
 - `Zaq.Channels.Web.Response` is the versioned semantic result before adapter wire encoding;
   it rejects private execution and credential fields.
 
-The contract layer is implemented and validated independently. Until the BO migration is
-complete, `Zaq.Channels.WebBridge` still accepts its legacy flat BO payload and emits the
-existing `:status_update` / `:pipeline_result` tuples. Widget runtime and public ingress are
-not active yet.
+The Channels role accepts `%{payload: Message.t() | Command.t(), context: Context.t()}`
+through action `:web_ingress`. It verifies that the Event actor matches the trusted context,
+then delegates to `WebBridge.from_listener/3`. Message ingress translates to `Incoming` and
+uses the existing Engine routing/admission/finalization path. BO initialization and history
+commands reuse Engine conversation actions and return semantic `Response` values without
+entering the Agent pipeline. `ZaqWeb.Chat.BridgeClient` is the BO-side Event builder; LiveView
+wiring is intentionally deferred to the BO migration.
+
+Until that migration is complete, `WebBridge` also accepts its legacy flat BO payload and
+emits the existing `:status_update` / `:pipeline_result` tuples. Widget runtime is not active.
 
 ---
 

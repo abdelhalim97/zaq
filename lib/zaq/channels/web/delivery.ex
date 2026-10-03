@@ -11,6 +11,7 @@ defmodule Zaq.Channels.Web.Delivery do
 
   @semantic_events [
     :widget_initialized,
+    :conversation_initialized,
     :conversation_created,
     :conversation_history,
     :typing,

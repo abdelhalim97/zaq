@@ -191,14 +191,14 @@ defmodule Zaq.Channels.Web.ContractsTest do
       assert {:ok, response} =
                Response.new(%{
                  request_id: "request-1",
-                 type: :message_complete,
+                 type: :conversation_initialized,
                  conversation_id: "conversation-1",
                  message_id: "message-1",
                  payload: %{body: "answer"}
                })
 
       assert response.protocol_version == 1
-      assert response.type == :message_complete
+      assert response.type == :conversation_initialized
       assert response.payload == %{body: "answer"}
     end
 

@@ -4,7 +4,7 @@ defmodule Zaq.Channels.Api do
 
   Responsibilities:
 
-  - Handle channels-scoped event actions (`:deliver_outgoing`, `:send_typing`,
+  - Handle channels-scoped event actions (`:web_ingress`, `:deliver_outgoing`, `:send_typing`,
     `:fetch_profile`, `:open_dm_channel`, runtime sync, bridge availability,
     connection testing, and generic `:invoke`).
   - Re-broadcast `{:broadcast, topic, message}` events over `Zaq.PubSub` (the
@@ -26,13 +26,15 @@ defmodule Zaq.Channels.Api do
     Bridge,
     CommunicationBridge,
     ConnectorRuntime,
-    DataSourceBridge
+    DataSourceBridge,
+    WebBridge
   }
 
   alias Zaq.Channels.DeliveryConfirmation
   alias Zaq.Channels.HttpClient
   alias Zaq.Channels.Materializers.CommunicationMedia
   alias Zaq.Channels.MessageFormatter
+  alias Zaq.Channels.Web.{Command, Context, Message}
   alias Zaq.ConnectorConfig.Settings
   alias Zaq.Contracts.Record
   alias Zaq.Engine.ChannelConfig
@@ -48,6 +50,31 @@ defmodule Zaq.Channels.Api do
   @supported_update_intents [:status, :reasoning, :tool_call, :stream_delta]
 
   @impl true
+  def handle_event(
+        %Event{request: %{payload: payload, context: %Context{} = web_context}} = event,
+        :web_ingress,
+        _context
+      )
+      when is_struct(payload, Message) or is_struct(payload, Command) do
+    web_bridge = Keyword.get(event.opts, :web_bridge_module, WebBridge)
+
+    response =
+      with true <- event.actor == web_context.actor || {:error, :unauthorized},
+           true <-
+             (Code.ensure_loaded?(web_bridge) and
+                function_exported?(web_bridge, :from_listener, 3)) ||
+               {:error, :unsupported} do
+        sink_opts = Keyword.put(event.opts, :context, web_context)
+        config = Keyword.get(event.opts, :web_config, %{provider: "web"})
+        web_bridge.from_listener(config, payload, sink_opts)
+      end
+
+    %{event | response: response}
+  end
+
+  def handle_event(%Event{} = event, :web_ingress, _context),
+    do: %{event | response: {:error, :invalid_web_ingress}}
+
   def handle_event(
         %Event{
           request: %{channel_config_id: config_id, channel_id: channel_id, message_id: message_id}

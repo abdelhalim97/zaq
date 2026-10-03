@@ -74,7 +74,9 @@ defmodule Zaq.Channels.Web.Validation do
   defp normalized_string(_value, _max_bytes), do: nil
 
   defp collect_keys(map, acc) when is_map(map) do
-    Enum.reduce(map, acc, fn {key, value}, keys -> collect_keys(value, [key | keys]) end)
+    map
+    |> :maps.to_list()
+    |> Enum.reduce(acc, fn {key, value}, keys -> collect_keys(value, [key | keys]) end)
   end
 
   defp collect_keys(list, acc) when is_list(list),
