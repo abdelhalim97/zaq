@@ -6,7 +6,14 @@ defmodule Zaq.Channels.WebBridgeTest do
 
   describe "to_internal/2" do
     test "builds %Incoming{provider: :web} from params" do
-      params = %{content: "hello", channel_id: "bo", session_id: "s1", request_id: "r1"}
+      params = %{
+        content: "hello",
+        channel_id: "bo",
+        session_id: "s1",
+        request_id: "r1",
+        user_content: "original question"
+      }
+
       msg = WebBridge.to_internal(params)
 
       assert %Incoming{} = msg
@@ -15,6 +22,7 @@ defmodule Zaq.Channels.WebBridgeTest do
       assert msg.provider == :web
       assert msg.metadata.session_id == "s1"
       assert msg.metadata.request_id == "r1"
+      assert msg.metadata.user_content == "original question"
     end
 
     test "defaults channel_id to 'bo'" do
@@ -42,6 +50,60 @@ defmodule Zaq.Channels.WebBridgeTest do
   end
 
   describe "upsert_message/3" do
+    test "broadcasts the atom stage and streaming update intent" do
+      Phoenix.PubSub.subscribe(Zaq.PubSub, "chat:session-stream")
+
+      request = %{
+        request_id: "req-stream",
+        session_id: "session-stream",
+        body: "Current full response",
+        intent_meta: %{stage: :retrieving},
+        update_intent: :stream_delta
+      }
+
+      assert {:ok, %{action: :created, message_id: "req-stream", update_intent: :stream_delta}} =
+               WebBridge.upsert_message(%{}, request, %{})
+
+      assert_receive {:status_update, "req-stream", :retrieving, "Current full response",
+                      :stream_delta}
+    end
+
+    test "reports an update when an existing message id is supplied" do
+      Phoenix.PubSub.subscribe(Zaq.PubSub, "chat:session-update")
+
+      request = %{
+        request_id: "req-update",
+        session_id: "session-update",
+        message_id: "assistant-message",
+        body: "Revised response",
+        update_intent: :stream_delta
+      }
+
+      assert {:ok,
+              %{action: :updated, message_id: "assistant-message", update_intent: :stream_delta}} =
+               WebBridge.upsert_message(%{}, request, %{})
+
+      assert_receive {:status_update, "req-update", :answering, "Revised response", :stream_delta}
+    end
+
+    test "returns a no-op without broadcasting when correlation or content is missing" do
+      Phoenix.PubSub.subscribe(Zaq.PubSub, "chat:session-noop")
+
+      assert {:ok, %{action: :noop, message_id: nil, update_intent: :stream_delta}} =
+               WebBridge.upsert_message(
+                 %{},
+                 %{
+                   request_id: nil,
+                   session_id: "session-noop",
+                   body: "Uncorrelated response",
+                   update_intent: :stream_delta
+                 },
+                 %{}
+               )
+
+      refute_receive {:status_update, _, _, _, _}
+    end
+
     test "broadcasts :answering when intent_meta stage is not an atom" do
       Phoenix.PubSub.subscribe(Zaq.PubSub, "chat:session-abc")
 
