@@ -622,6 +622,7 @@ defmodule Zaq.Channels.CommunicationBridge do
       |> maybe_put_event_opt(:identity_opts, Keyword.get(opts, :identity_opts))
       |> maybe_put_event_opt(:identity_resolver, Keyword.get(opts, :identity_resolver))
       |> maybe_put_event_opt(:node_router, Keyword.get(opts, :node_router))
+      |> maybe_put_event_opt(:agent_hop_type, Keyword.get(opts, :agent_hop_type))
 
     Event.new(msg, :engine,
       type: :sync,
@@ -636,7 +637,10 @@ defmodule Zaq.Channels.CommunicationBridge do
       %Event{response: {:error, _} = error} -> error
       %Event{response: %Outgoing{} = outgoing} -> outgoing
       %Event{response: {:ok, %Outgoing{} = outgoing}} -> outgoing
-      %Event{} -> :ok
+      %Event{request: %Outgoing{} = outgoing, response: :ok} -> outgoing
+      %Event{response: response} when response in [:ok, nil] -> :ok
+      %Event{response: response} -> {:error, {:unexpected_response, response}}
+      response -> {:error, {:unexpected_response, response}}
     end
   end
 

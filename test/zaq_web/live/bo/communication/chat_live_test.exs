@@ -10,6 +10,8 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
   alias Zaq.Agent.{Answering, Retrieval, ServerManager}
   alias Zaq.Agent.MCP
   alias Zaq.Agent.PromptTemplate
+  alias Zaq.Channels.Web.{Context, Response}
+  alias Zaq.Channels.Web.Message, as: WebMessage
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.Message
   alias Zaq.Engine.Messages.Outgoing
@@ -48,6 +50,9 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
 
     defp domain_event?(%Event{next_hop: %{destination: :engine}, opts: opts}),
       do: Keyword.get(opts, :action) in [:conversation, :rate_message]
+
+    defp domain_event?(%Event{next_hop: %{destination: :channels}, opts: opts}),
+      do: Keyword.get(opts, :action) == :web_ingress
 
     defp domain_event?(%Event{next_hop: %{destination: :ingestion}, opts: opts}),
       do:
@@ -376,6 +381,18 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
 
     assert_receive {:chat_dispatch_event, %Event{} = dispatched_event}, 1_000
 
+    assert %Event{
+             next_hop: %{destination: :channels},
+             request: %{payload: %WebMessage{} = web_message, context: %Context{} = web_context}
+           } =
+             Enum.find(NodeRouterFake.dispatches(), fn event ->
+               event.next_hop.destination == :channels and event.opts[:action] == :web_ingress
+             end)
+
+    assert web_message.mode == :sync
+    assert web_context.selected_agent_id == to_string(configured_agent.id)
+    assert MapSet.member?(web_context.capabilities, :skip_permissions)
+
     assert dispatched_event.next_hop.destination == :engine
     assert dispatched_event.opts[:action] == :route_incoming_message
     assert dispatched_event.opts[:agent_hop_type] == :sync
@@ -514,6 +531,75 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLiveTest do
     assert html =~ "Final"
     assert html =~ "<strong>answer</strong>"
     refute html =~ "generating response"
+  end
+
+  test "normalized message edits and completion preserve the streaming bubble", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/bo/chat")
+
+    :sys.replace_state(view.pid, fn state ->
+      put_in(state.socket.assigns.current_request_id, "req-normalized")
+    end)
+
+    send(
+      view.pid,
+      {:web_response, :status_update,
+       %Response{
+         protocol_version: 1,
+         request_id: "req-normalized",
+         message_id: "req-normalized",
+         type: :message_edit,
+         payload: %{body: "Partial answer", stage: :answering, update_intent: :stream_delta}
+       }}
+    )
+
+    assert_eventually(fn -> render(view) =~ "Partial answer" end)
+
+    send(
+      view.pid,
+      {:web_response, :pipeline_result,
+       %Response{
+         protocol_version: 1,
+         request_id: "req-normalized",
+         message_id: "req-normalized",
+         type: :message_complete,
+         conversation_id: "conversation-1",
+         payload: %{
+           body: "Final answer",
+           sources: [],
+           confidence_score: 0.9,
+           error: false,
+           assistant_message_id: "assistant-1"
+         }
+       }}
+    )
+
+    assert_eventually(fn ->
+      html = render(view)
+      html =~ "Final answer" and not (html =~ "Partial answer")
+    end)
+  end
+
+  test "normalized errors render one fallback and stale responses are ignored", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/bo/chat")
+
+    :sys.replace_state(view.pid, fn state ->
+      put_in(state.socket.assigns.current_request_id, "req-error")
+    end)
+
+    stale = %Response{
+      protocol_version: 1,
+      request_id: "stale-request",
+      type: :error,
+      payload: %{code: :engine_unavailable}
+    }
+
+    send(view.pid, {:web_response, :pipeline_result, stale})
+    refute render(view) =~ "Something went wrong"
+
+    error = %{stale | request_id: "req-error"}
+    send(view.pid, {:web_response, :pipeline_result, error})
+
+    assert_eventually(fn -> render(view) =~ "Sorry, something went wrong" end)
   end
 
   test "status_update stream_delta with string intent updates streaming message and clears status message",

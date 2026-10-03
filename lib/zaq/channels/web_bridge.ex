@@ -35,13 +35,9 @@ defmodule Zaq.Channels.WebBridge do
   def handle_from_listener(_config, %WebMessage{} = message, sink_opts) do
     with {:ok, context} <- fetch_context(sink_opts),
          actor when is_map(actor) <- context.actor || {:error, :unauthorized} do
-      message
-      |> to_internal(context)
-      |> CommunicationBridge.route_incoming_message(
-        pipeline_opts(context, sink_opts),
-        actor,
-        node_router_opts(sink_opts)
-      )
+      result = route_message(message, context, sink_opts, actor)
+      maybe_deliver_ingress_failure(result, message, context)
+      result
     end
   end
 
@@ -70,6 +66,7 @@ defmodule Zaq.Channels.WebBridge do
       author_name: message.author_name,
       message_id: message.message_id,
       provider: :web,
+      person: actor_person(context.actor),
       attachments: message.attachments,
       content_filter: context.content_filter,
       routing_context: %{
@@ -188,8 +185,69 @@ defmodule Zaq.Channels.WebBridge do
     ]
   end
 
-  defp node_router_opts(sink_opts),
-    do: [node_router: Keyword.get(sink_opts, :node_router, NodeRouter)]
+  defp node_router_opts(sink_opts, mode),
+    do: [node_router: Keyword.get(sink_opts, :node_router, NodeRouter), agent_hop_type: mode]
+
+  defp route_message(message, context, sink_opts, actor) do
+    message
+    |> to_internal(context)
+    |> CommunicationBridge.route_incoming_message(
+      pipeline_opts(context, sink_opts),
+      actor,
+      node_router_opts(sink_opts, message.mode)
+    )
+  rescue
+    _error -> {:error, :dispatch_error}
+  catch
+    _kind, _reason -> {:error, :dispatch_error}
+  end
+
+  defp maybe_deliver_ingress_failure(%Outgoing{} = outgoing, message, %Context{} = context) do
+    if metadata_value(outgoing.metadata || %{}, :error) == true do
+      outgoing = %{
+        outgoing
+        | in_reply_to: outgoing.in_reply_to || message.message_id,
+          metadata:
+            Map.merge(
+              %{
+                request_id: message.request_id,
+                user_content: message.content,
+                conversation_id: message.conversation_id
+              },
+              outgoing.metadata || %{}
+            )
+      }
+
+      case context.delivery do
+        %Delivery{} = delivery -> deliver_final(outgoing, delivery)
+        _ -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp maybe_deliver_ingress_failure({:error, reason}, message, %Context{} = context) do
+    with %Delivery{} = delivery <- context.delivery,
+         {:ok, response} <-
+           Response.new(%{
+             request_id: message.request_id,
+             message_id: message.message_id,
+             conversation_id: message.conversation_id,
+             type: :error,
+             payload: %{code: safe_error_code(reason), user_content: message.content}
+           }) do
+      broadcast_response(delivery, response)
+    else
+      _ -> :ok
+    end
+  end
+
+  defp maybe_deliver_ingress_failure(_result, _message, _context), do: :ok
+
+  defp actor_person(%{person: person}) when is_map(person), do: person
+  defp actor_person(%{"person" => person}) when is_map(person), do: person
+  defp actor_person(_actor), do: nil
 
   defp routing_attributes(%Context{} = context) do
     %{}
@@ -447,6 +505,7 @@ defmodule Zaq.Channels.WebBridge do
   defp final_payload(outgoing, metadata) do
     %{
       body: outgoing.body,
+      user_content: metadata_value(metadata, :user_content),
       sources: metadata_value(metadata, :sources) || [],
       confidence_score: metadata_value(metadata, :confidence_score),
       error: metadata_value(metadata, :error) == true,

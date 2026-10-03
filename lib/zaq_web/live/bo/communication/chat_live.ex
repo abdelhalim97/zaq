@@ -4,19 +4,21 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
 
   Full-size chat interface with live status callbacks.
 
-  Requests are sent through `Zaq.NodeRouter.dispatch/1` so execution is
-  decided on the Agent node (`Pipeline` by default, or explicit selected
-  configured agent when present in event assigns).
+  Messages are validated by `ZaqWeb.Chat.BridgeClient` and sent through the
+  Channels role to WebBridge. WebBridge owns canonical Engine translation and
+  normalized delivery; this LiveView owns only BO state and rendering.
   """
 
   use ZaqWeb, :live_view
   on_mount {ZaqWeb.Live.BO.Communication.ServiceGate, [:agent, :ingestion]}
 
   alias Zaq.Agent.{CitationNormalizer, ErrorMessage, History}
-  alias Zaq.Engine.Messages.{Incoming, Outgoing}
+  alias Zaq.Channels.Web.{Delivery, Response}
+  alias Zaq.Engine.Messages.Outgoing
   alias Zaq.Event
   alias Zaq.Ingestion.ContentSource
   alias Zaq.RuntimeDeps
+  alias ZaqWeb.Chat.BridgeClient
   alias ZaqWeb.Live.BO.Communication.MessageHelpers
   alias ZaqWeb.Live.BO.PreviewHelpers
 
@@ -124,7 +126,6 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
 
       session_id = socket.assigns.session_id
       request_id = user_msg.id
-      live_view_pid = self()
 
       {conversation_id, socket} =
         case resolve_or_create_conversation(socket) do
@@ -141,7 +142,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
           socket.assigns.current_user,
           socket.assigns.selected_agent_id,
           active_filters,
-          %{conversation_id: conversation_id, live_view_pid: live_view_pid}
+          conversation_id
         )
       end)
 
@@ -426,6 +427,14 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
   # ── Async pipeline messages ──────────────────────────────────────────
 
   @impl true
+  def handle_info({:web_response, _event_name, %Response{} = response}, socket) do
+    if response.request_id == socket.assigns.current_request_id do
+      {:noreply, apply_web_response(socket, response)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:status_update, request_id, status, message, update_intent}, socket) do
     if request_id == socket.assigns.current_request_id do
       {:noreply, apply_status_update(socket, request_id, status, message, update_intent)}
@@ -504,6 +513,61 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
     |> assign(:streaming_response_active, false)
     |> assign(:history, updated_history)
     |> assign(:current_request_id, nil)
+  end
+
+  defp apply_web_response(socket, %Response{type: type, payload: payload, request_id: request_id})
+       when type in [:status, :message_edit] do
+    apply_status_update(
+      socket,
+      request_id,
+      Map.get(payload, :stage, :answering),
+      Map.get(payload, :body, ""),
+      Map.get(payload, :update_intent)
+    )
+  end
+
+  defp apply_web_response(socket, %Response{type: type} = response)
+       when type in [:message_complete, :message_failed] do
+    outgoing = outgoing_from_response(response)
+    user_content = Map.get(response.payload, :user_content, "")
+    apply_pipeline_result(socket, outgoing, user_content, response.request_id)
+  end
+
+  defp apply_web_response(socket, %Response{type: :error} = response) do
+    outgoing = %Outgoing{
+      body: ErrorMessage.from_reason(:dispatch_error),
+      channel_id: "bo",
+      provider: :web,
+      metadata: %{
+        error: true,
+        error_type: Map.get(response.payload, :code, :dispatch_error),
+        sources: []
+      }
+    }
+
+    apply_pipeline_result(
+      socket,
+      outgoing,
+      Map.get(response.payload, :user_content, ""),
+      response.request_id
+    )
+  end
+
+  defp apply_web_response(socket, _response), do: socket
+
+  defp outgoing_from_response(%Response{} = response) do
+    payload = response.payload
+
+    %Outgoing{
+      body: Map.get(payload, :body),
+      channel_id: "bo",
+      provider: :web,
+      in_reply_to: response.message_id,
+      metadata:
+        payload
+        |> Map.delete(:body)
+        |> Map.put(:conversation_id, response.conversation_id)
+    }
   end
 
   defp extract_sources(result) do
@@ -630,66 +694,51 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
          current_user,
          selected_agent_id,
          active_filters,
-         %{conversation_id: conversation_id, live_view_pid: live_view_pid}
+         conversation_id
        ) do
     source_filter = Enum.map(active_filters, & &1.source_prefix)
 
-    incoming =
-      Incoming.new(%{
-        content: user_msg,
-        channel_id: "bo",
-        message_id: request_id,
-        author_id: to_string(current_user.id),
-        provider: :web,
-        person: current_user_person(current_user),
-        content_filter: source_filter,
-        metadata: %{
-          session_id: session_id,
-          request_id: request_id,
-          user_content: user_msg,
-          conversation_id: conversation_id
-        },
-        routing_context: transient_routing_context(selected_agent_id)
-      })
+    actor = bo_actor(current_user)
 
-    event =
-      Event.new(incoming, :engine,
-        name: :incoming_message_routing_requested,
-        actor:
-          if incoming.person do
-            %{person: incoming.person, user_id: current_user.id, provider: "bo"}
-          else
-            %{
-              kind: :bo_user,
-              subject: to_string(current_user.id),
-              user_id: current_user.id,
-              provider: "bo"
-            }
-          end,
-        type: :sync,
-        opts: [
-          action: :route_incoming_message,
-          agent_hop_type: :sync,
-          pipeline_opts: [
-            history: history,
-            skip_permissions: true,
-            node_router: node_router()
-          ]
-        ]
+    _result =
+      BridgeClient.dispatch_message(
+        %{
+          request_id: request_id,
+          message_id: request_id,
+          content: user_msg,
+          timestamp: DateTime.utc_now(),
+          channel: "bo",
+          mode: :sync,
+          conversation_id: conversation_id,
+          author_id: to_string(current_user.id),
+          author_name: current_user.username
+        },
+        actor,
+        consumer: :bo,
+        capabilities: [:skip_permissions],
+        delivery: Delivery.bo("chat:#{session_id}"),
+        selected_agent_id: selected_agent_id,
+        content_filter: source_filter,
+        history: history,
+        node_router: node_router()
       )
 
-    dispatched_event = node_router().dispatch(event)
-    outgoing = build_outgoing_from_event(dispatched_event, incoming)
-
-    maybe_emit_fallback_pipeline_result(
-      live_view_pid,
-      request_id,
-      outgoing,
-      user_msg,
-      dispatched_event
-    )
-
     :ok
+  end
+
+  defp bo_actor(current_user) do
+    case current_user_person(current_user) do
+      nil ->
+        %{
+          kind: :bo_user,
+          subject: to_string(current_user.id),
+          user_id: current_user.id,
+          provider: "bo"
+        }
+
+      person ->
+        %{person: person, user_id: current_user.id, provider: "bo"}
+    end
   end
 
   defp current_user_person(current_user) do
@@ -704,76 +753,6 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
           team_ids: Map.get(current_user, :team_ids) || []
         }
     end
-  end
-
-  defp maybe_emit_fallback_pipeline_result(
-         live_view_pid,
-         request_id,
-         %Outgoing{} = outgoing,
-         user_msg,
-         %Event{}
-       )
-       when is_pid(live_view_pid) do
-    if error_outgoing?(outgoing) do
-      send(live_view_pid, {:pipeline_result, request_id, outgoing, user_msg})
-    end
-
-    :ok
-  end
-
-  defp error_outgoing?(%Outgoing{metadata: metadata}) when is_map(metadata),
-    do: metadata[:error] == true
-
-  defp error_outgoing?(_), do: false
-
-  defp transient_routing_context(selected_agent_id) do
-    case selected_agent_id do
-      id when id in [nil, ""] ->
-        %{}
-
-      id ->
-        %{attributes: %{"configured_agent_id" => id, "routing_source" => "bo_explicit"}}
-    end
-  end
-
-  defp build_outgoing_from_event(%Event{response: %Outgoing{} = outgoing}, _incoming),
-    do: outgoing
-
-  defp build_outgoing_from_event(
-         %Event{request: %Outgoing{} = outgoing, response: :ok},
-         _incoming
-       ),
-       do: outgoing
-
-  defp build_outgoing_from_event(%Event{response: {:error, reason}}, incoming) do
-    Logger.error("[Outgoing] error: #{inspect(reason)}")
-
-    Outgoing.from_pipeline_result(incoming, %{
-      answer: ErrorMessage.from_reason(:dispatch_error),
-      error_reason: :dispatch_error,
-      confidence_score: nil,
-      latency_ms: nil,
-      prompt_tokens: nil,
-      completion_tokens: nil,
-      total_tokens: nil,
-      error: true,
-      reason: inspect(reason),
-      sources: []
-    })
-  end
-
-  defp build_outgoing_from_event(_event, incoming) do
-    Outgoing.from_pipeline_result(incoming, %{
-      answer: ErrorMessage.from_reason(:dispatch_error),
-      error_reason: :dispatch_error,
-      confidence_score: nil,
-      latency_ms: nil,
-      prompt_tokens: nil,
-      completion_tokens: nil,
-      total_tokens: nil,
-      error: true,
-      sources: []
-    })
   end
 
   defp node_router do

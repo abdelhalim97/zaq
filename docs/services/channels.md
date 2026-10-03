@@ -399,11 +399,12 @@ through action `:web_ingress`. It verifies that the Event actor matches the trus
 then delegates to `WebBridge.from_listener/3`. Message ingress translates to `Incoming` and
 uses the existing Engine routing/admission/finalization path. BO initialization and history
 commands reuse Engine conversation actions and return semantic `Response` values without
-entering the Agent pipeline. `ZaqWeb.Chat.BridgeClient` is the BO-side Event builder; LiveView
-wiring is intentionally deferred to the BO migration.
+entering the Agent pipeline. `ZaqWeb.Chat.BridgeClient` is the BO-side Event builder. ChatLive
+message send and response handling use this shared ingress and normalized delivery contract;
+BO initialization and history wiring remain on the existing path until their migration.
 
-Until that migration is complete, `WebBridge` also accepts its legacy flat BO payload and
-emits the existing `:status_update` / `:pipeline_result` tuples. Widget runtime is not active.
+For unmigrated callers, `WebBridge` still accepts its legacy flat BO payload and emits the
+existing `:status_update` / `:pipeline_result` tuples. Widget runtime is not active.
 
 ### Semantic delivery
 
@@ -424,7 +425,8 @@ Normalized PubSub messages use `{:web_response, adapter_event_name, %Web.Respons
 The request ID provides correlation; transport message IDs and persisted assistant message
 IDs remain distinct. PubSub is best-effort live delivery, not durable replay or exactly-once
 processing. Consumers restore durable state through authorized history. Legacy tuple delivery
-remains only for payloads without a shared delivery descriptor and is removed after BO migration.
+remains only for payloads without a shared delivery descriptor and is removed after remaining
+BO callers migrate.
 
 ---
 

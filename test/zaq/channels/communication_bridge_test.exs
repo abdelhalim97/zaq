@@ -1011,6 +1011,19 @@ defmodule Zaq.Channels.CommunicationBridgeTest do
       assert event.opts[:action] == :route_incoming_message
     end
 
+    test "returns a structured error for an unexpected routing response" do
+      msg = %Incoming{content: "hi", provider: :mattermost, channel_id: "c1"}
+      actor = %{id: "u1", provider: :mattermost}
+
+      assert {:error, {:unexpected_response, :unexpected}} =
+               CommunicationBridge.route_incoming_message(
+                 msg,
+                 [node_router_response: :unexpected],
+                 actor,
+                 node_router: StubNodeRouter
+               )
+    end
+
     test "trims and attaches string channel_config_id before delegated pipeline execution" do
       msg = %Zaq.Engine.Messages.Incoming{
         content: "hi",
