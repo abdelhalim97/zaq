@@ -405,6 +405,27 @@ wiring is intentionally deferred to the BO migration.
 Until that migration is complete, `WebBridge` also accepts its legacy flat BO payload and
 emits the existing `:status_update` / `:pipeline_result` tuples. Widget runtime is not active.
 
+### Semantic delivery
+
+Validated `Delivery` descriptors are serialized into the namespaced
+`routing_context.attributes["web_delivery"]` reference. `Outgoing` already preserves routing
+context, and Channels preserves it when converting status upserts. Pipeline result metadata
+cannot replace this trusted destination. A malformed descriptor fails delivery instead of
+falling back to a caller-selected topic.
+
+| Semantic response | BO event name | Meaning |
+| --- | --- | --- |
+| `:status` | `:status_update` | Non-streaming pipeline activity with stage and full status text |
+| `:message_edit` | `:status_update` | Full current assistant content; replacement, not append-only delta |
+| `:message_complete` | `:pipeline_result` | Final successful content and allowlisted runtime/persistence metadata |
+| `:message_failed` / `:error` | `:pipeline_result` | Correlated safe execution/protocol failure |
+
+Normalized PubSub messages use `{:web_response, adapter_event_name, %Web.Response{}}`.
+The request ID provides correlation; transport message IDs and persisted assistant message
+IDs remain distinct. PubSub is best-effort live delivery, not durable replay or exactly-once
+processing. Consumers restore durable state through authorized history. Legacy tuple delivery
+remains only for payloads without a shared delivery descriptor and is removed after BO migration.
+
 ---
 
 ## Materialization Handles

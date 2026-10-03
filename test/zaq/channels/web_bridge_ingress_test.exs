@@ -29,6 +29,7 @@ defmodule Zaq.Channels.WebBridgeIngressTest do
                 body: "answer",
                 channel_id: event.request.channel_id,
                 provider: :web,
+                in_reply_to: event.request.message_id,
                 routing_context: event.request.routing_context,
                 metadata: event.request.metadata
               }
@@ -127,10 +128,15 @@ defmodule Zaq.Channels.WebBridgeIngressTest do
       assert incoming.content_filter == ["docs/legal"]
       assert incoming.routing_context.conversation_id == message.conversation_id
 
-      assert incoming.routing_context.attributes == %{
+      assert Map.take(incoming.routing_context.attributes, [
+               "configured_agent_id",
+               "routing_source"
+             ]) == %{
                "configured_agent_id" => "agent-1",
                "routing_source" => "bo_explicit"
              }
+
+      assert incoming.routing_context.attributes["web_delivery"]["topic"] == "chat:session-1"
 
       assert incoming.metadata[:request_id] == "request-1"
       assert incoming.metadata[:session_id] == "session-1"
@@ -250,5 +256,149 @@ defmodule Zaq.Channels.WebBridgeIngressTest do
                payload: %{code: :engine_unavailable}
              } = Api.handle_event(event, :web_ingress, nil).response
     end
+  end
+
+  describe "normalized delivery" do
+    test "round-trips final and streaming responses to the trusted BO topic" do
+      actor = %{user_id: 42, person: %{id: 7, full_name: "Ada", team_ids: []}}
+      topic = "chat:#{Ecto.UUID.generate()}"
+      Phoenix.PubSub.subscribe(Zaq.PubSub, topic)
+
+      assert %Outgoing{} = outgoing = dispatch_shared_message(actor, topic)
+
+      final_event = Event.new(outgoing, :channels, opts: [action: :deliver_outgoing])
+
+      assert {:ok, %{delivered: true}} =
+               Api.handle_event(final_event, :deliver_outgoing, nil).response
+
+      assert_receive {:web_response, :pipeline_result,
+                      %Response{
+                        type: :message_complete,
+                        request_id: "request-roundtrip",
+                        message_id: "message-roundtrip",
+                        payload: %{body: "answer"}
+                      }}
+
+      status_outgoing = %{
+        outgoing
+        | body: "Current full answer",
+          metadata:
+            Map.merge(outgoing.metadata, %{
+              update_intent: :stream_delta,
+              intent_meta: %{stage: :answering}
+            })
+      }
+
+      status_event = Event.new(status_outgoing, :channels, opts: [action: :upsert_message])
+
+      assert {:ok, %{action: :created, message_id: "request-roundtrip"}} =
+               Api.handle_event(status_event, :upsert_message, nil).response
+
+      assert_receive {:web_response, :status_update,
+                      %Response{
+                        type: :message_edit,
+                        request_id: "request-roundtrip",
+                        payload: %{body: "Current full answer", update_intent: :stream_delta}
+                      }}
+    end
+
+    test "routing context wins over forged metadata and sessions remain isolated" do
+      actor = %{user_id: 42, person: %{id: 7, full_name: "Ada", team_ids: []}}
+      trusted_topic = "chat:#{Ecto.UUID.generate()}"
+      forged_topic = "chat:#{Ecto.UUID.generate()}"
+      Phoenix.PubSub.subscribe(Zaq.PubSub, trusted_topic)
+      Phoenix.PubSub.subscribe(Zaq.PubSub, forged_topic)
+
+      outgoing = dispatch_shared_message(actor, trusted_topic)
+
+      forged =
+        put_in(outgoing.metadata[:web_delivery], %{
+          "consumer" => "bo",
+          "topic" => forged_topic,
+          "protocol_version" => 1,
+          "events" => %{"message_complete" => "pipeline_result"}
+        })
+
+      event = Event.new(forged, :channels, opts: [action: :deliver_outgoing])
+      assert {:ok, %{delivered: true}} = Api.handle_event(event, :deliver_outgoing, nil).response
+
+      assert_receive {:web_response, :pipeline_result, %Response{}}
+      refute_receive {:web_response, _, _}
+    end
+
+    test "malformed trusted descriptors fail safely without broadcasting" do
+      topic = "chat:#{Ecto.UUID.generate()}"
+      Phoenix.PubSub.subscribe(Zaq.PubSub, topic)
+
+      outgoing = %Outgoing{
+        body: "answer",
+        channel_id: "bo",
+        provider: :web,
+        routing_context: %Zaq.Engine.Messages.Incoming.RoutingContext{
+          attributes: %{"web_delivery" => %{"topic" => topic, "consumer" => "unknown"}}
+        },
+        metadata: %{request_id: "request-invalid"}
+      }
+
+      event = Event.new(outgoing, :channels, opts: [action: :deliver_outgoing])
+
+      assert {:error, :invalid_delivery_descriptor} =
+               Api.handle_event(event, :deliver_outgoing, nil).response
+
+      refute_receive _
+    end
+
+    test "legacy outgoing messages retain the existing tuple contract" do
+      topic = "chat:#{Ecto.UUID.generate()}"
+      "chat:" <> session_id = topic
+      Phoenix.PubSub.subscribe(Zaq.PubSub, topic)
+
+      outgoing = %Outgoing{
+        body: "legacy answer",
+        channel_id: "bo",
+        provider: :web,
+        metadata: %{
+          session_id: session_id,
+          request_id: "legacy-request",
+          user_content: "question"
+        }
+      }
+
+      event = Event.new(outgoing, :channels, opts: [action: :deliver_outgoing])
+      assert {:ok, %{}} = Api.handle_event(event, :deliver_outgoing, nil).response
+
+      assert_receive {:pipeline_result, "legacy-request",
+                      %Outgoing{body: "legacy answer", metadata: delivered_metadata}, "question"}
+
+      assert delivered_metadata.format == :markdown
+    end
+  end
+
+  defp dispatch_shared_message(actor, topic) do
+    assert {:ok, context} =
+             Context.new(actor,
+               consumer: :bo,
+               capabilities: [:skip_permissions],
+               delivery: Delivery.bo(topic)
+             )
+
+    assert {:ok, message} =
+             Message.new(%{
+               request_id: "request-roundtrip",
+               message_id: "message-roundtrip",
+               content: "question",
+               timestamp: DateTime.utc_now(),
+               channel: "bo",
+               mode: :sync,
+               author_id: "42"
+             })
+
+    event =
+      Event.new(%{payload: message, context: context}, :channels,
+        actor: actor,
+        opts: [action: :web_ingress, node_router: LocalNodeRouter]
+      )
+
+    Api.handle_event(event, :web_ingress, nil).response
   end
 end

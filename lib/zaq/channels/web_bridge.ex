@@ -15,7 +15,7 @@ defmodule Zaq.Channels.WebBridge do
   @behaviour Zaq.Channels.CommunicationBridge
 
   alias Zaq.Channels.{Bridge, CommunicationBridge}
-  alias Zaq.Channels.Web.{Command, Context, Response}
+  alias Zaq.Channels.Web.{Command, Context, Delivery, Response}
   alias Zaq.Channels.Web.Message, as: WebMessage
   alias Zaq.Engine.Conversations.{Conversation, MessageRating}
   alias Zaq.Engine.Conversations.Message, as: ConversationMessage
@@ -73,6 +73,7 @@ defmodule Zaq.Channels.WebBridge do
       attachments: message.attachments,
       content_filter: context.content_filter,
       routing_context: %{
+        channel_config_id: delivery_channel_config_id(context.delivery),
         conversation_id: message.conversation_id,
         provider_sent_at: message.timestamp,
         attributes: routing_attributes(context)
@@ -106,6 +107,14 @@ defmodule Zaq.Channels.WebBridge do
   @spec send_reply(Outgoing.t(), map()) :: :ok | {:error, term()}
   @impl true
   def send_reply(%Outgoing{} = outgoing, _connection_details) do
+    case delivery_from_routing_context(outgoing.routing_context) do
+      {:ok, nil} -> legacy_send_reply(outgoing)
+      {:ok, delivery} -> deliver_final(outgoing, delivery)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp legacy_send_reply(%Outgoing{} = outgoing) do
     session_id = outgoing.metadata[:session_id]
     request_id = outgoing.metadata[:request_id]
     user_content = outgoing.metadata[:user_content]
@@ -123,6 +132,19 @@ defmodule Zaq.Channels.WebBridge do
     session_id = Map.get(request, :session_id)
     message = Map.get(request, :body)
 
+    case delivery_from_routing_context(Map.get(request, :routing_context)) do
+      {:ok, nil} ->
+        legacy_upsert_message(request_id, session_id, message, request)
+
+      {:ok, delivery} ->
+        deliver_status(request, delivery)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp legacy_upsert_message(request_id, session_id, message, request) do
     if Helper.present?(request_id) and Helper.present?(session_id) and Helper.present?(message) do
       stage = status_stage(Map.get(request, :intent_meta))
 
@@ -169,11 +191,24 @@ defmodule Zaq.Channels.WebBridge do
   defp node_router_opts(sink_opts),
     do: [node_router: Keyword.get(sink_opts, :node_router, NodeRouter)]
 
-  defp routing_attributes(%Context{selected_agent_id: nil}), do: %{}
-
-  defp routing_attributes(%Context{selected_agent_id: id}) do
-    %{"configured_agent_id" => id, "routing_source" => "bo_explicit"}
+  defp routing_attributes(%Context{} = context) do
+    %{}
+    |> maybe_put_delivery(context.delivery)
+    |> maybe_put_agent(context.selected_agent_id)
   end
+
+  defp maybe_put_delivery(attributes, %Delivery{} = delivery),
+    do: Map.put(attributes, "web_delivery", Delivery.reference(delivery))
+
+  defp maybe_put_delivery(attributes, _delivery), do: attributes
+
+  defp maybe_put_agent(attributes, nil), do: attributes
+
+  defp maybe_put_agent(attributes, id),
+    do: Map.merge(attributes, %{"configured_agent_id" => id, "routing_source" => "bo_explicit"})
+
+  defp delivery_channel_config_id(%Delivery{channel_config_id: id}), do: id
+  defp delivery_channel_config_id(_delivery), do: nil
 
   defp legacy_session_id(%{consumer: :bo, topic: "chat:" <> session_id}), do: session_id
   defp legacy_session_id(_delivery), do: nil
@@ -337,4 +372,98 @@ defmodule Zaq.Channels.WebBridge do
 
   defp rating_projection(%MessageRating{} = rating),
     do: Map.take(rating, [:id, :rating, :reason, :comment])
+
+  defp delivery_from_routing_context(%{attributes: attributes}) when is_map(attributes) do
+    case Map.get(attributes, "web_delivery") || Map.get(attributes, :web_delivery) do
+      nil -> {:ok, nil}
+      reference -> Delivery.from_reference(reference)
+    end
+  end
+
+  defp delivery_from_routing_context(_routing_context), do: {:ok, nil}
+
+  defp deliver_final(%Outgoing{} = outgoing, %Delivery{} = delivery) do
+    metadata = if is_map(outgoing.metadata), do: outgoing.metadata, else: %{}
+
+    type =
+      if metadata_value(metadata, :error) == true, do: :message_failed, else: :message_complete
+
+    with {:ok, response} <-
+           Response.new(%{
+             request_id: metadata_value(metadata, :request_id),
+             message_id: outgoing.in_reply_to || metadata_value(metadata, :message_id),
+             conversation_id: metadata_value(metadata, :conversation_id),
+             type: type,
+             payload: final_payload(outgoing, metadata)
+           }),
+         :ok <- broadcast_response(delivery, response) do
+      {:ok, %{delivered: true}}
+    end
+  end
+
+  defp deliver_status(request, %Delivery{} = delivery) do
+    request_id = Map.get(request, :request_id)
+    body = Map.get(request, :body)
+
+    if Helper.present?(request_id) and Helper.present?(body) do
+      do_deliver_status(request, request_id, body, delivery)
+    else
+      {:ok, %{action: :noop, message_id: nil, update_intent: Map.get(request, :update_intent)}}
+    end
+  end
+
+  defp do_deliver_status(request, request_id, body, delivery) do
+    update_intent = Map.get(request, :update_intent)
+    type = if update_intent == :stream_delta, do: :message_edit, else: :status
+    message_id = Map.get(request, :message_id) || request_id
+
+    with {:ok, response} <-
+           Response.new(%{
+             request_id: request_id,
+             message_id: message_id,
+             type: type,
+             payload: %{
+               body: body,
+               stage: status_stage(Map.get(request, :intent_meta)),
+               update_intent: update_intent
+             }
+           }),
+         :ok <- broadcast_response(delivery, response) do
+      action = if Helper.present?(Map.get(request, :message_id)), do: :updated, else: :created
+      {:ok, %{action: action, message_id: message_id, update_intent: update_intent}}
+    end
+  end
+
+  defp broadcast_response(%Delivery{} = delivery, %Response{} = response) do
+    with {:ok, event_name} <- Delivery.event_name(delivery, response.type) do
+      Phoenix.PubSub.broadcast(
+        Zaq.PubSub,
+        delivery.topic,
+        {:web_response, event_name, response}
+      )
+    end
+  end
+
+  defp final_payload(outgoing, metadata) do
+    %{
+      body: outgoing.body,
+      sources: metadata_value(metadata, :sources) || [],
+      confidence_score: metadata_value(metadata, :confidence_score),
+      error: metadata_value(metadata, :error) == true,
+      error_type: metadata_value(metadata, :error_type),
+      assistant_message_id: metadata_value(metadata, :assistant_message_id),
+      user_message_id: metadata_value(metadata, :user_message_id),
+      agent: metadata_value(metadata, :agent),
+      model: metadata_value(metadata, :model),
+      latency_ms: metadata_value(metadata, :latency_ms),
+      prompt_tokens: metadata_value(metadata, :prompt_tokens),
+      completion_tokens: metadata_value(metadata, :completion_tokens),
+      total_tokens: metadata_value(metadata, :total_tokens),
+      trace: metadata_value(metadata, :trace) || [],
+      tool_calls: metadata_value(metadata, :tool_calls) || []
+    }
+  end
+
+  defp metadata_value(metadata, key),
+    do: Map.get(metadata, key) || Map.get(metadata, Atom.to_string(key))
 end

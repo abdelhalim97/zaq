@@ -39,6 +39,7 @@ defmodule Zaq.Channels.Api do
   alias Zaq.Contracts.Record
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Messages.{Incoming, Outgoing}
+  alias Zaq.Engine.Messages.Incoming.RoutingContext
   import Zaq.Engine.Messages, only: [is_present_message_id: 1]
   alias Zaq.Event
   alias Zaq.Events.Helper
@@ -1182,6 +1183,7 @@ defmodule Zaq.Channels.Api do
       intent_meta: Map.get(metadata, :intent_meta) || Map.get(metadata, "intent_meta"),
       update_intent: Map.get(metadata, :update_intent) || Map.get(metadata, "update_intent"),
       message_id: Map.get(metadata, :message_id) || Map.get(metadata, "message_id"),
+      routing_context: outgoing.routing_context,
       format: Map.get(metadata, :format)
     }
   end
@@ -1201,6 +1203,7 @@ defmodule Zaq.Channels.Api do
       channel_id: fetch(request, :channel_id),
       thread_id: fetch(request, :thread_id),
       body: fetch(request, :body),
+      routing_context: RoutingContext.normalize(fetch(request, :routing_context)),
       metadata: metadata
     }
   end
