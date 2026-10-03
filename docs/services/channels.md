@@ -364,6 +364,7 @@ for cache refresh/expiry and eventual-consistency limitations.
 | `Zaq.Channels.JidoChatBridge.State` | `lib/zaq/channels/jido_chat_bridge/state.ex` | Per-bridge GenServer state holder               |
 | `Zaq.Channels.EmailBridge`          | `lib/zaq/channels/email_bridge.ex`           | Bridge for email IMAP ingress, SMTP delivery, and attachment materialization |
 | `Zaq.Channels.WebBridge`            | `lib/zaq/channels/web_bridge.ex`             | Bridge for web/ChatLive sessions via PubSub     |
+| `Zaq.Channels.Web.*`                | `lib/zaq/channels/web/`                      | Shared BO/widget transport contracts            |
 | `Zaq.Channels.Supervisor`           | `lib/zaq/channels/supervisor.ex`             | Static role parent and public runtime facade    |
 | `Zaq.Channels.BridgeSupervisor`     | `lib/zaq/channels/bridge_supervisor.ex`      | Dynamic bridge runtime lifecycle and bootstrap  |
 | `Zaq.Channels.ConnectorRuntime`     | `lib/zaq/channels/connector_runtime.ex`      | Repo-free supplied-config archive runtime stages |
@@ -373,6 +374,30 @@ for cache refresh/expiry and eventual-consistency limitations.
 | `Zaq.ConnectorConfig.SmtpSettings`  | `lib/zaq/connector_config/smtp_settings.ex`  | Shared pure SMTP settings access                 |
 | `Zaq.Engine.Messages.Incoming`      | `lib/zaq/engine/messages/incoming.ex`        | Canonical inbound message struct                |
 | `Zaq.Engine.Messages.Outgoing`      | `lib/zaq/engine/messages/outgoing.ex`        | Canonical outbound message struct               |
+
+---
+
+## Web transport contracts
+
+`Zaq.Channels.Web.Message` and `Zaq.Channels.Web.Command` are the shared adapter-facing
+inputs for BO chat and the future web widget. They are not replacements for Engine
+`Incoming`/`Outgoing`: WebBridge owns the translation from a validated `Message` into
+canonical `Incoming`, while commands represent non-message operations such as conversation
+initialization and history retrieval.
+
+Trusted values remain separate from adapter-decoded payloads:
+
+- `Zaq.Channels.Web.Context` carries the authenticated actor, explicit capabilities and
+  BO routing inputs. Nil identity never grants a capability.
+- `Zaq.Channels.Web.Delivery` carries a server-resolved PubSub topic and a closed semantic
+  event mapping. Browser payloads must not construct or override it.
+- `Zaq.Channels.Web.Response` is the versioned semantic result before adapter wire encoding;
+  it rejects private execution and credential fields.
+
+The contract layer is implemented and validated independently. Until the BO migration is
+complete, `Zaq.Channels.WebBridge` still accepts its legacy flat BO payload and emits the
+existing `:status_update` / `:pipeline_result` tuples. Widget runtime and public ingress are
+not active yet.
 
 ---
 
