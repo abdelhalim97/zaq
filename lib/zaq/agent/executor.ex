@@ -188,7 +188,7 @@ defmodule Zaq.Agent.Executor do
                execution_opts,
                actor
              ),
-            {:ok, runtime_pid} <- resolve_runtime_pid(server_ref),
+           {:ok, runtime_pid} <- resolve_runtime_pid(server_ref),
            question <-
              question
              |> append_attachments(incoming.attachments, server_id)
