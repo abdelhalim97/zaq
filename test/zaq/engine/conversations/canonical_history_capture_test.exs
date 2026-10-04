@@ -4,8 +4,8 @@ defmodule Zaq.Engine.Conversations.CanonicalHistoryCaptureTest do
   use Oban.Testing, repo: Zaq.Repo
 
   alias Zaq.Accounts.People
-  alias Zaq.Channels.ChannelConfig
   alias Zaq.Channels.CommunicationBridge
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.ChannelHistoryAdmin
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.{Message, MessageRating, Transcript, TranscriptMessage}
@@ -94,7 +94,7 @@ defmodule Zaq.Engine.Conversations.CanonicalHistoryCaptureTest do
       author_id: "sender@example.com",
       message_id: "legacy-1",
       provider: :mattermost,
-      routing_context: %{channel_config_id: config.id, history_kind: :channel}
+      routing_context: %{channel_config_id: config.id, conversation_type: :room}
     }
     |> Incoming.new()
     |> CommunicationBridge.put_conversation_identity()
@@ -324,6 +324,41 @@ defmodule Zaq.Engine.Conversations.CanonicalHistoryCaptureTest do
 
     assert {:error, :unauthorized} =
              Conversations.list_canonical_messages(hidden, capture.transcript_id)
+  end
+
+  test "a replicated replay cannot adopt another conversation with the same audience" do
+    sender = person("Sender")
+    recipient = person("Recipient")
+    config = connector("email:imap")
+    initial = facts(config, sender, :replicated, %{recipient_person_ids: [recipient.id]})
+    origin = source(config, %{source_scope: "INBOX"})
+
+    assert {:ok, first} =
+             Conversations.capture_canonical_message(
+               initial,
+               message("same-source", "same content"),
+               origin
+             )
+
+    assert {:error, :source_conflict} =
+             Conversations.capture_canonical_message(
+               %{initial | channel_id: "another-conversation"},
+               message("same-source", "same content"),
+               origin
+             )
+
+    assert Repo.aggregate(Message, :count) == 1
+    assert Repo.aggregate(TranscriptMessage, :count) == 2
+
+    assert {:ok, replay} =
+             Conversations.capture_canonical_message(
+               initial,
+               message("same-source", "same content"),
+               origin
+             )
+
+    assert replay.message_id == first.message_id
+    assert replay.transcript_ids == first.transcript_ids
   end
 
   test "concurrent recipient replays commit only one audience" do
@@ -781,7 +816,7 @@ defmodule Zaq.Engine.Conversations.CanonicalHistoryCaptureTest do
 
     wrong_strategy = %{
       first_thread
-      | routing_context: %{first_thread.routing_context | history_kind: :direct}
+      | routing_context: %{first_thread.routing_context | conversation_type: :one_to_one}
     }
 
     assert {:error, :source_conflict} = Conversations.admit_incoming(other_thread)
@@ -873,7 +908,7 @@ defmodule Zaq.Engine.Conversations.CanonicalHistoryCaptureTest do
         provider: :"email:imap",
         routing_context: %{
           channel_config_id: config.id,
-          history_kind: :replicated,
+          conversation_type: :recipient_addressed,
           source_scope: "INBOX",
           identity_platform: "email",
           audience: %{platform: "email", sender: "sender@example.com", recipients: []}

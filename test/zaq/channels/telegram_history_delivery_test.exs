@@ -7,9 +7,9 @@ defmodule Zaq.Channels.TelegramHistoryDeliveryTest do
   alias Zaq.Accounts.People
   alias Zaq.Agent.ServerManager
   alias Zaq.Agent.Status
-  alias Zaq.Channels.{Api, ChannelConfig, CommunicationBridge, JidoChatBridge}
+  alias Zaq.Channels.{Api, CommunicationBridge, JidoChatBridge}
   alias Zaq.Channels.JidoChatBridge.DeliveryResult
-  alias Zaq.Engine.{Conversations, HistoryIngress}
+  alias Zaq.Engine.{ChannelConfig, Conversations, HistoryIngress}
   alias Zaq.Engine.Conversations.{Message, TranscriptMessage}
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Engine.Messages.Outgoing
@@ -20,7 +20,11 @@ defmodule Zaq.Channels.TelegramHistoryDeliveryTest do
     previous = Application.get_env(:zaq, :channels)
 
     Application.put_env(:zaq, :channels, %{
-      telegram: %{bridge: JidoChatBridge, adapter: Adapter, message_format: :markdown}
+      telegram: %{
+        bridge: JidoChatBridge,
+        adapter: Adapter,
+        message_format: :markdown
+      }
     })
 
     on_exit(fn -> Application.put_env(:zaq, :channels, previous) end)

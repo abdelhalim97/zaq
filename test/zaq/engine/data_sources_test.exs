@@ -5,7 +5,7 @@ defmodule Zaq.Engine.DataSourcesTest do
 
   import Ecto.Query
 
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.DataSources
   alias Zaq.Engine.DataSources.WatchChannel
   alias Zaq.Engine.DataSources.WatchChannelRenewalWorker

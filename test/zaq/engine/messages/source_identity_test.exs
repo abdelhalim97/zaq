@@ -24,4 +24,23 @@ defmodule Zaq.Engine.Messages.SourceIdentityTest do
 
     assert RoutingContext.normalize(%{}).source_scope == nil
   end
+
+  test "the shared source-scope contract uses bytes and accepts its full storage boundary" do
+    for size <- [1, 160, 161, 254, 255] do
+      scope = String.duplicate("a", size)
+      assert SourceIdentity.valid_scope?(scope)
+      assert RoutingContext.normalize(%{source_scope: scope}).source_scope == scope
+    end
+
+    refute SourceIdentity.valid_scope?(String.duplicate("a", 256))
+
+    multibyte = String.duplicate("é", 127) <> "a"
+    assert byte_size(multibyte) == 255
+    assert SourceIdentity.valid_scope?(multibyte)
+    assert RoutingContext.normalize(%{source_scope: multibyte}).source_scope == multibyte
+
+    too_large = multibyte <> "a"
+    refute SourceIdentity.valid_scope?(too_large)
+    assert RoutingContext.normalize(%{source_scope: too_large}).source_scope == :invalid
+  end
 end

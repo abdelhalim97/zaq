@@ -11,15 +11,15 @@ defmodule Zaq.Channels.EmailBridge.SmtpSender do
   import Swoosh.Email
   import Zaq.Helpers, only: [blank?: 1]
 
-  alias Zaq.Channels.ChannelConfig
   alias Zaq.Channels.EmailBridge.SelfAddresses
   alias Zaq.Channels.EmailBridge.TlsHelpers
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Messages.ReplyTargets
   alias Zaq.Mailer
   alias Zaq.Types.EncryptedString
   alias Zaq.Utils.HtmlUtils
 
-  alias Zaq.Channels.SmtpHelpers
+  alias Zaq.ConnectorConfig.SmtpSettings, as: SmtpHelpers
   alias Zaq.Utils.ParseUtils
 
   @doc "Sends a notification without exposing its delivery receipt to legacy callers."

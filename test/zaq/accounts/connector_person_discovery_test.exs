@@ -3,7 +3,7 @@ defmodule Zaq.Accounts.ConnectorPersonDiscoveryTest do
   use ExUnitProperties
 
   alias Zaq.Accounts.{People, Person, PersonChannel}
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
 
   setup do
     configs = for host <- ["one", "two"], do: config(host)

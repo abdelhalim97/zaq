@@ -9,7 +9,7 @@ defmodule Zaq.Engine.ChannelHistoryMembership do
 
   alias Zaq.Accounts.People
   alias Zaq.Accounts.Person
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations.Transcript
   alias Zaq.Engine.History.MembershipOrder
   alias Zaq.Event
@@ -124,7 +124,7 @@ defmodule Zaq.Engine.ChannelHistoryMembership do
         channel_id: transcript.external_channel_id
       }
 
-      event = Event.new(request, :channels, opts: [action: :channel_history_membership_snapshot])
+      event = Event.new(request, :channels, opts: [action: :channel_room_members])
 
       with %Event{
              response:

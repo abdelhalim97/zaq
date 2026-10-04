@@ -11,6 +11,7 @@ defmodule Zaq.Engine.IncomingMessageRouter do
 
   alias Zaq.Channels.EventNames
   alias Zaq.Engine.{Conversations, HistoryIngress, IncomingMessageRouting}
+  alias Zaq.Engine.History.CommunicationPolicy
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Event
   alias Zaq.EventHop
@@ -47,17 +48,18 @@ defmodule Zaq.Engine.IncomingMessageRouter do
          %Event{opts: opts, request: %Incoming{} = incoming, actor: actor},
          resolved?
        ) do
-    kind = incoming.routing_context.history_kind
+    kind = CommunicationPolicy.kind(incoming)
 
     cond do
-      not Keyword.get(opts, :capture_history, false) or
-          kind not in [:direct, :channel, :replicated] ->
+      not match?({:ok, _}, kind) ->
         :ok
 
       not resolved? ->
         {:error, :unresolved_history_author}
 
       true ->
+        {:ok, kind} = kind
+
         with {:ok, _} <- ExecutionActor.validate(actor),
              {:ok, _} <-
                HistoryIngress.capture_resolved(
@@ -182,7 +184,7 @@ defmodule Zaq.Engine.IncomingMessageRouter do
         {%{incoming | person: resolver.person_payload(person)}, true}
 
       {:error, reason} ->
-        if Keyword.get(opts, :capture_history, false) and incoming.provider not in [:web, "web"] do
+        if match?({:ok, _}, CommunicationPolicy.kind(incoming)) do
           Logger.warning(
             "[IncomingMessageRouter] History author resolution failed " <>
               "provider=#{incoming.provider} connector=#{incoming.routing_context.channel_config_id} " <>

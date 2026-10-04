@@ -6,7 +6,8 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelHistoryLiveTest do
 
   alias Zaq.Accounts
   alias Zaq.Accounts.People
-  alias Zaq.Channels.{ChannelConfig, RetrievalChannel}
+  alias Zaq.Channels.RetrievalChannel
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.History.Facts
   alias Zaq.Engine.HistoryIngress
@@ -190,7 +191,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelHistoryLiveTest do
         provider: :mattermost,
         author_id: "alex",
         message_id: "m1",
-        routing_context: %{channel_config_id: config.id, history_kind: :channel}
+        routing_context: %{channel_config_id: config.id, conversation_type: :room}
       })
 
     {:ok, captured} = HistoryIngress.capture(incoming)

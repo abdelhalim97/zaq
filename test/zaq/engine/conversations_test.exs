@@ -6,9 +6,9 @@ defmodule Zaq.Engine.ConversationsTest do
   @moduletag capture_log: true
 
   alias Zaq.Accounts.People
-  alias Zaq.Channels.ChannelConfig
   alias Zaq.Channels.CommunicationBridge
   alias Zaq.Contracts.Record
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.Message
   alias Zaq.Engine.Messages.Incoming

@@ -3,7 +3,8 @@ defmodule Zaq.E2E.ChannelHistoryFixture do
 
   alias Zaq.Accounts
   alias Zaq.Accounts.People
-  alias Zaq.Channels.{ChannelConfig, RetrievalChannel}
+  alias Zaq.Channels.RetrievalChannel
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.{Message, Transcript, TranscriptMessage}
   alias Zaq.Engine.History.Facts
@@ -273,7 +274,7 @@ defmodule Zaq.E2E.ChannelHistoryFixture do
       is_dm: false,
       routing_context: %{
         channel_config_id: config.id,
-        history_kind: :channel,
+        conversation_type: :room,
         identity_platform: "mattermost",
         source_scope: "e2eengineeringroom00000000"
       }

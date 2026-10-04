@@ -54,9 +54,9 @@ defmodule Zaq.Engine.IncomingMessageRouterTest do
     test "history resolution logs the connector and error category without profile data" do
       event =
         Event.new(
-          incoming(%{routing_context: %{channel_config_id: 42, history_kind: :channel}}),
+          incoming(%{routing_context: %{channel_config_id: 42, conversation_type: :room}}),
           :engine,
-          opts: [identity_resolver: InvalidIdentityResolver, capture_history: true]
+          opts: [identity_resolver: InvalidIdentityResolver]
         )
 
       log =

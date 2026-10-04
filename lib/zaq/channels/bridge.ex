@@ -14,7 +14,8 @@ defmodule Zaq.Channels.Bridge do
   bridge modules own transport-specific behavior.
   """
 
-  alias Zaq.Channels.{ChannelConfig, CommunicationBridge, DataSourceBridge}
+  alias Zaq.Channels.{CommunicationBridge, DataSourceBridge}
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Event
 
@@ -250,6 +251,15 @@ defmodule Zaq.Channels.Bridge do
     case provider_to_bridge_key(provider) do
       nil -> nil
       key -> Zaq.Config.get(:zaq, :channels, %{}, opts) |> get_in([key, :bridge])
+    end
+  end
+
+  @doc "Returns the configured provider entry without exposing it across service boundaries."
+  @spec provider_config(atom() | String.t(), keyword()) :: map() | nil
+  def provider_config(provider, opts \\ []) do
+    case provider_to_bridge_key(provider) do
+      nil -> nil
+      key -> Zaq.Config.get(:zaq, :channels, %{}, opts) |> Map.get(key)
     end
   end
 

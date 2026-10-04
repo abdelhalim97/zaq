@@ -19,10 +19,11 @@ defmodule Zaq.Channels.EmailBridge do
 
   require Logger
 
-  alias Zaq.Channels.{Bridge, ChannelConfig}
+  alias Zaq.Channels.Bridge
   alias Zaq.Channels.EmailBridge.ImapConfigHelpers
   alias Zaq.Channels.EmailBridge.SelfAddresses
   alias Zaq.Contracts.Record
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Messages.{Incoming, Outgoing}
   alias Zaq.Event
   alias Zaq.NodeRouter
@@ -249,12 +250,12 @@ defmodule Zaq.Channels.EmailBridge do
         receipt =
           delivery_receipt(threading)
           |> Map.put(:confirmation, :confirmed)
-          |> Map.put(:history_source_scope, "smtp:confirmed")
+          |> Map.put(:source_scope, "smtp:confirmed")
           |> Map.put(
-            :history_conversation_id,
-            history_conversation_id(outgoing, threading)
+            :conversation_id,
+            delivery_conversation_id(outgoing, threading)
           )
-          |> Map.put(:history_audience, %Zaq.Engine.Messages.Incoming.Audience{
+          |> Map.put(:audience, %Zaq.Engine.Messages.Incoming.Audience{
             platform: "email",
             sender: sender,
             recipients: recipients
@@ -288,7 +289,7 @@ defmodule Zaq.Channels.EmailBridge do
     end
   end
 
-  defp history_conversation_id(outgoing, threading) do
+  defp delivery_conversation_id(outgoing, threading) do
     Map.get(outgoing.routing_context || %{}, :conversation_id) ||
       List.first(threading.references) || threading.in_reply_to || threading.message_id
   end
@@ -361,9 +362,8 @@ defmodule Zaq.Channels.EmailBridge do
           :ok
 
         get_in(incoming.metadata, ["email", "automatic_reply"]) == true ->
-          capture_passive_history(incoming,
+          receive_message(incoming,
             channel_config_id: Map.get(config, :id) || Map.get(config, "id"),
-            history_kind: email_history_kind(config, incoming),
             node_router: node_router_module()
           )
 
@@ -398,7 +398,6 @@ defmodule Zaq.Channels.EmailBridge do
            [],
            actor_from_incoming(incoming),
            channel_config_id: Map.get(config, :id) || Map.get(config, "id"),
-           history_kind: email_history_kind(config, incoming),
            topic_id: connection[:mailbox],
            pipeline_module: pipeline_module(),
            node_router: node_router_module()
@@ -414,13 +413,6 @@ defmodule Zaq.Channels.EmailBridge do
     do: Map.put(headers, "Auto-Submitted", "auto-replied")
 
   defp automatic_reply_headers(headers, false), do: headers
-
-  defp email_history_kind(config, %Incoming{provider: provider})
-       when provider in [:"email:imap", "email:imap"] do
-    if config_provider(config) in [:"email:imap", "email:imap"], do: :replicated
-  end
-
-  defp email_history_kind(_config, _incoming), do: nil
 
   # The inbound-reply runtime path has no use for the delivery receipt — collapse
   # it so `handle_from_listener` keeps matching on `:ok`.

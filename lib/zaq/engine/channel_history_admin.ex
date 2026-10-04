@@ -8,8 +8,9 @@ defmodule Zaq.Engine.ChannelHistoryAdmin do
   import Ecto.Query
 
   alias Zaq.Accounts.{People, Person, PersonChannel}
-  alias Zaq.Channels.ChannelConfig
   alias Zaq.Channels.RetrievalChannel
+  alias Zaq.Engine.ChannelConfig
+  alias Zaq.Engine.ChannelHistoryProjection
   alias Zaq.Engine.Conversations
 
   alias Zaq.Engine.Conversations.{
@@ -74,16 +75,10 @@ defmodule Zaq.Engine.ChannelHistoryAdmin do
             }
         )
 
-      owners = person_summaries(Enum.map(rows, & &1.owner_person_id))
-
       displayed =
         rows
         |> Enum.take(limit)
-        |> Enum.map(fn row ->
-          row
-          |> Map.put(:owner, Map.get(owners, row.owner_person_id))
-          |> summarize_row(request[:actor])
-        end)
+        |> ChannelHistoryProjection.project()
 
       if Map.has_key?(request, :offset),
         do: {:ok, %{rows: displayed, has_more: length(rows) > limit, parent: parent}},
@@ -211,76 +206,6 @@ defmodule Zaq.Engine.ChannelHistoryAdmin do
       (is_nil(parent_id) or match?({:ok, _}, Ecto.UUID.cast(parent_id)))
   end
 
-  defp summarize_row(row, actor) do
-    transcript = Repo.get!(Transcript, row.id)
-    {participants, count} = participants(transcript)
-
-    Map.merge(row, %{
-      channel_name: history_title(transcript, row.channel_name),
-      participants: participants,
-      participant_count: count,
-      thread_count: Repo.aggregate(from(t in Transcript, where: t.parent_id == ^row.id), :count),
-      root_message: root_message(transcript, actor)
-    })
-  end
-
-  defp participants(transcript) do
-    scope = participant_scope(transcript)
-
-    query =
-      from t in Transcript,
-        join: placement in TranscriptMessage,
-        on: placement.transcript_id == t.id,
-        join: m in Message,
-        on: m.id == placement.message_id,
-        left_join: c in PersonChannel,
-        on:
-          c.channel_config_id == t.channel_config_id and
-            is_nil(fragment("?->>'author_person_id'", m.history_context)) and
-            c.platform ==
-              fragment("COALESCE(?->>'identity_platform', ?)", m.history_context, t.provider) and
-            c.channel_identifier == m.author_id,
-        join: p in Person,
-        on:
-          p.id == c.person_id or
-            fragment(
-              "EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(?->'participants', '[]'::jsonb)) participant WHERE (participant->>'person_id')::bigint = ANY(array_prepend(?::bigint, ?::bigint[])))",
-              m.history_context,
-              p.id,
-              p.merged_person_ids
-            ),
-        where: ^scope,
-        where: m.role != "assistant"
-
-    count = Repo.one(from [t, placement, m, c, p] in query, select: count(p.id, :distinct))
-
-    recent =
-      Repo.all(
-        from [t, placement, m, c, p] in query,
-          group_by: [p.id, p.full_name],
-          order_by: [
-            desc: max(fragment("COALESCE(?, ?)", m.provider_sent_at, m.inserted_at)),
-            asc: p.id
-          ],
-          limit: 3,
-          select: %{person_id: p.id, display_name: p.full_name}
-      )
-
-    {recent, count}
-  end
-
-  defp participant_scope(%{parent_id: nil} = transcript),
-    do: dynamic([t], t.id == ^transcript.id or t.parent_id == ^transcript.id)
-
-  defp participant_scope(transcript),
-    do:
-      dynamic(
-        [t, _placement, m],
-        t.id == ^transcript.id or
-          (t.id == ^transcript.parent_id and
-             m.external_message_id == ^transcript.external_thread_id)
-      )
-
   defp refresh_supported?(%{strategy: "shared"} = transcript) do
     event =
       Zaq.Event.new(
@@ -289,11 +214,11 @@ defmodule Zaq.Engine.ChannelHistoryAdmin do
           channel_id: transcript.external_channel_id
         },
         :channels,
-        opts: [action: :channel_history_capabilities]
+        opts: [action: :channel_room_capabilities]
       )
 
     match?(
-      %Zaq.Event{response: {:ok, %{membership_refresh: true}}},
+      %Zaq.Event{response: {:ok, %{members: true}}},
       Zaq.NodeRouter.dispatch(event)
     )
   end
@@ -338,7 +263,7 @@ defmodule Zaq.Engine.ChannelHistoryAdmin do
         },
         :channels,
         actor: actor,
-        opts: [action: :channel_history_root, confidential: true]
+        opts: [action: :channel_room_message, confidential: true]
       )
 
     case Zaq.NodeRouter.dispatch(event).response do
@@ -430,7 +355,7 @@ defmodule Zaq.Engine.ChannelHistoryAdmin do
     names = author_names(Map.values(stored), transcript)
     people = persisted_author_names(Map.values(stored))
     ratings = current_ratings(ids, user_id)
-    summaries = rating_summaries(ids)
+    summaries = ChannelHistoryProjection.rating_summaries(ids)
 
     Enum.map(messages, fn message ->
       record = Map.fetch!(stored, message.message_id)
@@ -512,21 +437,6 @@ defmodule Zaq.Engine.ChannelHistoryAdmin do
         select: {r.message_id, r.rating}
     )
     |> Map.new(fn {id, rating} -> {id, if(rating >= 4, do: :positive, else: :negative)} end)
-  end
-
-  defp rating_summaries(ids) do
-    Repo.all(
-      from r in MessageRating,
-        where: r.message_id in ^ids,
-        group_by: r.message_id,
-        select:
-          {r.message_id,
-           %{
-             positive: filter(count(r.id), r.rating >= 4),
-             negative: filter(count(r.id), r.rating < 4)
-           }}
-    )
-    |> Map.new()
   end
 
   defp agent_name(metadata) do

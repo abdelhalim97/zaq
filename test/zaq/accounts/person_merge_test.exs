@@ -4,7 +4,7 @@ defmodule Zaq.Accounts.PersonMergeTest do
 
   alias Zaq.Accounts.{People, Person, PersonChannel}
   alias Zaq.Agent.Tools.Resources.QueryResources
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.ChannelHistoryAdmin
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript, TranscriptMessage}

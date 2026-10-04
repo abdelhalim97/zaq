@@ -5,7 +5,8 @@ defmodule Zaq.Accounts.PersonIdentities do
   connector links retain their own routing and preferences.
   """
   alias Zaq.Accounts.{Person, PersonChannel, PersonIdentity}
-  alias Zaq.Channels.{ChannelConfig, IdentityScope}
+  alias Zaq.Channels.IdentityScope
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Repo
   import Ecto.Query
 

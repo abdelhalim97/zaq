@@ -1,8 +1,9 @@
 defmodule Zaq.Channels.CommunicationBridgeTest do
   use Zaq.DataCase, async: false
 
-  alias Zaq.Channels.{AgentRouting, Bridge, ChannelConfig, CommunicationBridge}
+  alias Zaq.Channels.{AgentRouting, Bridge, CommunicationBridge}
   alias Zaq.Contracts.Record
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Messages.{Incoming, Outgoing}
   alias Zaq.Repo
 
@@ -924,7 +925,7 @@ defmodule Zaq.Channels.CommunicationBridgeTest do
       assert event.request.routing_context.channel_config_id == nil
     end
 
-    test "history kind is stamped from bridge options rather than Incoming metadata or routing claims" do
+    test "history policy hints are never stamped by the bridge" do
       msg =
         Incoming.new(%{
           content: "hi",
@@ -945,7 +946,8 @@ defmodule Zaq.Channels.CommunicationBridgeTest do
 
       assert_received {:node_router_dispatch, event}
       assert event.request.routing_context.channel_config_id == 12
-      assert event.request.routing_context.history_kind == nil
+      assert event.request.routing_context.conversation_type == nil
+      refute Map.has_key?(event.request.routing_context, :history_kind)
 
       assert %Outgoing{} =
                CommunicationBridge.route_incoming_message(
@@ -959,30 +961,30 @@ defmodule Zaq.Channels.CommunicationBridgeTest do
 
       assert_received {:node_router_dispatch, second_event}
       assert second_event.request.routing_context.channel_config_id == 13
-      assert second_event.request.routing_context.history_kind == :channel
+      assert second_event.request.routing_context.conversation_type == nil
+      refute Map.has_key?(second_event.request.routing_context, :history_kind)
     end
 
-    test "passive history uses a single Engine capture event and never dispatches a reply" do
+    test "unaddressed messages use a neutral Engine receive event without requesting a reply" do
       incoming =
         Incoming.new(%{
           content: "not addressed",
           provider: :mattermost,
           channel_id: "room-1",
           author_id: "u1",
-          routing_context: %{history_kind: :direct, channel_config_id: 999}
+          routing_context: %{conversation_type: :room, channel_config_id: 999}
         })
 
       assert :ok =
-               CommunicationBridge.capture_passive_history(incoming,
+               CommunicationBridge.receive_message(incoming,
                  channel_config_id: 12,
-                 history_kind: :channel,
                  node_router: HistoryNodeRouter
                )
 
       assert_received {:history_dispatch, event}
-      assert event.opts[:action] == :capture_incoming_history
+      assert event.opts[:action] == :receive_incoming_message
       assert event.request.routing_context.channel_config_id == 12
-      assert event.request.routing_context.history_kind == :channel
+      assert event.request.routing_context.conversation_type == :room
       assert event.next_hop.destination == :engine
       refute_received {:history_dispatch, _}
     end

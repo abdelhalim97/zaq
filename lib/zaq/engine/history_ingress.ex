@@ -2,7 +2,8 @@ defmodule Zaq.Engine.HistoryIngress do
   @moduledoc """
   Persists normalized communication facts supplied by internal Channels events.
 
-  Transport evidence is interpreted by Channels. Engine validates connector,
+  Channels validates and normalizes transport facts without selecting policy.
+  Engine selects the history strategy and validates connector,
   Person, execution and placement scope; a struct or metadata map alone never
   authenticates an external caller. Capture and admission share the same source
   namespace supplied in the incoming routing context.
@@ -11,10 +12,10 @@ defmodule Zaq.Engine.HistoryIngress do
   import Ecto.Query
 
   alias Zaq.Accounts.People
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.{Message, TranscriptHistory}
-  alias Zaq.Engine.History.Facts
+  alias Zaq.Engine.History.{CommunicationPolicy, Facts}
   alias Zaq.Engine.HistoryDeliveryWorker
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Engine.Messages.Incoming.Audience
@@ -147,7 +148,10 @@ defmodule Zaq.Engine.HistoryIngress do
       "identity_platform" => context.identity_platform || to_string(incoming.provider),
       "author_person_id" => person_id,
       "participants" => Enum.uniq([%{"person_id" => person_id, "role" => "sender"} | resolved]),
-      "title_style" => if(context.title_style, do: to_string(context.title_style)),
+      "title_style" =>
+        if(CommunicationPolicy.title_style(incoming),
+          do: to_string(CommunicationPolicy.title_style(incoming))
+        ),
       "subject" => context.display_subject
     }
   end
@@ -424,10 +428,7 @@ defmodule Zaq.Engine.HistoryIngress do
     end
   end
 
-  defp history_kind(%Incoming{routing_context: %{history_kind: kind}})
-       when kind in [:direct, :channel, :replicated], do: {:ok, kind}
-
-  defp history_kind(_), do: {:error, :unsupported_history_kind}
+  defp history_kind(incoming), do: CommunicationPolicy.kind(incoming)
 
   defp recipients(incoming, :replicated, resolver),
     do: resolver.resolve_audience(incoming, incoming.routing_context.channel_config_id)

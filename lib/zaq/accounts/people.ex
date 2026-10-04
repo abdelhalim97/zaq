@@ -16,7 +16,7 @@ defmodule Zaq.Accounts.People do
   alias Zaq.Accounts.PersonMerger
   alias Zaq.Accounts.Team
   alias Zaq.Channels.Bridge
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Connect.PersonLifecycle
   alias Zaq.Repo
 

@@ -48,7 +48,7 @@ defmodule Zaq.Channels.EmailBridge.ImapAdapter.Parser do
         identity_platform: "email",
         conversation_id: thread_key,
         display_subject: subject,
-        title_style: :person_subject,
+        conversation_type: :recipient_addressed,
         reply_targets: reply_targets(from, raw_email, parsed_email, participants),
         source_scope: mailbox,
         provider_sent_at:

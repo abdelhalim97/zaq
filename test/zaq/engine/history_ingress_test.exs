@@ -5,13 +5,15 @@ defmodule Zaq.Engine.HistoryIngressTest do
 
   alias Jido.Chat.Telegram.Adapter, as: TelegramAdapter
   alias Zaq.Accounts.People
-  alias Zaq.Channels.{ChannelConfig, CommunicationBridge, JidoChatBridge}
+  alias Zaq.Channels.{CommunicationBridge, JidoChatBridge}
   alias Zaq.Channels.EmailBridge
   alias Zaq.Channels.EmailBridge.ImapAdapter.Parser
   alias Zaq.Engine.Api
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.ChannelHistoryAdmin
   alias Zaq.Engine.{Conversations, HistoryDeliveryWorker, HistoryIngress, IncomingMessageRouter}
   alias Zaq.Engine.Conversations.{Message, Transcript, TranscriptMessage}
+  alias Zaq.Engine.History.CommunicationPolicy
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Engine.Messages.Outgoing
   alias Zaq.Event
@@ -72,7 +74,10 @@ defmodule Zaq.Engine.HistoryIngressTest do
           mailbox: "INBOX"
         )
 
-      %{incoming | routing_context: %{incoming.routing_context | history_kind: :replicated}}
+      %{
+        incoming
+        | routing_context: %{incoming.routing_context | conversation_type: :recipient_addressed}
+      }
     end
 
     assert {:ok, root} =
@@ -156,7 +161,7 @@ defmodule Zaq.Engine.HistoryIngressTest do
 
     incoming = %{
       incoming
-      | routing_context: %{incoming.routing_context | history_kind: :replicated}
+      | routing_context: %{incoming.routing_context | conversation_type: :recipient_addressed}
     }
 
     assert {:ok, root} = HistoryIngress.capture(incoming)
@@ -200,13 +205,13 @@ defmodule Zaq.Engine.HistoryIngressTest do
     assert email.headers["Auto-Submitted"] == "auto-replied"
     assert email.headers["In-Reply-To"] == "<smtp-root@example.com>"
 
-    assert receipt.history_audience.recipients == [
+    assert receipt.audience.recipients == [
              "reply@example.com",
              "other@example.com",
              "copied@example.com"
            ]
 
-    assert receipt.history_conversation_id == incoming.routing_context.conversation_id
+    assert receipt.conversation_id == incoming.routing_context.conversation_id
 
     # Historical bad discovery must not turn the assistant's transport sender
     # into a recipient of the confirmed response.
@@ -225,12 +230,12 @@ defmodule Zaq.Engine.HistoryIngressTest do
                channel_config_id: config.id,
                kind: :replicated,
                channel_id: "reply@example.com",
-               conversation_id: receipt.history_conversation_id,
+               conversation_id: receipt.conversation_id,
                message_id: receipt.message_id,
                assistant_message_id: assistant_id,
                content: outgoing.body,
-               audience: receipt.history_audience,
-               source_scope: receipt.history_source_scope
+               audience: receipt.audience,
+               source_scope: receipt.source_scope
              })
 
     {:ok, copied} = People.match_by_channel("email", "copied@example.com", config.id)
@@ -246,7 +251,7 @@ defmodule Zaq.Engine.HistoryIngressTest do
     reference = %{
       provider: "email:imap",
       channel_config_id: config.id,
-      source_scope: receipt.history_source_scope,
+      source_scope: receipt.source_scope,
       message_id: receipt.message_id
     }
 
@@ -332,7 +337,7 @@ defmodule Zaq.Engine.HistoryIngressTest do
                mailbox: "INBOX"
              )
 
-    assert_received {:email_ingress_action, :capture_incoming_history}
+    assert_received {:email_ingress_action, :receive_incoming_message}
     refute_received {:email_ingress_action, :route_incoming_message}
     refute_received {:email, _}
 
@@ -402,8 +407,8 @@ defmodule Zaq.Engine.HistoryIngressTest do
     assert email.cc == [{"", "j.tarabay@zaq.ai"}]
     assert email.bcc == []
     assert email.headers["Auto-Submitted"] == "auto-replied"
-    assert receipt.history_audience.sender == "zaq-local@eweev.com"
-    assert receipt.history_audience.recipients == ["julien@fayad.fr", "j.tarabay@zaq.ai"]
+    assert receipt.audience.sender == "zaq-local@eweev.com"
+    assert receipt.audience.recipients == ["julien@fayad.fr", "j.tarabay@zaq.ai"]
     assert Repo.get!(ChannelConfig, config.id).settings["imap"]["smtp_config_id"] == smtp.id
     assert Repo.get!(ChannelConfig, smtp.id).settings["from_email"] == "julien@eweev.com"
   end
@@ -467,14 +472,14 @@ defmodule Zaq.Engine.HistoryIngressTest do
                HistoryIngress.capture_resolved(
                  incoming,
                  person.id,
-                 incoming.routing_context.history_kind
+                 elem(CommunicationPolicy.kind(incoming), 1)
                )
 
       assert {:ok, ^captured} =
                HistoryIngress.capture_resolved(
                  incoming,
                  person.id,
-                 incoming.routing_context.history_kind
+                 elem(CommunicationPolicy.kind(incoming), 1)
                )
 
       transcript = Repo.get!(Transcript, captured.transcript_id)
@@ -556,7 +561,7 @@ defmodule Zaq.Engine.HistoryIngressTest do
         author_id: "alex-1",
         message_id: "post-1",
         provider: :mattermost,
-        routing_context: %{channel_config_id: config.id, history_kind: :channel}
+        routing_context: %{channel_config_id: config.id, conversation_type: :room}
       })
 
     assert {:ok, captured} = HistoryIngress.capture(incoming)
@@ -603,7 +608,7 @@ defmodule Zaq.Engine.HistoryIngressTest do
         provider: :mattermost,
         author_id: "alex-1",
         message_id: "post-2",
-        routing_context: %{channel_config_id: config.id, history_kind: :channel}
+        routing_context: %{channel_config_id: config.id, conversation_type: :room}
       })
 
     event = Event.new(incoming, :engine, opts: [action: :capture_incoming_history])
@@ -624,12 +629,12 @@ defmodule Zaq.Engine.HistoryIngressTest do
         provider: :mattermost,
         author_id: "alex-1",
         message_id: "post-3",
-        routing_context: %{channel_config_id: config.id, history_kind: :channel}
+        routing_context: %{channel_config_id: config.id, conversation_type: :room}
       })
 
     event =
       Event.new(incoming, :engine,
-        opts: [action: :route_incoming_message, capture_history: true, node_router: NoopRouter]
+        opts: [action: :route_incoming_message, node_router: NoopRouter]
       )
 
     result = IncomingMessageRouter.route(event)
@@ -654,7 +659,7 @@ defmodule Zaq.Engine.HistoryIngressTest do
         provider: :"email:imap",
         routing_context: %{
           channel_config_id: config.id,
-          history_kind: :replicated,
+          conversation_type: :recipient_addressed,
           topic_id: "INBOX",
           source_scope: "INBOX",
           identity_platform: "email",
@@ -866,7 +871,7 @@ defmodule Zaq.Engine.HistoryIngressTest do
         metadata: %{"email" => %{"mailbox" => "INBOX"}},
         routing_context: %{
           channel_config_id: config.id,
-          history_kind: :replicated,
+          conversation_type: :recipient_addressed,
           topic_id: "INBOX",
           source_scope: "INBOX",
           identity_platform: "email",

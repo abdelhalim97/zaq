@@ -25,9 +25,9 @@ defmodule Zaq.Channels.TelegramMarkdownDeliveryTest do
 
   alias Jido.Chat.Telegram.Adapter, as: TelegramAdapter
   alias Zaq.Channels.Api
-  alias Zaq.Channels.ChannelConfig
   alias Zaq.Channels.JidoChatBridge
   alias Zaq.Channels.MessageFormatter
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Messages.Outgoing
   alias Zaq.Event
 

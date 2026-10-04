@@ -17,7 +17,7 @@ defmodule Zaq.Accounts.PersonChannel do
   schema "channels" do
     field :platform, :string
     field :channel_identifier, :string
-    belongs_to :channel_config, Zaq.Channels.ChannelConfig
+    belongs_to :channel_config, Zaq.Engine.ChannelConfig
     belongs_to :person_identity, Zaq.Accounts.PersonIdentity
     field :username, :string
     field :display_name, :string

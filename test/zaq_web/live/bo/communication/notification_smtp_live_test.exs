@@ -6,7 +6,7 @@ defmodule ZaqWeb.Live.BO.Communication.NotificationSmtpLiveTest do
   import Zaq.AccountsFixtures
 
   alias Zaq.Accounts
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Repo
   alias Zaq.System.SecretConfig
 

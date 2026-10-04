@@ -29,11 +29,13 @@ defmodule Zaq.Channels.JidoChatBridge do
 
   alias Zaq.Channels.{
     Bridge,
-    ChannelConfig,
     RetrievalChannel,
     Supervisor,
     WebhookUrl
   }
+
+  alias Zaq.ConnectorConfig.Settings
+  alias Zaq.Engine.ChannelConfig
 
   alias Jido.Chat.ReactionEvent
   alias Jido.Chat.Thread
@@ -42,7 +44,6 @@ defmodule Zaq.Channels.JidoChatBridge do
   alias Zaq.Channels.JidoChatBridge.ReactionMapper
   alias Zaq.Channels.JidoChatBridge.State
   alias Zaq.Channels.Materializers.CommunicationMedia
-  alias Zaq.Channels.MessageTimestamp
   alias Zaq.Contracts.Record
   alias Zaq.Engine.Messages.{ConversationIdentity, Incoming, Outgoing}
   import Zaq.Engine.Messages, only: [is_present_message_id: 1]
@@ -303,7 +304,7 @@ defmodule Zaq.Channels.JidoChatBridge do
   """
   def register_handlers(%Chat{} = chat, config, _handler_opts \\ %{}) do
     message_patterns =
-      ChannelConfig.jido_chat_setting(config, "message_patterns", [])
+      Settings.jido_chat_setting(config, "message_patterns", [])
       |> Enum.filter(&is_binary/1)
 
     chat =
@@ -437,17 +438,19 @@ defmodule Zaq.Channels.JidoChatBridge do
 
   @doc "Processes a normalized incoming message from the listener pipeline."
   def handle_from_listener(config, %Chat.Incoming{} = incoming, _sink_opts) do
-    if thread_reply?(incoming) do
-      thread = build_thread(incoming, config)
-      handle_subscribed_message(config, thread, incoming)
-    else
-      thread = build_thread(incoming, config)
+    thread = build_thread(incoming, config)
 
-      if platform_history_kind(incoming, thread.adapter_name) == :channel and
+    normalized =
+      to_internal(incoming, %{provider: thread.adapter_name, id: config_value(config, :id)})
+
+    if thread_reply?(incoming) do
+      handle_subscribed_message(config, thread, incoming, normalized)
+    else
+      if normalized.routing_context.conversation_type == :room and
            not incoming.was_mentioned and not explicit_bot_mention?(config, incoming) do
-        handle_unaddressed_message(config, thread, incoming)
+        handle_unaddressed_message(config, thread, incoming, normalized)
       else
-        handle_message_event(config, thread, incoming)
+        handle_message_event(config, thread, incoming, normalized)
       end
     end
   end
@@ -648,9 +651,36 @@ defmodule Zaq.Channels.JidoChatBridge do
     do: {:error, :missing_connection_details}
 
   @doc "Converts a `Jido.Chat.Incoming` struct to the internal `Incoming` message format."
+  @impl Zaq.Channels.CommunicationBridge
+  def room_capabilities(config, channel_id),
+    do: room_query(config, :room_capabilities, [config, channel_id])
+
+  @impl Zaq.Channels.CommunicationBridge
+  def room_members(config, channel_id),
+    do: room_query(config, :room_members, [config, channel_id])
+
+  @impl Zaq.Channels.CommunicationBridge
+  def fetch_room_message(config, channel_id, message_id),
+    do: room_query(config, :fetch_room_message, [config, channel_id, message_id])
+
+  defp room_query(config, callback, args) do
+    provider = Map.get(config, :provider) || Map.get(config, "provider")
+
+    with module when not is_nil(module) <-
+           Zaq.Channels.JidoChatBridge.Incoming.integration(provider),
+         true <-
+           Code.ensure_loaded?(module) and function_exported?(module, callback, length(args)) do
+      apply(module, callback, args)
+    else
+      _ -> {:error, :unsupported}
+    end
+  end
+
+  @doc "Converts transport facts to the canonical consumer-neutral Incoming contract."
   @impl true
   def to_internal(%Chat.Incoming{} = incoming, provider_or_config) do
     {provider, channel_config_id} = provider_context(provider_or_config)
+    facts = normalized_communication_facts(incoming, provider)
 
     Incoming.new(%{
       content: incoming.text,
@@ -664,15 +694,9 @@ defmodule Zaq.Channels.JidoChatBridge do
       channel_config_id: channel_config_id,
       routing_context: %{
         channel_config_id: channel_config_id,
-        history_kind: platform_history_kind(incoming, provider),
-        title_style:
-          if(
-            provider in [:telegram, "telegram"] and
-              platform_history_kind(incoming, provider) == :direct,
-            do: :person
-          ),
-        source_scope: message_source_scope(provider, incoming.external_room_id),
-        provider_sent_at: provider_sent_at(provider, incoming)
+        conversation_type: facts[:conversation_type],
+        source_scope: facts[:source_scope],
+        provider_sent_at: facts[:provider_sent_at]
       },
       attachments:
         media_records(
@@ -688,137 +712,30 @@ defmodule Zaq.Channels.JidoChatBridge do
     })
   end
 
-  defp platform_history_kind(%Chat.Incoming{} = incoming, provider) do
+  defp normalized_communication_facts(%Chat.Incoming{} = incoming, provider) do
     metadata = incoming.channel_meta
 
-    if is_map(metadata) and
-         matching_history_provider?(Map.get(metadata, :adapter_name), provider) and
-         Map.get(metadata, :external_room_id) == incoming.external_room_id do
-      provider_history_kind(to_string(provider), metadata, incoming.raw)
+    with true <- is_map(metadata),
+         true <- matching_provider?(Map.get(metadata, :adapter_name), provider),
+         true <- Map.get(metadata, :external_room_id) == incoming.external_room_id,
+         {:ok, adapter} <- adapter_for(provider) do
+      Zaq.Channels.JidoChatBridge.Incoming.normalize(incoming, provider, adapter)
+    else
+      _ -> %{}
     end
   end
 
-  # Telegram message IDs are chat-local, unlike globally unique provider post IDs.
-  # Stamp this transport fact here so Engine deduplication stays provider-neutral.
-  defp message_source_scope(provider, room) when provider in [:telegram, "telegram"],
-    do: ConversationIdentity.normalize(room)
-
-  defp message_source_scope(_provider, _room), do: nil
-
-  defp provider_sent_at(provider, incoming) do
-    {value, format} = transport_timestamp(to_string(provider), incoming)
-    MessageTimestamp.normalize(value, format)
+  defp message_source_scope(provider, room) do
+    Zaq.Channels.JidoChatBridge.Incoming.source_scope(provider, room)
   end
 
-  defp transport_timestamp("mattermost", incoming) do
-    raw = incoming.raw || %{}
-    post = Map.get(raw, "post") || raw
-    {incoming.timestamp || Map.get(post, "create_at"), :millisecond}
-  end
+  defp matching_provider?(nil, _provider), do: false
 
-  defp transport_timestamp("telegram", incoming) do
-    raw = incoming.raw || %{}
-    {Map.get(raw, :date) || Map.get(raw, "date") || incoming.timestamp, :second}
-  end
-
-  defp transport_timestamp(_provider, incoming), do: {incoming.timestamp, :iso8601}
-
-  defp matching_history_provider?(nil, _provider), do: false
-
-  defp matching_history_provider?(claim, provider)
+  defp matching_provider?(claim, provider)
        when (is_atom(claim) or is_binary(claim)) and (is_atom(provider) or is_binary(provider)),
        do: to_string(claim) == to_string(provider)
 
-  defp matching_history_provider?(_claim, _provider), do: false
-
-  # Jido.Chat.ChannelMeta defaults is_dm to false. Some adapters also default
-  # chat_type to :channel/:dm on absent platform facts. Check the original
-  # provider event against the normalized type before authorizing a strategy.
-  defp provider_history_kind(
-         "mattermost",
-         %{chat_type: type, is_dm: is_dm, external_room_id: room},
-         raw
-       )
-       when is_map(raw) do
-    post = Map.get(raw, "post") || raw
-
-    if is_map(post) and same_history_room?(Map.get(post, "channel_id"), room) do
-      case {Map.get(raw, "channel_type"), type, is_dm} do
-        {"D", :dm, true} -> :direct
-        {"O", :public, false} -> :channel
-        {"P", :private, false} -> :channel
-        _ -> nil
-      end
-    end
-  end
-
-  defp provider_history_kind(
-         "telegram",
-         %{chat_type: type, is_dm: is_dm, external_room_id: room},
-         raw
-       )
-       when is_map(raw) do
-    with chat when is_map(chat) <- Map.get(raw, :chat) || Map.get(raw, "chat"),
-         true <- same_history_room?(Map.get(chat, :id) || Map.get(chat, "id"), room) do
-      telegram_history_kind(Map.get(chat, :type) || Map.get(chat, "type"), type, is_dm)
-    else
-      _ -> nil
-    end
-  end
-
-  defp provider_history_kind(
-         "discord",
-         %{chat_type: type, is_dm: false, external_room_id: room},
-         raw
-       )
-       when type in [:guild, :thread] and is_map(raw) do
-    guild_id = Map.get(raw, :guild_id) || Map.get(raw, "guild_id")
-    channel_id = Map.get(raw, :channel_id) || Map.get(raw, "channel_id")
-    parent_id = Map.get(raw, :parent_id) || Map.get(raw, "parent_id")
-
-    valid_room? =
-      case type do
-        :guild -> same_history_room?(channel_id, room)
-        :thread -> same_history_room?(parent_id, room)
-      end
-
-    if history_identifier?(guild_id) and valid_room?, do: :channel
-  end
-
-  defp provider_history_kind(
-         "discord",
-         %{chat_type: :dm, is_dm: true, external_room_id: room},
-         raw
-       )
-       when is_map(raw) do
-    # Discord message.type is a message category, never proof of a DM channel.
-    with channel when is_map(channel) <- Map.get(raw, :channel) || Map.get(raw, "channel"),
-         1 <- Map.get(channel, :type) || Map.get(channel, "type"),
-         true <- same_history_room?(Map.get(channel, :id) || Map.get(channel, "id"), room),
-         true <- same_history_room?(Map.get(raw, :channel_id) || Map.get(raw, "channel_id"), room),
-         nil <- Map.get(raw, :guild_id) || Map.get(raw, "guild_id") do
-      :direct
-    else
-      _ -> nil
-    end
-  end
-
-  defp provider_history_kind(_, _, _), do: nil
-
-  defp telegram_history_kind("private", :private, true), do: :direct
-  defp telegram_history_kind("group", :group, false), do: :channel
-  defp telegram_history_kind("supergroup", :supergroup, false), do: :channel
-  defp telegram_history_kind("channel", :channel, false), do: :channel
-  defp telegram_history_kind(_, _, _), do: nil
-
-  defp same_history_room?(value, room) do
-    history_identifier?(value) and history_identifier?(room) and
-      to_string(value) == to_string(room)
-  end
-
-  defp history_identifier?(value) when is_binary(value), do: String.trim(value) != ""
-  defp history_identifier?(value) when is_integer(value), do: true
-  defp history_identifier?(_), do: false
+  defp matching_provider?(_claim, _provider), do: false
 
   @doc "Fetches media bytes through the configured JidoChat adapter."
   @impl true
@@ -920,7 +837,9 @@ defmodule Zaq.Channels.JidoChatBridge do
     end
   end
 
-  defp handle_subscribed_message(config, thread, %Chat.Incoming{} = incoming) do
+  defp handle_subscribed_message(config, thread, incoming, normalized \\ nil)
+
+  defp handle_subscribed_message(config, thread, %Chat.Incoming{} = incoming, normalized) do
     post = %{
       root_id: incoming.external_thread_id,
       user_id: incoming.author && incoming.author.user_id,
@@ -930,38 +849,42 @@ defmodule Zaq.Channels.JidoChatBridge do
     hooks_module().dispatch_sync(:reply_received, post, %{})
 
     if non_dm_thread_reply_for_bot?(config, thread, incoming) do
-      handle_message_event(config, thread, incoming)
+      handle_message_event(config, thread, incoming, normalized)
     else
-      capture_unaddressed_message(config, thread, incoming)
+      capture_unaddressed_message(config, thread, incoming, normalized)
     end
   end
 
-  defp handle_unaddressed_message(config, thread, %Chat.Incoming{} = incoming) do
+  defp handle_unaddressed_message(config, thread, incoming, normalized \\ nil)
+
+  defp handle_unaddressed_message(config, thread, %Chat.Incoming{} = incoming, normalized) do
     cond do
       incoming.author && incoming.author.is_me ->
         :ok
 
       incoming.channel_meta.is_dm ->
-        handle_message_event(config, thread, incoming)
+        handle_message_event(config, thread, incoming, normalized)
 
       non_dm_thread_reply_for_bot?(config, thread, incoming) ->
-        handle_message_event(config, thread, incoming)
+        handle_message_event(config, thread, incoming, normalized)
 
       true ->
-        capture_unaddressed_message(config, thread, incoming)
+        capture_unaddressed_message(config, thread, incoming, normalized)
     end
   end
 
-  defp capture_unaddressed_message(config, thread, %Chat.Incoming{} = incoming) do
-    msg =
-      to_internal(incoming, %{
-        provider: thread.adapter_name,
-        id: Map.get(config, :id) || Map.get(config, "id")
-      })
+  defp capture_unaddressed_message(config, thread, incoming, normalized \\ nil)
 
-    capture_passive_history(msg,
+  defp capture_unaddressed_message(config, thread, %Chat.Incoming{} = incoming, normalized) do
+    msg =
+      normalized ||
+        to_internal(incoming, %{
+          provider: thread.adapter_name,
+          id: Map.get(config, :id) || Map.get(config, "id")
+        })
+
+    receive_message(msg,
       channel_config_id: Map.get(config, :id) || Map.get(config, "id"),
-      history_kind: platform_history_kind(incoming, thread.adapter_name),
       node_router: node_router_module()
     )
   end
@@ -972,8 +895,8 @@ defmodule Zaq.Channels.JidoChatBridge do
   end
 
   defp explicit_bot_mention?(config, %Chat.Incoming{} = incoming) do
-    bot_name = ChannelConfig.jido_chat_bot_name(config)
-    bot_user_id = ChannelConfig.jido_chat_bot_user_id(config)
+    bot_name = Settings.jido_chat_bot_name(config)
+    bot_user_id = Settings.jido_chat_bot_user_id(config)
 
     Enum.any?(incoming.mentions, fn mention ->
       mention.is_self or mention.user_id == bot_user_id or mention.username == bot_name
@@ -984,7 +907,7 @@ defmodule Zaq.Channels.JidoChatBridge do
   end
 
   defp thread_root_authored_by_bot?(config, %Thread{} = thread) do
-    bot_user_id = ChannelConfig.jido_chat_bot_user_id(config)
+    bot_user_id = Settings.jido_chat_bot_user_id(config)
     root_id = thread.external_thread_id
 
     with true <- is_binary(bot_user_id) and bot_user_id != "",
@@ -1013,16 +936,23 @@ defmodule Zaq.Channels.JidoChatBridge do
   defp message_author_id(%{"raw" => raw}) when is_map(raw), do: message_author_id(raw)
   defp message_author_id(_message), do: nil
 
-  defp handle_message_event(_config, _thread, %Chat.Incoming{author: %{is_me: true}}), do: :ok
+  defp handle_message_event(config, thread, incoming, normalized \\ nil)
 
-  defp handle_message_event(config, thread, %Chat.Incoming{} = incoming) do
-    incoming = verify_direct_channel(incoming, thread.adapter_name)
+  defp handle_message_event(
+         _config,
+         _thread,
+         %Chat.Incoming{author: %{is_me: true}},
+         _normalized
+       ),
+       do: :ok
 
+  defp handle_message_event(config, thread, %Chat.Incoming{} = incoming, normalized) do
     msg =
-      to_internal(incoming, %{
-        provider: thread.adapter_name,
-        id: Map.get(config, :id) || Map.get(config, "id")
-      })
+      normalized ||
+        to_internal(incoming, %{
+          provider: thread.adapter_name,
+          id: Map.get(config, :id) || Map.get(config, "id")
+        })
 
     with {:ok, role_ids} <- resolve_roles(msg),
          :ok <-
@@ -1032,7 +962,6 @@ defmodule Zaq.Channels.JidoChatBridge do
                [role_ids: role_ids],
                actor_from_incoming(msg),
                channel_config_id: Map.get(config, :id) || Map.get(config, "id"),
-               history_kind: platform_history_kind(incoming, thread.adapter_name),
                retrieval_channel_id:
                  RetrievalChannel.id_by_config_and_channel(config, msg.channel_id),
                pipeline_module: pipeline_module(),
@@ -1059,24 +988,6 @@ defmodule Zaq.Channels.JidoChatBridge do
         {:error, reason}
     end
   end
-
-  defp verify_direct_channel(%Chat.Incoming{channel_meta: %{is_dm: true}} = incoming, provider)
-       when provider in [:discord, "discord"] do
-    with nil <- platform_history_kind(incoming, provider),
-         {:ok, adapter} <- adapter_for(provider),
-         true <- function_exported?(adapter, :fetch_metadata, 2),
-         {:ok, %{id: room, is_dm: true, metadata: metadata}} <-
-           adapter.fetch_metadata(incoming.external_room_id, []),
-         true <- room == incoming.external_room_id and is_map(metadata) do
-      %{incoming | raw: Map.put(incoming.raw || %{}, "channel", metadata)}
-    else
-      _ -> incoming
-    end
-  rescue
-    _ -> incoming
-  end
-
-  defp verify_direct_channel(incoming, _provider), do: incoming
 
   defp build_thread(%Chat.Incoming{} = incoming, config) do
     thread_id = incoming.external_thread_id || incoming.external_room_id
@@ -1235,7 +1146,7 @@ defmodule Zaq.Channels.JidoChatBridge do
     ingress_mode = ingress_mode_for(config.provider)
 
     default_ingress = %{"mode" => Atom.to_string(ingress_mode)}
-    configured_ingress = ChannelConfig.jido_chat_setting(config, "ingress", %{})
+    configured_ingress = Settings.jido_chat_setting(config, "ingress", %{})
 
     ingress =
       if is_map(configured_ingress),
@@ -1245,8 +1156,8 @@ defmodule Zaq.Channels.JidoChatBridge do
     [
       url: config.url,
       token: config.token,
-      bot_user_id: ChannelConfig.jido_chat_bot_user_id(config),
-      bot_name: ChannelConfig.jido_chat_bot_name(config),
+      bot_user_id: Settings.jido_chat_bot_user_id(config),
+      bot_name: Settings.jido_chat_bot_name(config),
       channel_ids: channel_ids,
       bridge_id: bridge_id,
       ingress: ingress,
@@ -1651,21 +1562,21 @@ defmodule Zaq.Channels.JidoChatBridge do
 
   defp listener_fingerprint(config) do
     %{
-      bot_name: ChannelConfig.jido_chat_bot_name(config),
-      bot_user_id: ChannelConfig.jido_chat_bot_user_id(config),
+      bot_name: Settings.jido_chat_bot_name(config),
+      bot_user_id: Settings.jido_chat_bot_user_id(config),
       ingress: normalized_ingress(config)
     }
   end
 
   defp refresh_fingerprint(config) do
     %{
-      bot_name: ChannelConfig.jido_chat_bot_name(config),
+      bot_name: Settings.jido_chat_bot_name(config),
       message_patterns: normalized_message_patterns(config)
     }
   end
 
   defp normalized_ingress(config) do
-    case ChannelConfig.jido_chat_setting(config, "ingress", %{}) do
+    case Settings.jido_chat_setting(config, "ingress", %{}) do
       ingress when is_map(ingress) -> ingress
       _ -> %{}
     end
@@ -1673,7 +1584,7 @@ defmodule Zaq.Channels.JidoChatBridge do
 
   defp normalized_message_patterns(config) do
     config
-    |> ChannelConfig.jido_chat_setting("message_patterns", [])
+    |> Settings.jido_chat_setting("message_patterns", [])
     |> Enum.filter(&is_binary/1)
   end
 

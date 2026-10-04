@@ -3,8 +3,8 @@ defmodule Zaq.Engine.IncomingMessageRoutingTest do
 
   alias Zaq.Accounts.{People, Person}
   alias Zaq.Agent.ConfiguredAgent
-  alias Zaq.Channels.{ChannelConfig, RetrievalChannel}
-  alias Zaq.Engine.{IncomingMessageRouting, IncomingMessageRoutingRule}
+  alias Zaq.Channels.RetrievalChannel
+  alias Zaq.Engine.{ChannelConfig, IncomingMessageRouting, IncomingMessageRoutingRule}
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.SystemConfigFixtures
 

@@ -4,9 +4,11 @@ defmodule Zaq.Engine.ScopedChannelRatingTest do
 
   alias Jido.Chat.ReactionEvent
   alias Zaq.Accounts.People
-  alias Zaq.Channels.{ChannelConfig, CommunicationBridge, HistoryDelivery, JidoChatBridge}
+  alias Zaq.Channels.{CommunicationBridge, JidoChatBridge}
   alias Zaq.Engine.{Api, ChannelHistoryAdmin, Conversations, HistoryIngress}
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations.Message
+  alias Zaq.Engine.History.Delivery, as: HistoryDelivery
   alias Zaq.Engine.History.Facts
   alias Zaq.Engine.Messages.{Incoming, Outgoing, SourceIdentity}
   alias Zaq.Event
@@ -77,7 +79,7 @@ defmodule Zaq.Engine.ScopedChannelRatingTest do
           provider: provider,
           routing_context: %{
             channel_config_id: config.id,
-            history_kind: kind,
+            conversation_type: if(kind == :direct, do: :one_to_one, else: :room),
             source_scope: scope
           }
         })
@@ -142,15 +144,14 @@ defmodule Zaq.Engine.ScopedChannelRatingTest do
       assert {:ok, %{history_capture: :unavailable, history_capture_error: :source_conflict}} =
                HistoryDelivery.capture(
                  {:ok, %{receipt | message_id: incoming.message_id}},
-                 outgoing,
-                 history_node_router: Router
+                 outgoing
                )
 
       assert Repo.get!(Message, response_id).external_message_id == nil
       assert Repo.get!(Message, response_id).metadata["delivery_confirmation"] == nil
 
       assert {:ok, %{history_capture: :stored}} =
-               HistoryDelivery.capture({:ok, receipt}, outgoing, history_node_router: Router)
+               HistoryDelivery.capture({:ok, receipt}, outgoing)
 
       reaction =
         ReactionEvent.new(%{
@@ -178,7 +179,7 @@ defmodule Zaq.Engine.ScopedChannelRatingTest do
       assert stored.conversation_id == original.conversation_id
 
       assert {:ok, %{history_capture: :stored}} =
-               HistoryDelivery.capture({:ok, receipt}, outgoing, history_node_router: Router)
+               HistoryDelivery.capture({:ok, receipt}, outgoing)
 
       assert {:ok, :ok} = HistoryIngress.associate_confirmation(response_id)
 
@@ -193,9 +194,7 @@ defmodule Zaq.Engine.ScopedChannelRatingTest do
                 history_capture: :unavailable,
                 history_capture_error: :conflicting_delivery_confirmation
               }} =
-               HistoryDelivery.capture({:ok, %{receipt | message_id: "conflict"}}, outgoing,
-                 history_node_router: Router
-               )
+               HistoryDelivery.capture({:ok, %{receipt | message_id: "conflict"}}, outgoing)
 
       assert Repo.get!(Message, response_id).external_message_id == external_id
       assert Repo.aggregate(Message, :count) == message_count
