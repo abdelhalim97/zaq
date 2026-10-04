@@ -8,14 +8,14 @@ defmodule ZaqWeb.Live.BO.Communication.NotificationImapLiveTest do
 
   alias Zaq.Accounts
   alias Zaq.Channels.AgentRouting
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Repo
   alias ZaqWeb.Live.BO.Communication.NotificationImapLive
 
   defmodule RouterStubOk do
     def list_mailboxes("email:imap", _config), do: {:ok, ["INBOX", "Support", "Sales"]}
-    def sync_provider_runtime("email:imap"), do: :ok
+    def sync_provider_runtime(%{provider: "email:imap"}), do: :ok
   end
 
   defmodule RouterStubSlow do
@@ -24,42 +24,42 @@ defmodule ZaqWeb.Live.BO.Communication.NotificationImapLiveTest do
       {:ok, ["INBOX", "Support"]}
     end
 
-    def sync_provider_runtime("email:imap"), do: :ok
+    def sync_provider_runtime(%{provider: "email:imap"}), do: :ok
   end
 
   defmodule RouterStubError do
     def list_mailboxes("email:imap", _config), do: {:error, :auth_failed}
-    def sync_provider_runtime("email:imap"), do: :ok
+    def sync_provider_runtime(%{provider: "email:imap"}), do: :ok
   end
 
   defmodule RouterStubConnectError do
     def list_mailboxes("email:imap", _config), do: {:error, {:connect_failed, :econnrefused}}
-    def sync_provider_runtime("email:imap"), do: :ok
+    def sync_provider_runtime(%{provider: "email:imap"}), do: :ok
   end
 
   defmodule RouterStubListError do
     def list_mailboxes("email:imap", _config), do: {:error, {:list_mailboxes_failed, :timeout}}
-    def sync_provider_runtime("email:imap"), do: :ok
+    def sync_provider_runtime(%{provider: "email:imap"}), do: :ok
   end
 
   defmodule RouterStubRaise do
     def list_mailboxes("email:imap", _config), do: raise("boom")
-    def sync_provider_runtime("email:imap"), do: :ok
+    def sync_provider_runtime(%{provider: "email:imap"}), do: :ok
   end
 
   defmodule RouterStubExit do
     def list_mailboxes("email:imap", _config), do: exit(:killed)
-    def sync_provider_runtime("email:imap"), do: :ok
+    def sync_provider_runtime(%{provider: "email:imap"}), do: :ok
   end
 
   defmodule RouterStubSyncError do
     def list_mailboxes("email:imap", _config), do: {:ok, ["INBOX"]}
-    def sync_provider_runtime("email:imap"), do: {:error, :sync_failed}
+    def sync_provider_runtime(%{provider: "email:imap"}), do: {:error, :sync_failed}
   end
 
   defmodule RouterStubSyncNil do
     def list_mailboxes("email:imap", _config), do: {:ok, ["INBOX"]}
-    def sync_provider_runtime("email:imap"), do: nil
+    def sync_provider_runtime(%{provider: "email:imap"}), do: nil
   end
 
   defmodule NodeRouterDispatchStub do
@@ -73,14 +73,19 @@ defmodule ZaqWeb.Live.BO.Communication.NotificationImapLiveTest do
     end
 
     def dispatch(%Zaq.Event{opts: opts} = event) do
-      if pid = Process.whereis(:notification_imap_dispatch_observer) do
-        send(pid, {:notification_imap_dispatch_called, event})
+      if Keyword.get(opts, :action) != :email_connector_settings do
+        if pid = Process.whereis(:notification_imap_dispatch_observer) do
+          send(pid, {:notification_imap_dispatch_called, event})
+        end
       end
 
       response =
         case Keyword.get(opts, :action) do
-          :sync_provider_runtime -> :ok
-          :list_mailboxes -> {:ok, ["INBOX", "Support", "Sales"]}
+          :sync_provider_runtime ->
+            :ok
+
+          :list_mailboxes ->
+            {:ok, ["INBOX", "Support", "Sales"]}
         end
 
       %{event | response: response}

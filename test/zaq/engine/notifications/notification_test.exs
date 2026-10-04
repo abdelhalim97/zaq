@@ -7,7 +7,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
 
   alias Zaq.Accounts.People
   alias Zaq.Accounts.PersonChannel
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Messages.Outgoing
   alias Zaq.Engine.Notifications
   alias Zaq.Engine.Notifications.{Notification, NotificationLog}

@@ -4,7 +4,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
   use ZaqWeb, :live_view
   on_mount {ZaqWeb.Live.BO.Communication.ServiceGate, [:channels]}
 
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Event
   alias Zaq.NodeRouter
   alias Zaq.Repo

@@ -2,8 +2,8 @@ defmodule Zaq.Engine.ApiTest do
   use Zaq.DataCase, async: true
 
   alias Zaq.Agent.ConfiguredAgent
-  alias Zaq.Channels.ChannelConfig
   alias Zaq.Engine.Api
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Connect
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Engine.Messages.Incoming

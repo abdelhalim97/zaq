@@ -3,8 +3,8 @@ defmodule Zaq.Channels.BridgeTest do
 
   alias Zaq.Channels.AgentRouting
   alias Zaq.Channels.Bridge
-  alias Zaq.Channels.ChannelConfig
   alias Zaq.Channels.DataSourceBridge
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Event
   alias Zaq.Repo
 

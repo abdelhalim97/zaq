@@ -1,10 +1,26 @@
 defmodule Zaq.Channels.MattermostAdminTest do
   use Zaq.DataCase, async: false
 
-  alias Zaq.Channels.ChannelConfig
   alias Zaq.Channels.MattermostAdmin
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Repo
   alias Zaq.TestSupport.OpenAIStub
+
+  describe "history capabilities" do
+    test "uses one identifier contract for advertisement and retrieval" do
+      config = %{url: "https://example.invalid", token: "token"}
+      valid = "abcde12345abcde12345abcde1"
+
+      assert {:ok, %{members: true}} =
+               MattermostAdmin.room_capabilities(config, valid)
+
+      assert {:ok, %{members: false}} =
+               MattermostAdmin.room_capabilities(config, "invalid")
+
+      assert {:error, :invalid_channel_id} =
+               MattermostAdmin.room_members(config, "invalid")
+    end
+  end
 
   describe "fetch_bot_identity/2" do
     test "returns bot id and username on HTTP 200" do

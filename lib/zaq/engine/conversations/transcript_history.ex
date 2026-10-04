@@ -10,7 +10,7 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
   import Ecto.Query
 
   alias Zaq.Accounts.Person
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations.{Conversation, Message, Transcript, TranscriptMessage}
   alias Zaq.Engine.History.{Facts, Strategy}
   alias Zaq.Engine.Messages.SourceIdentity
@@ -261,10 +261,27 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
         existing_owners = existing |> Enum.map(& &1.owner_person_id) |> Enum.uniq() |> Enum.sort()
         requested_owners = targets |> Enum.map(& &1.owner_person_id) |> Enum.uniq() |> Enum.sort()
 
-        if existing_owners == requested_owners,
-          do: {:ok, Enum.map(existing, &transcript_target/1)},
-          else: {:error, :source_conflict}
+        if existing_owners == requested_owners and
+             replicated_placement_scopes(existing) == replicated_placement_scopes(targets),
+           do: {:ok, Enum.map(existing, &transcript_target/1)},
+           else: {:error, :source_conflict}
     end
+  end
+
+  @replicated_placement_fields [
+    :strategy,
+    :provider,
+    :channel_config_id,
+    :external_channel_id,
+    :external_thread_id,
+    :parent_id
+  ]
+
+  defp replicated_placement_scopes(placements) do
+    placements
+    |> Enum.map(&Map.take(&1, @replicated_placement_fields))
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 
   defp transcript_target(transcript) do
@@ -678,17 +695,10 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
     context[:provider] == transcript.provider and
       context[:channel_config_id] == transcript.channel_config_id and
       is_binary(context[:provenance]) and context[:provenance] != "" and
-      valid_source_scope?(context[:source_scope]) and
+      SourceIdentity.valid_scope?(context[:source_scope]) and
       (transcript.strategy != "replicated" or
          context[:recipient_person_id] == transcript.owner_person_id)
   end
-
-  defp valid_source_scope?(nil), do: true
-
-  defp valid_source_scope?(scope) when is_binary(scope),
-    do: scope != "" and byte_size(scope) <= 160
-
-  defp valid_source_scope?(_scope), do: false
 
   defp matching_resource?(%Transcript{strategy: strategy} = transcript)
        when strategy in ["direct", "shared"] do

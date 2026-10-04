@@ -9,11 +9,12 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
   alias Jido.Chat.Media
   alias Zaq.Agent.{MCP, ServerManager}
   alias Zaq.Agent.Tools.DataSource.DownloadDocument
-  alias Zaq.Channels.{ChannelConfig, RetrievalChannel}
   alias Zaq.Channels.JidoChatBridge
   alias Zaq.Channels.JidoChatBridge.State
+  alias Zaq.Channels.RetrievalChannel
   alias Zaq.Channels.Supervisor
   alias Zaq.Contracts.Record
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.IncomingMessageRouter
   alias Zaq.Engine.IncomingMessageRouting
@@ -3499,11 +3500,11 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
   end
 
   describe "to_internal/2 is_dm flag" do
-    test "Mattermost history kind follows explicit adapter event channel type" do
+    test "Mattermost conversation type follows explicit adapter event channel type" do
       for {type, expected} <- [
-            {"O", :channel},
-            {"P", :channel},
-            {"D", :direct},
+            {"O", :room},
+            {"P", :room},
+            {"D", :one_to_one},
             {"G", nil},
             {nil, nil}
           ] do
@@ -3520,7 +3521,7 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
         assert {:ok, attrs} = Jido.Chat.Mattermost.Adapter.transform_incoming(payload)
         incoming = ChatIncoming.new(attrs)
 
-        assert JidoChatBridge.to_internal(incoming, :mattermost).routing_context.history_kind ==
+        assert JidoChatBridge.to_internal(incoming, :mattermost).routing_context.conversation_type ==
                  expected
       end
     end
@@ -3546,10 +3547,10 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
     test "Telegram private and group kinds follow explicit chat.type, not default is_dm" do
       for {type, expected} <- [
-            {"private", :direct},
-            {"group", :channel},
-            {"supergroup", :channel},
-            {"channel", :channel},
+            {"private", :one_to_one},
+            {"group", :room},
+            {"supergroup", :room},
+            {"channel", :room},
             {"mystery", nil}
           ] do
         payload = %{
@@ -3563,13 +3564,13 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
         assert {:ok, incoming} = Jido.Chat.Telegram.Adapter.transform_incoming(payload)
 
-        assert JidoChatBridge.to_internal(incoming, :telegram).routing_context.history_kind ==
+        assert JidoChatBridge.to_internal(incoming, :telegram).routing_context.conversation_type ==
                  expected
       end
     end
 
     test "Discord requires explicit guild evidence; missing guild cannot establish a DM" do
-      for {guild_id, expected} <- [{"guild-1", :channel}, {nil, nil}] do
+      for {guild_id, expected} <- [{"guild-1", :room}, {nil, nil}] do
         payload = %{
           "id" => "msg-1",
           "channel_id" => "room-1",
@@ -3580,16 +3581,16 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
         assert {:ok, incoming} = Jido.Chat.Discord.Adapter.transform_incoming(payload)
 
-        assert JidoChatBridge.to_internal(incoming, :discord).routing_context.history_kind ==
+        assert JidoChatBridge.to_internal(incoming, :discord).routing_context.conversation_type ==
                  expected
 
-        assert JidoChatBridge.to_internal(incoming, :mattermost).routing_context.history_kind ==
+        assert JidoChatBridge.to_internal(incoming, :mattermost).routing_context.conversation_type ==
                  nil
       end
     end
 
     test "Discord thread kind uses a verified guild and parent channel, not a naked thread id" do
-      for {parent, expected} <- [{"parent-room", :channel}, {nil, nil}] do
+      for {parent, expected} <- [{"parent-room", :room}, {nil, nil}] do
         payload = %{
           "id" => "msg-1",
           "channel_id" => "thread-room",
@@ -3601,14 +3602,14 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
         assert {:ok, incoming} = Jido.Chat.Discord.Adapter.transform_incoming(payload)
 
-        assert JidoChatBridge.to_internal(incoming, :discord).routing_context.history_kind ==
+        assert JidoChatBridge.to_internal(incoming, :discord).routing_context.conversation_type ==
                  expected
       end
     end
 
     test "Discord Direct requires matching explicit channel evidence, not message type or absent guild" do
       for {evidence, expected} <- [
-            {%{"id" => "room-1", "type" => 1}, :direct},
+            {%{"id" => "room-1", "type" => 1}, :one_to_one},
             {%{"id" => "other", "type" => 1}, nil},
             {%{"id" => "room-1", "type" => 3}, nil},
             {nil, nil}
@@ -3623,7 +3624,7 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
         assert {:ok, incoming} = Jido.Chat.Discord.Adapter.transform_incoming(payload)
 
-        assert JidoChatBridge.to_internal(incoming, :discord).routing_context.history_kind ==
+        assert JidoChatBridge.to_internal(incoming, :discord).routing_context.conversation_type ==
                  expected
       end
     end
@@ -3642,7 +3643,7 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
         | channel_meta: %{incoming.channel_meta | is_dm: false, chat_type: :public}
       }
 
-      assert JidoChatBridge.to_internal(conflicting, :mattermost).routing_context.history_kind ==
+      assert JidoChatBridge.to_internal(conflicting, :mattermost).routing_context.conversation_type ==
                nil
 
       mismatched_room = %{
@@ -3650,7 +3651,7 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
         | raw: Map.put(incoming.raw, "post", %{"channel_id" => "other-room"})
       }
 
-      assert JidoChatBridge.to_internal(mismatched_room, :mattermost).routing_context.history_kind ==
+      assert JidoChatBridge.to_internal(mismatched_room, :mattermost).routing_context.conversation_type ==
                nil
     end
 
@@ -3673,7 +3674,7 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
       msg = JidoChatBridge.to_internal(incoming, :mattermost)
       assert msg.is_dm == true
-      assert msg.routing_context.history_kind == :direct
+      assert msg.routing_context.conversation_type == :one_to_one
     end
 
     test "sets is_dm: false when channel_meta is nil" do
@@ -3688,7 +3689,7 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
       msg = JidoChatBridge.to_internal(incoming, :mattermost)
       assert msg.is_dm == false
-      assert msg.routing_context.history_kind == nil
+      assert msg.routing_context.conversation_type == nil
     end
 
     test "sets is_dm: false when channel_meta.is_dm is false" do
@@ -3710,7 +3711,7 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
       msg = JidoChatBridge.to_internal(incoming, :mattermost)
       assert msg.is_dm == false
-      assert msg.routing_context.history_kind == :channel
+      assert msg.routing_context.conversation_type == :room
     end
 
     test "typed ChannelMeta without an explicit room type cannot authorize shared history" do
@@ -3726,12 +3727,13 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
         }
       }
 
-      assert JidoChatBridge.to_internal(incoming, :mattermost).routing_context.history_kind == nil
+      assert JidoChatBridge.to_internal(incoming, :mattermost).routing_context.conversation_type ==
+               nil
 
       with_type = %{incoming | channel_meta: %{incoming.channel_meta | chat_type: :public}}
 
-      assert JidoChatBridge.to_internal(with_type, :mattermost).routing_context.history_kind ==
-               :channel
+      assert JidoChatBridge.to_internal(with_type, :mattermost).routing_context.conversation_type ==
+               :room
     end
 
     test "claimed provider or room metadata never overrides the configured bridge scope" do
@@ -3751,7 +3753,7 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
         assert JidoChatBridge.to_internal(incoming, %{provider: :mattermost, id: 12})
                |> Map.get(:routing_context)
-               |> Map.get(:history_kind) == nil
+               |> Map.get(:conversation_type) == nil
       end
     end
   end
@@ -3791,8 +3793,8 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
                Chat.process_message(chat, :mattermost, "mattermost:chan-1", post, [])
 
       assert_received {:passive_history_event, event}
-      assert event.opts[:action] == :capture_incoming_history
-      assert event.request.routing_context.history_kind == :channel
+      assert event.opts[:action] == :receive_incoming_message
+      assert event.request.routing_context.conversation_type == :room
       assert event.request.routing_context.channel_config_id == 42
       refute_received {:pipeline_run, _, _}
       refute_received {:passive_history_event, _}

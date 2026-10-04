@@ -2,7 +2,7 @@ defmodule Zaq.Engine.ChannelHistoryMembershipTest do
   use Zaq.DataCase, async: false
 
   alias Zaq.Accounts.People
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.ChannelHistoryMembership
   alias Zaq.Engine.{Conversations, HistoryIngress}
   alias Zaq.Engine.Messages.Incoming
@@ -51,7 +51,7 @@ defmodule Zaq.Engine.ChannelHistoryMembershipTest do
         author_id: "alice",
         message_id: "post-1",
         provider: :mattermost,
-        routing_context: %{channel_config_id: config.id, history_kind: :channel}
+        routing_context: %{channel_config_id: config.id, conversation_type: :room}
       })
 
     {:ok, placement} = HistoryIngress.capture(incoming)

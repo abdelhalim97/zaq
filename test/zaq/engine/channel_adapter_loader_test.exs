@@ -1,8 +1,8 @@
 defmodule Zaq.Engine.ChannelAdapterLoaderTest do
   use Zaq.DataCase, async: true
 
-  alias Zaq.Channels.ChannelConfig
   alias Zaq.Engine.ChannelAdapterLoader
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Repo
 
   defmodule StubAdapter do

@@ -5,25 +5,29 @@ defmodule Zaq.Engine.Workflows.Actions.RefreshChannelHistoryMembership do
   rechecks the current BO user rather than trusting a workflow parameter.
   """
 
+  @schema Zoi.object(%{
+            transcript_id: Zoi.string() |> Zoi.optional(),
+            person_id: Zoi.integer() |> Zoi.optional(),
+            channel_config_id: Zoi.integer() |> Zoi.optional()
+          })
+  @output_schema Zoi.object(%{
+                   members: Zoi.integer(),
+                   rooms: Zoi.integer() |> Zoi.optional()
+                 })
+
   use Zaq.Engine.Workflows.Action,
     name: "refresh_channel_history_membership",
     description: "Refresh verified room membership through the channel's supported capability",
-    schema: [
-      transcript_id: [type: :string],
-      person_id: [type: :integer],
-      channel_config_id: [type: :integer]
-    ],
-    output_schema: [members: [type: :integer, required: true], rooms: [type: :integer]]
+    schema: @schema,
+    output_schema: @output_schema
 
-  alias Zaq.Accounts
+  alias Zaq.Accounts.BOActor
   alias Zaq.Engine.ChannelHistoryMembership
 
   @impl Jido.Action
   def run(params, context) when is_map(params) and is_map(context) do
-    with {:ok, user_id} <- actor_user_id(Map.get(context, :actor)),
-         %{role: %{name: "super_admin"}} <- Accounts.get_user(user_id) do
-      refresh(params)
-    else
+    case BOActor.current_user(Map.get(context, :actor), allow_password_change: true) do
+      {:ok, %{role: %{name: "super_admin"}}} -> refresh(params)
       _ -> {:error, :unauthorized}
     end
   end
@@ -44,8 +48,4 @@ defmodule Zaq.Engine.Workflows.Actions.RefreshChannelHistoryMembership do
   end
 
   defp refresh(_), do: {:error, :invalid_scope}
-
-  defp actor_user_id(%{user_id: id}) when is_integer(id) and id > 0, do: {:ok, id}
-  defp actor_user_id(%{"user_id" => id}) when is_integer(id) and id > 0, do: {:ok, id}
-  defp actor_user_id(_), do: {:error, :unauthorized}
 end

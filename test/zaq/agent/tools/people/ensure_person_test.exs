@@ -7,7 +7,7 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
   alias Zaq.Accounts.Person
   alias Zaq.Accounts.PersonChannel
   alias Zaq.Agent.Tools.People.EnsurePerson
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Repo
 
   @ctx %{}

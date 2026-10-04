@@ -46,6 +46,41 @@ ROLES=engine iex --sname engine@localhost --cookie zaq_dev -S mix
 
 ## Data Flow
 
+### Email connector settings
+
+`Zaq.Engine.EmailConnectorSettings` owns IMAP/SMTP BO snapshots, exact connector
+selection, validation, encrypted persistence, SMTP binding and notification-default
+selection. BO calls Engine's confidential `:email_connector_settings` event with
+`op: :snapshot`, `:save`, or `:set_default`; authorization rechecks the current BO
+user in Engine. Saves execute `Zaq.Engine.Actions.SaveEmailConnector` through
+`Jido.Exec`, retaining its Zoi input/output contracts and existing result shapes.
+
+After persistence Engine resolves credentials and sends only runtime fields for
+the saved connector to Channels via confidential `:sync_provider_runtime` and
+`%{config: runtime_config}`. Channels applies the supplied configuration without
+Repo access in this path. Remote/runtime failure returns saved with pending sync,
+never a false rollback. `Zaq.Engine.ChannelConfig` now owns persistence; legacy
+Channels database callers remain during this incremental move. This does not
+establish Repo-free Channels bootstrap or delivery.
+
+### Connector configuration persistence
+
+`Zaq.Engine.ChannelConfig` owns the existing `channel_configs` Ecto schema, queries,
+mutations, SMTP defaults, validation and token encryption/runtime resolution.
+Multiple named connectors may share a provider; explicit ID resolution checks
+scope and enablement, and ambiguous provider-only calls fail closed. No table,
+ID, foreign-key or credential encoding migration accompanies this namespace move.
+
+Fields: `name`, `provider`, `kind` (`data_source` or `retrieval`), `url`, encrypted
+`token`, `enabled`, `archived_at`, `notification_default`, and provider `settings`.
+`get_by_provider/1`, `get_any_by_provider/1`, `upsert_by_provider/2`,
+`list_enabled_by_kind/2` and `get_by_channel_id/2` retain their selection contracts.
+Pure `jido_chat` and IMAP projections delegate to `Zaq.ConnectorConfig.Settings`;
+runtime transport consumers can use that shared module without Ecto dependency.
+Stored `jido_chat` fields include bot name/user ID, message patterns and ingress
+overrides. SMTP and IMAP lookup helpers live in `Zaq.ConnectorConfig`; bridge/listener
+normalization remains provider-local in Channels.
+
 ### Conversations
 
 Channel history grant foundation: `Zaq.Permissions.ChannelHistoryResource` identifies
@@ -65,12 +100,27 @@ conflicting identity still fails execution validation. BO web chat may supply
 its internally trusted session-derived Person. See the ingress trust scope in
 [Channels](channels.md); the Event envelope itself is not caller attestation.
 
+Engine `History.CommunicationPolicy` selects history from normalized communication
+facts, independently of provider: `:one_to_one` uses Direct, `:room` uses Shared,
+and `:recipient_addressed` uses Replicated. Unknown facts remain unsupported;
+transport `history_kind` or title hints cannot select policy. Engine also derives
+title presentation and capture eligibility. `IncomingMessageRouter` captures supported
+facts before admission without a Channels `capture_history` flag. Receive-only
+`:receive_incoming_message` events capture supported facts without triggering an
+agent response. `:record_delivery_confirmation` takes `%{receipt: receipt,
+outgoing: outgoing}` and delegates interpretation to `History.Delivery`; transport
+success remains success if history association fails.
+
 Canonical-history storage is being introduced without rewriting existing rows:
 `messages.id` stays stable for ratings and private trace artifacts, while new
 canonical messages can exist without a legacy `conversation_id`. A provider
 message's optional external identity is unique within its provider and trusted
 account key (including mailbox/collection when the provider's ID is only unique
-there); the absence of a provider ID does not imply deduplication. A
+there). Source namespaces are opaque, preserved exactly, and limited to 255 bytes;
+the encoded provider/connector/namespace account key is stored as text so that the
+envelope and JSON escaping cannot truncate a valid namespace. Existing encoded key
+bytes and uniqueness semantics remain stable. The absence of a provider ID does not
+imply deduplication. A
 `Transcript` stores strategy, provider/connector scope, optional parent and the
 permission-resource coordinate. Direct and Shared transcripts use explicit
 participant history grants; only Replicated transcripts require a Person owner.
@@ -89,8 +139,9 @@ Direct titles use the peer Person. These references are presentation evidence, n
 authorization grants. Direct participant grants are seeded once when the parent is
 created, not on redelivery or after revocation; manual grants have their own
 source and survive a provider-grant removal. Email capture requires a scoped
-mailbox/account key, and replays with a changed recipient set fail rather than
-backfilling earlier audience. The canonical append path serializes placements
+mailbox/account key, and replays with a changed recipient set or normalized
+conversation placement fail rather than backfilling earlier audience or adopting
+the persisted placement. The canonical append path serializes placements
 by locking the transcript, deduplicates only by verified
 provider/connector/source-scope/external-ID identity, and rejects conflicting
 replays; absent provider IDs create distinct messages. New capture is rejected
@@ -963,6 +1014,21 @@ Channel History projects positive/negative rating totals for every message role 
 from the current BO user's own vote. Counts are message-owned, not multiplied by transcript
 placements. Replica owner names are resolved in the admin projection; list rows show them
 beneath Strategy and detail subtitles link to the resolved Person in the People Directory.
+`ChannelHistoryProjection` batches participant counts/recent People, first-message titles,
+thread counts, stored roots, connector-scoped identities, and rating summaries for the
+finite list page. List requests never call a provider; only detail may use the verified
+Channels root fallback when a thread root is absent locally. The list query budget remains
+constant as the page grows to its 50-row bound.
+
+`ConnectorLifecycle.context/3` produces an exactly scoped, revisioned descriptor in
+Engine. `archive/2,3` validates scope/revision, stops data-source watches, requests
+confidential supplied-config provider teardown, then locks/rechecks the row and
+persists archival in Engine. It requests Channels runtime reconciliation and
+reconciles late watch cleanup afterward. Pre-archive failures
+leave the connector live. Runtime or cleanup failures after commit are returned as explicit
+pending stages, and retries resume the idempotent remaining work. BO callers and the
+`ArchiveChannelConnector` Action send only connector ID, provider, and kind with a current
+trusted actor.
 
 - `share_conversation/2`, `list_shares/1`, `revoke_share/1` — share link management.
 - `get_conversation_by_token/1` — resolves a conversation from an unexpired share token.

@@ -25,10 +25,11 @@ defmodule Zaq.E2E.Reset do
   alias Zaq.Addons.FeatureStore
   alias Zaq.Agent.ConfiguredAgent
   alias Zaq.Agent.MCP.Endpoint, as: MCPEndpoint
-  alias Zaq.Channels.{ChannelConfig, RetrievalChannel}
+  alias Zaq.Channels.RetrievalChannel
   alias Zaq.E2E.DocumentProcessorFake
   alias Zaq.E2E.PortalState
   alias Zaq.E2E.ProcessorState
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.{ExecutionRecord, Transcript, TranscriptMessage}
   alias Zaq.Ingestion.{Chunk, Document, IngestChunkJob, IngestJob}

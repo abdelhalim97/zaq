@@ -22,12 +22,19 @@ defmodule Zaq.Channels.Api do
 
   @behaviour Zaq.InternalBoundaries
 
-  alias Zaq.Channels.{Bridge, ChannelConfig, CommunicationBridge, DataSourceBridge}
-  alias Zaq.Channels.HistoryDelivery
+  alias Zaq.Channels.{
+    Bridge,
+    CommunicationBridge,
+    ConnectorRuntime,
+    DataSourceBridge
+  }
+
+  alias Zaq.Channels.DeliveryConfirmation
   alias Zaq.Channels.HttpClient
-  alias Zaq.Channels.MattermostAdmin
   alias Zaq.Channels.MessageFormatter
+  alias Zaq.ConnectorConfig.Settings
   alias Zaq.Contracts.Record
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Messages.{Incoming, Outgoing}
   import Zaq.Engine.Messages, only: [is_present_message_id: 1]
   alias Zaq.Event
@@ -44,16 +51,21 @@ defmodule Zaq.Channels.Api do
         %Event{
           request: %{channel_config_id: config_id, channel_id: channel_id, message_id: message_id}
         } = event,
-        :channel_history_root,
+        :channel_room_message,
         _context
       ) do
     response =
       with true <- Keyword.get(event.opts, :confidential) == true,
            %{user_id: user_id} when is_integer(user_id) <- event.actor,
            %{role: %{name: "super_admin"}} <- Zaq.Accounts.get_user(user_id),
-           %ChannelConfig{provider: "mattermost", enabled: true, archived_at: nil} = config <-
+           %ChannelConfig{enabled: true, archived_at: nil} = config <-
              ChannelConfig.get(config_id) do
-        MattermostAdmin.history_root(config, channel_id, message_id)
+        communication_bridge_module(event).fetch_room_message(
+          config,
+          channel_id,
+          message_id,
+          event.opts
+        )
       else
         _ -> {:error, :unavailable}
       end
@@ -63,32 +75,49 @@ defmodule Zaq.Channels.Api do
 
   def handle_event(
         %Event{request: %{channel_config_id: config_id, channel_id: channel_id}} = event,
-        :channel_history_capabilities,
+        :channel_room_capabilities,
         _context
       ) do
-    supported = history_membership_supported?(ChannelConfig.get(config_id), channel_id)
+    response =
+      with %ChannelConfig{enabled: true, archived_at: nil} = config <-
+             ChannelConfig.get(config_id),
+           {:ok, capabilities} <-
+             communication_bridge_module(event).room_capabilities(
+               config,
+               channel_id,
+               event.opts
+             ) do
+        {:ok, capabilities}
+      else
+        _ -> {:ok, %{members: false}}
+      end
 
-    %{event | response: {:ok, %{membership_refresh: supported}}}
+    %{event | response: response}
   end
 
   def handle_event(
         %Event{request: %{channel_config_id: config_id, channel_id: channel_id}} = event,
-        :channel_history_membership_snapshot,
+        :channel_room_members,
         _context
       ) do
     result =
       case ChannelConfig.get(config_id) do
-        %ChannelConfig{provider: "mattermost", enabled: true, archived_at: nil} = config ->
-          with true <- history_membership_supported?(config, channel_id),
-               {:ok, snapshot} <- MattermostAdmin.channel_membership_snapshot(config, channel_id) do
-            {:ok, Map.put(snapshot, :identity_platform, "mattermost")}
-          else
-            false -> {:error, :unsupported_membership_refresh}
-            {:error, _} = error -> error
+        %ChannelConfig{enabled: true, archived_at: nil} = config ->
+          bridge = communication_bridge_module(event)
+
+          case bridge.room_capabilities(config, channel_id, event.opts) do
+            {:ok, %{members: true}} ->
+              bridge.room_members(config, channel_id, event.opts)
+
+            {:ok, %{members: false}} ->
+              {:error, :unsupported}
+
+            {:error, _} = error ->
+              error
           end
 
         _ ->
-          {:error, :unsupported_membership_refresh}
+          {:error, :unsupported}
       end
 
     %{event | response: result}
@@ -114,7 +143,7 @@ defmodule Zaq.Channels.Api do
         formatted_outgoing
         |> bridge.send_reply(connection_details)
         |> normalize_delivery_response()
-        |> HistoryDelivery.capture(outgoing, event.opts)
+        |> DeliveryConfirmation.record(outgoing, event.opts)
 
       %{event | response: response}
     else
@@ -197,7 +226,7 @@ defmodule Zaq.Channels.Api do
     with {:ok, bridge} <- resolve_bridge(bridge_module, provider),
          true <- supports_callback?(bridge, :open_dm_channel, 2) || {:error, :unsupported},
          {:ok, config, details} <- identity_connection(bridge_module, provider, request) do
-      bot_user_id = ChannelConfig.jido_chat_bot_user_id(config)
+      bot_user_id = Settings.jido_chat_bot_user_id(config)
 
       details =
         details
@@ -245,6 +274,22 @@ defmodule Zaq.Channels.Api do
   end
 
   def handle_event(
+        %Event{request: %{config: config}} = event,
+        :sync_provider_runtime,
+        _context
+      ) do
+    response =
+      if Keyword.get(event.opts, :confidential) == true do
+        runtime_module = Keyword.get(event.opts, :runtime_module, CommunicationBridge)
+        runtime_module.sync_provider_runtime(config)
+      else
+        {:error, :confidential_event_required}
+      end
+
+    %{event | response: response}
+  end
+
+  def handle_event(
         %Event{request: %{provider: provider}} = event,
         :sync_provider_runtime,
         _context
@@ -254,15 +299,27 @@ defmodule Zaq.Channels.Api do
   end
 
   def handle_event(
-        %Event{request: %{channel_config_id: id}} = event,
-        :archive_channel_config,
+        %Event{request: %{config: config}} = event,
+        :connector_teardown_ingress,
         _context
       ) do
     response =
-      case ChannelConfig.get(id) do
-        %ChannelConfig{} = config -> ChannelConfig.archive(config)
-        _ -> {:error, :channel_config_not_found}
-      end
+      if Keyword.get(event.opts, :confidential) == true,
+        do: ConnectorRuntime.teardown_ingress(config, event.opts),
+        else: {:error, :confidential_event_required}
+
+    %{event | response: response}
+  end
+
+  def handle_event(
+        %Event{request: %{before_config: before_config, after_config: after_config}} = event,
+        :connector_sync_runtime,
+        _context
+      ) do
+    response =
+      if Keyword.get(event.opts, :confidential) == true,
+        do: ConnectorRuntime.sync_runtime(before_config, after_config, event.opts),
+        else: {:error, :confidential_event_required}
 
     %{event | response: response}
   end
@@ -868,14 +925,6 @@ defmodule Zaq.Channels.Api do
   def handle_event(%Event{} = event, action, _context) do
     %{event | response: {:error, {:unsupported_action, action}}}
   end
-
-  defp history_membership_supported?(
-         %ChannelConfig{provider: "mattermost", enabled: true, archived_at: nil},
-         channel_id
-       ),
-       do: is_binary(channel_id) and Regex.match?(~r/\A[a-z0-9]{26}\z/, channel_id)
-
-  defp history_membership_supported?(_config, _channel_id), do: false
 
   defp dispatch_webhook(module, provider, payload, nil),
     do: module.handle_webhook(provider, payload)

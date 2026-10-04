@@ -4,8 +4,8 @@ defmodule Zaq.Engine.ChannelHistoryAdminTest do
   import Zaq.AccountsFixtures
 
   alias Zaq.Accounts.People
-  alias Zaq.Channels.ChannelConfig
   alias Zaq.Engine.Api
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.{Message, MessageRating}
   alias Zaq.Engine.History.Facts
@@ -44,7 +44,7 @@ defmodule Zaq.Engine.ChannelHistoryAdminTest do
         provider: :mattermost,
         author_id: "alex",
         message_id: "m1",
-        routing_context: %{channel_config_id: config.id, history_kind: :channel}
+        routing_context: %{channel_config_id: config.id, conversation_type: :room}
       })
 
     {:ok, captured} = HistoryIngress.capture(incoming)
@@ -58,6 +58,30 @@ defmodule Zaq.Engine.ChannelHistoryAdminTest do
     )
     |> then(&Api.handle_event(&1, :channel_history_admin, %{}))
     |> Map.get(:response)
+  end
+
+  def count_query(_event, _measurements, _metadata, owner) do
+    if self() == owner, do: send(owner, :history_projection_query)
+  end
+
+  defp query_count(fun) do
+    handler = "history-projection-#{System.unique_integer([:positive])}"
+    :ok = :telemetry.attach(handler, [:zaq, :repo, :query], &__MODULE__.count_query/4, self())
+
+    try do
+      result = fun.()
+      {result, drain_query_count(0)}
+    after
+      :telemetry.detach(handler)
+    end
+  end
+
+  defp drain_query_count(count) do
+    receive do
+      :history_projection_query -> drain_query_count(count + 1)
+    after
+      0 -> count
+    end
   end
 
   test "current super-admin lists and reads only a public bounded projection", %{
@@ -89,7 +113,7 @@ defmodule Zaq.Engine.ChannelHistoryAdminTest do
                    author_id: "alex",
                    message_id: "message-#{channel}",
                    provider: :mattermost,
-                   routing_context: %{channel_config_id: config.id, history_kind: :channel}
+                   routing_context: %{channel_config_id: config.id, conversation_type: :room}
                  })
                )
     end
@@ -104,6 +128,20 @@ defmodule Zaq.Engine.ChannelHistoryAdminTest do
     assert length(last) == 1
     assert MapSet.size(MapSet.new(Enum.map(first ++ last, & &1.id))) == 3
     assert {:error, :invalid_request} = request(admin, %{op: :list, offset: -1})
+  end
+
+  test "list query budget is constant across populated page sizes", ctx do
+    {{:ok, [_]}, one_count} = query_count(fn -> request(ctx.admin, %{op: :list}) end)
+
+    for index <- 2..10 do
+      assert {:ok, _} = capture(ctx, "room-#{index}", "message-#{index}", "external")
+    end
+
+    {{:ok, rows}, ten_count} = query_count(fn -> request(ctx.admin, %{op: :list}) end)
+
+    assert length(rows) == 10
+    assert one_count <= 12
+    assert ten_count == one_count
   end
 
   test "empty thread pages retain authorized parent context and reject nonexistent parents",
@@ -273,7 +311,7 @@ defmodule Zaq.Engine.ChannelHistoryAdminTest do
               channel_id: "room",
               author_id: "author-#{index}",
               message_id: "participant-#{index}",
-              routing_context: %{channel_config_id: ctx.config.id, history_kind: :channel}
+              routing_context: %{channel_config_id: ctx.config.id, conversation_type: :room}
             })
           )
 
@@ -312,7 +350,7 @@ defmodule Zaq.Engine.ChannelHistoryAdminTest do
     admin: admin,
     captured: captured
   } do
-    assert {:error, :unsupported_membership_refresh} =
+    assert {:error, :unsupported} =
              request(admin, %{op: :refresh, id: captured.transcript_id})
   end
 

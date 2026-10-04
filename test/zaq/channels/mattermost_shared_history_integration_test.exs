@@ -5,9 +5,10 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
   alias Zaq.Accounts.People
   alias Zaq.Agent.ServerManager
-  alias Zaq.Channels.{ChannelConfig, JidoChatBridge}
+  alias Zaq.Channels.JidoChatBridge
   alias Zaq.Channels.MattermostAdmin
   alias Zaq.Engine.Api
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.{Message, Transcript, TranscriptMessage}
   alias Zaq.Engine.IncomingMessageRouting
@@ -298,7 +299,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
   test "provider root lookup rejects a post from a different room", ctx do
     assert {:error, :unavailable} =
-             MattermostAdmin.history_root(ctx.config, "another-room", "root-human")
+             MattermostAdmin.fetch_room_message(ctx.config, "another-room", "root-human")
   end
 
   defp await_delivery_event do

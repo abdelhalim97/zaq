@@ -6,8 +6,8 @@ defmodule Zaq.Channels.JidoChatDeliveryTest do
 
   alias Jido.Chat.Mattermost.Adapter
   alias Zaq.Accounts.{People, PeopleAuth, PeoplePermissions, PersonLoginChallenge}
-  alias Zaq.Channels.{ChannelConfig, JidoChatBridge}
-  alias Zaq.Engine.{Events, PeopleAuthGateway}
+  alias Zaq.Channels.JidoChatBridge
+  alias Zaq.Engine.{ChannelConfig, Events, PeopleAuthGateway}
   alias Zaq.Engine.Messages.Outgoing
   alias Zaq.Engine.Notifications.NotificationLog
   alias Zaq.TestSupport.OpenAIStub

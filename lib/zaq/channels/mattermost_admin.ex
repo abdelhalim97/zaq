@@ -8,13 +8,25 @@ defmodule Zaq.Channels.MattermostAdmin do
   """
 
   alias Jido.Chat.Mattermost.Transport.ReqClient
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.ConnectorConfig.Settings
+  alias Zaq.Engine.ChannelConfig
 
   @membership_page_size 200
   @membership_max_pages 50
 
+  @doc "Advertises whether the room identifier supports member queries."
+  def room_capabilities(_config, channel_id),
+    do: {:ok, %{members: valid_history_channel_id?(channel_id)}}
+
+  @doc "Returns complete member identifiers in the provider identity namespace."
+  def room_members(config, channel_id) do
+    with {:ok, snapshot} <- channel_membership_snapshot(config, channel_id) do
+      {:ok, Map.put(snapshot, :identity_platform, "mattermost")}
+    end
+  end
+
   @doc "Reads a root post for bounded BO history context, verifying its exact room and identity."
-  def history_root(config, channel_id, message_id) when is_binary(message_id) do
+  def fetch_room_message(config, channel_id, message_id) when is_binary(message_id) do
     with true <- Regex.match?(~r/\A[a-zA-Z0-9_-]{1,255}\z/, message_id),
          {:ok,
           %{
@@ -40,7 +52,7 @@ defmodule Zaq.Channels.MattermostAdmin do
          author_name: author,
          content: content,
          role:
-           if(author == ChannelConfig.jido_chat_bot_user_id(config),
+           if(author == Settings.jido_chat_bot_user_id(config),
              do: "assistant",
              else: "external"
            ),
@@ -52,7 +64,7 @@ defmodule Zaq.Channels.MattermostAdmin do
     end
   end
 
-  def history_root(_, _, _), do: {:error, :unavailable}
+  def fetch_room_message(_, _, _), do: {:error, :unavailable}
 
   defp root_timestamp(value) when is_integer(value) do
     case DateTime.from_unix(value, :millisecond) do
@@ -136,7 +148,7 @@ defmodule Zaq.Channels.MattermostAdmin do
 
   def channel_membership_snapshot(config, channel_id, opts)
       when is_binary(channel_id) and is_list(opts) do
-    if Regex.match?(~r/\A[a-z0-9]{26}\z/, channel_id) do
+    if valid_history_channel_id?(channel_id) do
       fetch_page = Keyword.get(opts, :fetch_page, &fetch_membership_page/4)
       collect_members(config, channel_id, fetch_page, 0, MapSet.new())
     else
@@ -145,6 +157,9 @@ defmodule Zaq.Channels.MattermostAdmin do
   end
 
   def channel_membership_snapshot(_, _, _), do: {:error, :invalid_channel_id}
+
+  defp valid_history_channel_id?(channel_id),
+    do: is_binary(channel_id) and Regex.match?(~r/\A[a-z0-9]{26}\z/, channel_id)
 
   defp collect_members(_config, _channel_id, _fetch_page, @membership_max_pages, _seen),
     do: {:error, :snapshot_too_large}

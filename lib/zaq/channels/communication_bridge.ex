@@ -64,6 +64,9 @@ defmodule Zaq.Channels.CommunicationBridge do
   @callback list_ingress_subscriptions(map(), map()) :: {:ok, [map()]} | {:error, term()}
   @callback delete_ingress_subscription(map(), map()) :: {:ok, map()} | {:error, term()}
   @callback materialize_record(map(), map(), map()) :: {:ok, map()} | {:error, term()}
+  @callback room_capabilities(map(), String.t()) :: {:ok, map()} | {:error, term()}
+  @callback room_members(map(), String.t()) :: {:ok, map()} | {:error, term()}
+  @callback fetch_room_message(map(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
 
   @optional_callbacks send_typing: 3,
                       upsert_message: 3,
@@ -81,14 +84,17 @@ defmodule Zaq.Channels.CommunicationBridge do
                       list_mailboxes: 2,
                       conversation_key: 1,
                       outbound_conversation_key: 2,
-                      materialize_record: 3
+                      materialize_record: 3,
+                      room_capabilities: 2,
+                      room_members: 2,
+                      fetch_room_message: 3
 
   defmacro __using__(_opts) do
     quote do
       defdelegate route_incoming_message(msg, pipeline_opts, actor, opts \\ []),
         to: Zaq.Channels.CommunicationBridge
 
-      defdelegate capture_passive_history(msg, opts \\ []),
+      defdelegate receive_message(msg, opts \\ []),
         to: Zaq.Channels.CommunicationBridge
 
       defdelegate dispatch_message_rating(message_ref, rater_attrs, opts \\ []),
@@ -174,6 +180,32 @@ defmodule Zaq.Channels.CommunicationBridge do
     end
   end
 
+  @doc "Returns the configured bridge's room query capabilities."
+  def room_capabilities(config, channel_id, opts \\ []) do
+    room_query(config, :room_capabilities, [config, channel_id], opts)
+  end
+
+  @doc "Returns a complete provider-normalized room membership snapshot."
+  def room_members(config, channel_id, opts \\ []) do
+    room_query(config, :room_members, [config, channel_id], opts)
+  end
+
+  @doc "Reads one provider message after verifying its exact room and identifier."
+  def fetch_room_message(config, channel_id, message_id, opts \\ []) do
+    room_query(config, :fetch_room_message, [config, channel_id, message_id], opts)
+  end
+
+  defp room_query(config, callback, args, opts) do
+    provider = Map.get(config, :provider) || Map.get(config, "provider")
+
+    with {:ok, bridge} <- Bridge.resolve_bridge(provider, opts),
+         true <- bridge_supports?(bridge, callback, length(args)) do
+      apply(bridge, callback, args)
+    else
+      _ -> {:error, :unsupported}
+    end
+  end
+
   @doc "Adds a reaction through the provider bridge."
   @spec add_reaction(atom() | String.t(), String.t() | integer(), String.t(), String.t()) ::
           :ok | {:error, term()}
@@ -250,8 +282,17 @@ defmodule Zaq.Channels.CommunicationBridge do
     end
   end
 
-  @doc "Synchronizes runtime processes from canonical DB config for provider."
-  @spec sync_provider_runtime(atom() | String.t()) :: :ok | {:error, term()}
+  @doc "Applies supplied runtime config without Repo access; legacy provider-only calls resolve DB config."
+  @spec sync_provider_runtime(map() | atom() | String.t()) :: :ok | {:error, term()}
+  def sync_provider_runtime(%{id: id, provider: provider, enabled: enabled} = config)
+      when is_integer(id) and id > 0 and is_binary(provider) and is_boolean(enabled) do
+    with {:ok, bridge} <- Bridge.resolve_bridge(provider) do
+      Bridge.dispatch_provider_runtime_sync(bridge, config)
+    end
+  end
+
+  def sync_provider_runtime(config) when is_map(config), do: {:error, :invalid_runtime_config}
+
   def sync_provider_runtime(provider) do
     with {:ok, config} <- Bridge.fetch_any_channel_config(provider),
          {:ok, bridge} <- Bridge.resolve_bridge(provider) do
@@ -340,12 +381,23 @@ defmodule Zaq.Channels.CommunicationBridge do
   @doc """
   Deletes provider ingress subscription through the configured communication bridge.
 
-  This operation accepts any provider config, including disabled ones
-  (`fetch_any_channel_config/1`), so teardown can still run after a channel has
-  been disabled.
+  A supplied configuration map is used directly without Repo access. Legacy
+  provider-only calls resolve any provider config (`fetch_any_channel_config/1`),
+  including disabled ones, so teardown can still run after disablement.
   """
-  @spec delete_ingress_subscription(atom() | String.t(), map()) :: {:ok, map()} | {:error, term()}
-  def delete_ingress_subscription(provider, params \\ %{}) when is_map(params) do
+  @spec delete_ingress_subscription(map() | atom() | String.t(), map()) ::
+          {:ok, map()} | {:error, term()}
+  def delete_ingress_subscription(config_or_provider, params \\ %{})
+
+  def delete_ingress_subscription(%{provider: provider} = config, params) when is_map(params) do
+    with {:ok, bridge} <- Bridge.resolve_bridge(provider),
+         true <-
+           bridge_supports?(bridge, :delete_ingress_subscription, 2) || {:error, :unsupported} do
+      bridge.delete_ingress_subscription(config, params)
+    end
+  end
+
+  def delete_ingress_subscription(provider, params) when is_map(params) do
     with {:ok, bridge} <- Bridge.resolve_bridge(provider),
          {:ok, config} <- Bridge.fetch_any_channel_config(provider),
          true <-
@@ -514,30 +566,24 @@ defmodule Zaq.Channels.CommunicationBridge do
     )
   end
 
-  @doc "Retains adapter-attested nonmentions without admitting an agent turn or firing a trigger."
-  @spec capture_passive_history(Incoming.t(), keyword()) :: :ok | {:error, term()}
-  def capture_passive_history(%Incoming{} = msg, opts \\ []) when is_list(opts) do
-    case Keyword.get(opts, :history_kind) do
-      kind when kind in [:direct, :channel, :replicated] ->
-        node_router = Keyword.get(opts, :node_router, NodeRouter)
+  @doc "Delivers a normalized message to Engine without requesting an automated response."
+  @spec receive_message(Incoming.t(), keyword()) :: :ok | {:error, term()}
+  def receive_message(%Incoming{} = msg, opts \\ []) when is_list(opts) do
+    node_router = Keyword.get(opts, :node_router, NodeRouter)
 
-        event =
-          msg
-          |> put_routing_context(opts)
-          |> Event.new(:engine,
-            type: :sync,
-            name: :channel_history_capture_requested,
-            opts: [action: :capture_incoming_history]
-          )
+    event =
+      msg
+      |> put_routing_context(opts)
+      |> Event.new(:engine,
+        type: :sync,
+        name: :incoming_message_received,
+        opts: [action: :receive_incoming_message]
+      )
 
-        case node_router.dispatch(event) do
-          %Event{response: {:ok, _}} -> :ok
-          %Event{response: {:error, reason}} -> {:error, reason}
-          _ -> {:error, :history_capture_failed}
-        end
-
-      _ ->
-        :ok
+    case node_router.dispatch(event) do
+      %Event{response: {:ok, _}} -> :ok
+      %Event{response: {:error, reason}} -> {:error, reason}
+      _ -> {:error, :incoming_message_failed}
     end
   end
 
@@ -574,10 +620,6 @@ defmodule Zaq.Channels.CommunicationBridge do
       |> maybe_put_event_opt(:identity_opts, Keyword.get(opts, :identity_opts))
       |> maybe_put_event_opt(:identity_resolver, Keyword.get(opts, :identity_resolver))
       |> maybe_put_event_opt(:node_router, Keyword.get(opts, :node_router))
-      |> maybe_put_event_opt(
-        :capture_history,
-        Keyword.get(opts, :history_kind) in [:direct, :channel, :replicated]
-      )
 
     Event.new(msg, :engine,
       type: :sync,
@@ -632,9 +674,6 @@ defmodule Zaq.Channels.CommunicationBridge do
       # Connector provenance must be stamped from the bridge's configured
       # instance, never inherited from untrusted incoming metadata.
       |> Map.put(:channel_config_id, Keyword.get(opts, :channel_config_id))
-      # A caller's Incoming metadata/routing context is not kind attestation.
-      # Only the configured bridge may stamp an adapter-derived history kind.
-      |> Map.put(:history_kind, Keyword.get(opts, :history_kind))
       |> maybe_put_routing_context(
         :retrieval_channel_id,
         Keyword.get(opts, :retrieval_channel_id)

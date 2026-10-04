@@ -3,7 +3,7 @@ defmodule Zaq.Engine.Conversations.TranscriptHistoryTest do
   use ExUnitProperties
 
   alias Zaq.Accounts.People
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.{Message, Transcript, TranscriptMessage}
   alias Zaq.Permissions
@@ -374,5 +374,16 @@ defmodule Zaq.Engine.Conversations.TranscriptHistoryTest do
     end
 
     assert Repo.get!(Transcript, room.id).next_position == 14
+  end
+
+  test "append accepts the complete opaque source-scope boundary" do
+    config = config()
+    room = transcript(config, "room-long-scope")
+    scope = String.duplicate("é", 127) <> "a"
+
+    assert byte_size(scope) == 255
+    assert {:ok, first} = append(room, config, "long-scope", %{}, %{source_scope: scope})
+    assert {:ok, replay} = append(room, config, "long-scope", %{}, %{source_scope: scope})
+    assert first == replay
   end
 end

@@ -4,7 +4,7 @@ defmodule Zaq.Accounts.ChannelIdentityConcurrencyTest do
   import Ecto.Query
   alias Ecto.Adapters.SQL.Sandbox
   alias Zaq.Accounts.{People, Person, PersonChannel}
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Repo
 
   test "independent bot connections converge on one Telegram native identity" do

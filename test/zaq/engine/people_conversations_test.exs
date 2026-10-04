@@ -1,8 +1,7 @@
 defmodule Zaq.Engine.PeopleConversationsTest do
   use Zaq.DataCase, async: false
   alias Zaq.Accounts.{People, PeopleAuth, PeoplePermissions, PersonSession}
-  alias Zaq.Channels.ChannelConfig
-  alias Zaq.Engine.{Conversations, Events, PeopleConversations}
+  alias Zaq.Engine.{ChannelConfig, Conversations, Events, PeopleConversations}
   alias Zaq.Engine.Conversations.Message
   alias Zaq.Engine.History.Facts
   alias Zaq.Event

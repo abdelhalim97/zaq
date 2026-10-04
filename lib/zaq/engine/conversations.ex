@@ -25,8 +25,8 @@ defmodule Zaq.Engine.Conversations do
   alias Zaq.Accounts.{People, Person, PersonChannel, User}
   alias Zaq.Agent.CitationNormalizer
   alias Zaq.Agent.StreamEvents
-  alias Zaq.Channels.ChannelConfig
-  alias Zaq.Engine.History.Facts
+  alias Zaq.Engine.ChannelConfig
+  alias Zaq.Engine.History.{CommunicationPolicy, Facts}
   alias Zaq.Engine.Messages.{ConversationIdentity, Incoming, Measurements, SourceIdentity}
   alias Zaq.Engine.Messages.Incoming.Audience
   alias Zaq.Engine.Telemetry
@@ -458,13 +458,14 @@ defmodule Zaq.Engine.Conversations do
   defp canonical_admission_source(%Incoming{routing_context: %{source_scope: :invalid}}),
     do: {:error, :invalid_history_source}
 
-  defp canonical_admission_source(%Incoming{routing_context: %{history_kind: nil}}), do: :none
+  defp canonical_admission_source(%Incoming{routing_context: %{conversation_type: nil}}),
+    do: :none
 
   defp canonical_admission_source(%Incoming{message_id: id, routing_context: context} = msg)
        when is_binary(id) and id != "" do
     provider = to_string(msg.provider)
     config_id = context.channel_config_id
-    kind = context.history_kind
+    {:ok, kind} = CommunicationPolicy.kind(msg)
 
     source_scope = context.source_scope
 
@@ -507,7 +508,8 @@ defmodule Zaq.Engine.Conversations do
   end
 
   defp matching_canonical_placement?(message_id, msg) do
-    facts = %Facts{provider: to_string(msg.provider), kind: msg.routing_context.history_kind}
+    {:ok, kind} = CommunicationPolicy.kind(msg)
+    facts = %Facts{provider: to_string(msg.provider), kind: kind}
 
     case Facts.strategy(facts) do
       {:ok, kind} ->
@@ -670,7 +672,7 @@ defmodule Zaq.Engine.Conversations do
          routing_context:
            %{
              channel_config_id: config_id,
-             history_kind: :replicated,
+             conversation_type: :recipient_addressed,
              source_scope: scope,
              audience: %Audience{sender: sender} = audience
            } = context

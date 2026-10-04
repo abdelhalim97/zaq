@@ -11,7 +11,7 @@ defmodule Zaq.Engine.Messages.SourceIdentity do
   def account_key(provider, channel_config_id, source_scope),
     do: Jason.encode!([provider, channel_config_id, source_scope])
 
-  @doc "Validates an opaque namespace; nil is the historical connector-global namespace."
+  @doc "Validates an opaque 1–255-byte namespace; nil is the historical connector-global namespace."
   def valid_scope?(nil), do: true
   def valid_scope?(scope), do: is_binary(scope) and byte_size(scope) in 1..255
 end

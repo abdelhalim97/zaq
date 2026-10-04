@@ -13,7 +13,7 @@ defmodule Zaq.People.IdentityResolver do
   alias Zaq.Accounts.People
   alias Zaq.Accounts.PersonChannel
   alias Zaq.Channels.Bridge
-  alias Zaq.Channels.ChannelConfig
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Engine.Messages.Incoming.Audience
   alias Zaq.Engine.Messages.Incoming.RoutingContext

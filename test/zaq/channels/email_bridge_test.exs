@@ -3,10 +3,10 @@ defmodule Zaq.Channels.EmailBridgeTest do
   use ExUnitProperties
   import ExUnit.CaptureLog
 
-  alias Zaq.Channels.ChannelConfig
   alias Zaq.Channels.EmailBridge
   alias Zaq.Channels.EmailBridge.ImapConfigHelpers
   alias Zaq.Channels.EmailBridge.SmtpSender
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Repo
   alias Zaq.SystemConfigFixtures
@@ -138,6 +138,9 @@ defmodule Zaq.Channels.EmailBridgeTest do
         channel_id: "author@example.com",
         author_id: "author@example.com",
         provider: :"email:imap",
+        routing_context: %Zaq.Engine.Messages.Incoming.RoutingContext{
+          conversation_type: :recipient_addressed
+        },
         metadata: %{"email" => %{}}
       }
     end
@@ -803,7 +806,7 @@ defmodule Zaq.Channels.EmailBridgeTest do
       assert event.request.content == "incoming"
       assert event.name == :incoming_message_routing_requested
       assert event.request.routing_context.topic_id == "INBOX"
-      assert event.request.routing_context.history_kind == :replicated
+      assert event.request.routing_context.conversation_type == :recipient_addressed
       refute Map.has_key?(event.assigns || %{}, "agent_selection")
       refute_received {:node_router_run_pipeline_event, _}
     end
@@ -952,7 +955,7 @@ defmodule Zaq.Channels.EmailBridgeTest do
 
       assert {:ok, receipt} = EmailBridge.send_reply(outgoing, %{})
 
-      assert receipt.history_audience == %Zaq.Engine.Messages.Incoming.Audience{
+      assert receipt.audience == %Zaq.Engine.Messages.Incoming.Audience{
                platform: "email",
                sender: "second@second.example.org",
                recipients: ["recipient@example.com"]
@@ -1315,8 +1318,8 @@ defmodule Zaq.Channels.EmailBridgeTest do
 
       assert_receive {:email, email}
       assert email.from == {"Explicit Name", "explicit@example.com"}
-      assert receipt.history_audience.sender == "explicit@example.com"
-      assert receipt.history_audience.recipients == ["recipient@example.com"]
+      assert receipt.audience.sender == "explicit@example.com"
+      assert receipt.audience.recipients == ["recipient@example.com"]
     end
 
     test "send_reply with non-binary thread metadata omits threading headers" do
