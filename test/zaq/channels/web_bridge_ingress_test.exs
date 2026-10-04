@@ -348,7 +348,7 @@ defmodule Zaq.Channels.WebBridgeIngressTest do
       refute_receive _
     end
 
-    test "legacy outgoing messages retain the existing tuple contract" do
+    test "metadata cannot select a topic without a trusted delivery descriptor" do
       topic = "chat:#{Ecto.UUID.generate()}"
       "chat:" <> session_id = topic
       Phoenix.PubSub.subscribe(Zaq.PubSub, topic)
@@ -365,12 +365,12 @@ defmodule Zaq.Channels.WebBridgeIngressTest do
       }
 
       event = Event.new(outgoing, :channels, opts: [action: :deliver_outgoing])
-      assert {:ok, %{}} = Api.handle_event(event, :deliver_outgoing, nil).response
 
-      assert_receive {:pipeline_result, "legacy-request",
-                      %Outgoing{body: "legacy answer", metadata: delivered_metadata}, "question"}
+      assert {:error, :missing_delivery_descriptor} =
+               Api.handle_event(event, :deliver_outgoing, nil).response
 
-      assert delivered_metadata.format == :markdown
+      refute_receive {:pipeline_result, _, _, _}
+      refute_receive {:web_response, _, _}
     end
   end
 

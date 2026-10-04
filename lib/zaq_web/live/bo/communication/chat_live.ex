@@ -180,6 +180,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
          |> assign(:messages, ui_messages)
          |> assign(:history, history)
          |> assign(:current_conversation_id, id)
+         |> assign(:current_request_id, nil)
          |> assign(:status, :idle)
          |> assign(:status_message, "")
          |> assign(:streaming_response_active, false)}
@@ -198,6 +199,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
      |> assign(:status_message, "")
      |> assign(:streaming_response_active, false)
      |> assign(:current_conversation_id, nil)
+     |> assign(:current_request_id, nil)
      |> reload_sidebar_conversations()}
   end
 
@@ -228,6 +230,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
          |> assign(:status_message, "")
          |> assign(:streaming_response_active, false)
          |> assign(:current_conversation_id, nil)
+         |> assign(:current_request_id, nil)
          |> assign(:show_delete_confirm, false)
          |> reload_sidebar_conversations()}
     end
@@ -440,22 +443,6 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
     end
   end
 
-  def handle_info({:status_update, request_id, status, message, update_intent}, socket) do
-    if request_id == socket.assigns.current_request_id do
-      {:noreply, apply_status_update(socket, request_id, status, message, update_intent)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_info({:status_update, request_id, status, message}, socket) do
-    if request_id == socket.assigns.current_request_id do
-      {:noreply, apply_status_update(socket, request_id, status, message, nil)}
-    else
-      {:noreply, socket}
-    end
-  end
-
   def handle_info({:title_updated, conv_id, title}, socket) do
     conversations =
       Enum.map(socket.assigns.conversations, fn
@@ -464,14 +451,6 @@ defmodule ZaqWeb.Live.BO.Communication.ChatLive do
       end)
 
     {:noreply, assign(socket, :conversations, conversations)}
-  end
-
-  def handle_info({:pipeline_result, request_id, result, user_msg}, socket) do
-    if request_id != socket.assigns.current_request_id do
-      {:noreply, socket}
-    else
-      {:noreply, apply_pipeline_result(socket, result, user_msg, request_id)}
-    end
   end
 
   defp apply_status_update(socket, request_id, status, message, update_intent) do

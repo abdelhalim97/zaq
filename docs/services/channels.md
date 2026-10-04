@@ -412,8 +412,12 @@ containing the persisted IDs, sources, ratings and message-info fields needed by
 Sidebar listing/deletion, title subscriptions, ratings and source previews remain on their
 existing supported role actions.
 
-For unmigrated callers, `WebBridge` still accepts its legacy flat BO payload and emits the
-existing `:status_update` / `:pipeline_result` tuples. Widget runtime is not active.
+BO migration is complete: flat BO payloads and legacy standalone `:status_update` /
+`:pipeline_result` tuples are no longer supported. Final and status delivery require a
+trusted `Delivery` descriptor; missing descriptors return `:missing_delivery_descriptor`
+rather than deriving a PubSub topic from metadata. New chat, conversation restoration and
+deletion of the active conversation clear request correlation so late responses cannot
+populate a different chat. Widget runtime is not active.
 
 ### Semantic delivery
 
@@ -1184,9 +1188,11 @@ stored-map projections; none of these shared helpers accesses Repo or credential
 
 `Zaq.Channels.WebBridge` serves the ChatLive web channel.
 
-- `to_internal/2` — converts ChatLive form params to `%Incoming{provider: :web}`. Expects params keys `:content`, `:channel_id`, `:session_id`, `:request_id`.
-- `send_reply/2` — broadcasts `{:pipeline_result, request_id, outgoing, user_content}` to the `"chat:<session_id>"` PubSub topic.
-- ChatLive dispatches `%Incoming{provider: :web, channel_id: "bo"}` to Engine with `action: :route_incoming_message`. Its agent selector is carried as transient `event.assigns["agent_selection"]` (`source: "bo_explicit"`) and is resolved by Engine before the event continues to Agent.
+- `to_internal/2` — translates a normalized `Web.Message` and trusted `Web.Context` into canonical `%Incoming{provider: :web}`.
+- `send_reply/2` and `upsert_message/3` — publish `{:web_response, adapter_event_name, %Web.Response{}}` using the trusted delivery descriptor, never a metadata-selected topic.
+- ChatLive uses `ZaqWeb.Chat.BridgeClient` to dispatch normalized messages and commands to Channels through `:web_ingress`. WebBridge owns canonical Engine routing. BO agent selection remains transient `event.assigns["agent_selection"]` (`source: "bo_explicit"`) and is resolved by Engine before the event continues to Agent.
+
+See [Web transport contracts](#web-transport-contracts) for initialization, history and semantic delivery.
 
 ---
 

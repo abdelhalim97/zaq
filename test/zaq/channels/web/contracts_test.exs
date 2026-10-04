@@ -59,11 +59,11 @@ defmodule Zaq.Channels.Web.ContractsTest do
     end
 
     property "arbitrary modes never create atoms" do
-      check all(
-              mode <- string(:alphanumeric, min_length: 1, max_length: 32),
-              mode not in ["async", "sync"]
-            ) do
-        before = :erlang.system_info(:atom_count)
+      check all(suffix <- string(:alphanumeric, min_length: 1, max_length: 32)) do
+        # Atom count is VM-wide and changes during concurrent module loading.
+        # Check the generated input itself, without ever interning it.
+        mode = "web_mode_#{suffix}_#{System.unique_integer([:positive])}"
+        assert_raise ArgumentError, fn -> String.to_existing_atom(mode) end
 
         assert {:error, {:invalid_field, :mode}} =
                  Message.new(%{
@@ -75,7 +75,7 @@ defmodule Zaq.Channels.Web.ContractsTest do
                    mode: mode
                  })
 
-        assert :erlang.system_info(:atom_count) == before
+        assert_raise ArgumentError, fn -> String.to_existing_atom(mode) end
       end
     end
   end

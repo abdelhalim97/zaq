@@ -6,9 +6,9 @@ defmodule Zaq.Channels.WebBridge do
   delegates non-message Commands through Engine role actions, and delivers
   `%Outgoing{}` responses through the configured web delivery contract.
 
-  The legacy BO path remains compatible during migration: each ChatLive session
-  subscribes to `"chat:<session_id>"`, status updates use `:upsert_message`, and
-  final results use `send_reply/2`.
+  Each ChatLive session supplies a trusted delivery descriptor. Status updates
+  use `:upsert_message` and final results use `send_reply/2`; both publish only
+  normalized semantic responses.
   """
 
   @behaviour Zaq.Channels.Bridge
@@ -48,16 +48,9 @@ defmodule Zaq.Channels.WebBridge do
     end
   end
 
-  @doc """
-  Builds `%Incoming{provider: :web}` from ChatLive form params.
-
-  Expected params keys: `:content`, `:channel_id` (optional, defaults to `"bo"`),
-  `:session_id`, `:request_id`.
-  """
-  @spec to_internal(WebMessage.t() | map(), Context.t() | map()) :: Incoming.t()
+  @doc "Builds canonical Incoming from a normalized message and trusted adapter context."
+  @spec to_internal(WebMessage.t(), Context.t()) :: Incoming.t()
   @impl true
-  def to_internal(params, connection_details \\ %{})
-
   def to_internal(%WebMessage{} = message, %Context{} = context) do
     Incoming.new(%{
       content: message.content,
@@ -84,80 +77,28 @@ defmodule Zaq.Channels.WebBridge do
     })
   end
 
-  def to_internal(params, _connection_details) do
-    Incoming.new(%{
-      content: params[:content],
-      channel_id: params[:channel_id] || "bo",
-      message_id: params[:request_id],
-      provider: :web,
-      metadata: Map.take(params, [:session_id, :request_id, :user_content])
-    })
-  end
-
-  @doc """
-  Broadcasts `%Outgoing{}` to the originating ChatLive session via PubSub.
-
-  The topic `"chat:<session_id>"` is derived from `outgoing.metadata[:session_id]`.
-  The message format is `{:pipeline_result, request_id, outgoing, user_content}`
-  to maintain compatibility with the ChatLive handler.
-  """
-  @spec send_reply(Outgoing.t(), map()) :: :ok | {:error, term()}
+  @doc "Publishes a normalized final response to the trusted adapter destination."
+  @spec send_reply(Outgoing.t(), map()) :: {:ok, map()} | {:error, term()}
   @impl true
   def send_reply(%Outgoing{} = outgoing, _connection_details) do
     case delivery_from_routing_context(outgoing.routing_context) do
-      {:ok, nil} -> legacy_send_reply(outgoing)
+      {:ok, nil} -> {:error, :missing_delivery_descriptor}
       {:ok, delivery} -> deliver_final(outgoing, delivery)
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp legacy_send_reply(%Outgoing{} = outgoing) do
-    session_id = outgoing.metadata[:session_id]
-    request_id = outgoing.metadata[:request_id]
-    user_content = outgoing.metadata[:user_content]
-
-    Phoenix.PubSub.broadcast(
-      Zaq.PubSub,
-      "chat:#{session_id}",
-      {:pipeline_result, request_id, outgoing, user_content}
-    )
-  end
-
   @impl true
   def upsert_message(_config, request, _connection_details) when is_map(request) do
-    request_id = Map.get(request, :request_id)
-    session_id = Map.get(request, :session_id)
-    message = Map.get(request, :body)
-
     case delivery_from_routing_context(Map.get(request, :routing_context)) do
       {:ok, nil} ->
-        legacy_upsert_message(request_id, session_id, message, request)
+        {:error, :missing_delivery_descriptor}
 
       {:ok, delivery} ->
         deliver_status(request, delivery)
 
       {:error, reason} ->
         {:error, reason}
-    end
-  end
-
-  defp legacy_upsert_message(request_id, session_id, message, request) do
-    if Helper.present?(request_id) and Helper.present?(session_id) and Helper.present?(message) do
-      stage = status_stage(Map.get(request, :intent_meta))
-
-      Phoenix.PubSub.broadcast(
-        Zaq.PubSub,
-        "chat:#{session_id}",
-        {:status_update, request_id, stage, message, Map.get(request, :update_intent)}
-      )
-
-      message_id = Map.get(request, :message_id) || request_id
-      action = if Helper.present?(Map.get(request, :message_id)), do: :updated, else: :created
-
-      {:ok,
-       %{action: action, message_id: message_id, update_intent: Map.get(request, :update_intent)}}
-    else
-      {:ok, %{action: :noop, message_id: nil, update_intent: Map.get(request, :update_intent)}}
     end
   end
 
