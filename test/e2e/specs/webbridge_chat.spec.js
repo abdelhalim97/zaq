@@ -1,6 +1,8 @@
-const { test, expect } = require("@playwright/test");
+const { test, expect, request: apiRequest } = require("@playwright/test");
 const {
   loginToBackOffice,
+  resetE2EState,
+  setE2ESystemConfig,
   waitForLiveViewSettled,
 } = require("../support/bo");
 
@@ -21,6 +23,17 @@ async function ask(page, question) {
 }
 
 test.describe("Shared WebBridge BO chat", () => {
+  test.beforeAll(async () => {
+    const req = await apiRequest.newContext();
+    try {
+      await resetE2EState(req);
+      // Match the chat journeys' budget for the real prompt and tool schemas.
+      await setE2ESystemConfig(req, "llm.max_context_window", "128000");
+    } finally {
+      await req.dispose();
+    }
+  });
+
   test("send, resume, citations, message information and new chat preserve BO behavior", async ({ page }) => {
     await loginToBackOffice(page, { returnTo: "/bo/chat" });
     await startNewChat(page);
