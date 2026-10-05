@@ -57,6 +57,7 @@ defmodule Zaq.Engine.ChannelConfig do
     |> maybe_validate_imap_settings()
     |> maybe_validate_disk_settings()
     |> maybe_validate_widget_settings()
+    |> maybe_require_widget_base_url_on_persist()
     |> maybe_validate_imap_smtp_dependency_on_persist()
     |> maybe_encrypt_token()
     |> reject_archived_reactivation()
@@ -79,6 +80,24 @@ defmodule Zaq.Engine.ChannelConfig do
         {:error, reason} ->
           add_error(changeset, :settings, "invalid widget settings", validation: reason)
       end
+    else
+      changeset
+    end
+  end
+
+  defp maybe_require_widget_base_url_on_persist(changeset) do
+    if get_field(changeset, :provider) == "web_widget" do
+      prepare_changes(changeset, &require_widget_base_url/1)
+    else
+      changeset
+    end
+  end
+
+  defp require_widget_base_url(changeset) do
+    if get_field(changeset, :enabled) and is_nil(Zaq.System.get_global_base_url()) do
+      add_error(changeset, :enabled, "configure the global base URL before enabling",
+        validation: :missing_global_base_url
+      )
     else
       changeset
     end

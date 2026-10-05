@@ -34,7 +34,7 @@ defmodule Zaq.Channels.Api do
   alias Zaq.Channels.HttpClient
   alias Zaq.Channels.Materializers.CommunicationMedia
   alias Zaq.Channels.MessageFormatter
-  alias Zaq.Channels.Web.{Command, Context, Message}
+  alias Zaq.Channels.Web.{Command, Context, Message, Runtime}
   alias Zaq.ConnectorConfig.Settings
   alias Zaq.Contracts.Record
   alias Zaq.Engine.ChannelConfig
@@ -51,6 +51,15 @@ defmodule Zaq.Channels.Api do
   @supported_update_intents [:status, :reasoning, :tool_call, :stream_delta]
 
   @impl true
+  def handle_event(%Event{} = event, :widget_adapter_setup, _context) do
+    response =
+      if Keyword.get(event.opts, :confidential) == true,
+        do: widget_adapter_setup(event.request, event.opts),
+        else: {:error, :confidential_event_required}
+
+    %{event | response: response}
+  end
+
   def handle_event(
         %Event{request: %{payload: payload, context: %Context{} = web_context}} = event,
         :web_ingress,
@@ -988,6 +997,14 @@ defmodule Zaq.Channels.Api do
 
   defp dispatch_webhook(_module, _provider, _payload, _id),
     do: {:error, :invalid_connector_id}
+
+  defp widget_adapter_setup(%{op: :status} = request, opts),
+    do: Runtime.status(Map.get(request, :widget_id), opts)
+
+  defp widget_adapter_setup(%{op: :embed_script, widget_id: id, base_url: base_url}, opts),
+    do: Runtime.embed_script(id, base_url, opts)
+
+  defp widget_adapter_setup(_request, _opts), do: {:error, :invalid_request}
 
   defp outgoing_from_event(%Event{request: %Outgoing{} = outgoing}), do: {:ok, outgoing}
   defp outgoing_from_event(%Event{response: %Outgoing{} = outgoing}), do: {:ok, outgoing}

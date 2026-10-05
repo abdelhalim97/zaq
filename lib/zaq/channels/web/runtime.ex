@@ -24,13 +24,12 @@ defmodule Zaq.Channels.Web.Runtime do
       widget_id: id,
       allowed_domains: Map.get(settings, "allowed_domains", []),
       display_name: Map.get(settings, "display_name", Map.get(config, :name)),
-      stylesheet_url: Map.get(settings, "stylesheet_url"),
       message: Message,
       command: Command,
       context: Context,
       delivery: Delivery,
       response: Response,
-      sink_mfa: {__MODULE__, :from_listener, [config]}
+      sink_mfa: {__MODULE__, :from_listener, [%{id: id}]}
     }
 
     if validate_settings(settings) == :ok and is_integer(id) and id > 0 and
@@ -45,6 +44,63 @@ defmodule Zaq.Channels.Web.Runtime do
   end
 
   def build(_config), do: {:ok, {nil, []}}
+
+  @doc "Asks the trusted server adapter for copyable installation text; never executes markup."
+  @spec embed_script(term(), term(), keyword()) :: {:ok, String.t()} | {:error, atom()}
+  def embed_script(id, base_url, opts \\ [])
+
+  def embed_script(id, base_url, opts)
+      when is_integer(id) and id > 0 and is_binary(base_url) and byte_size(base_url) > 0 do
+    definition = Zaq.Config.get(:zaq, :channels, %{}, opts) |> Map.get(:web_widget, %{})
+    builder = Map.get(definition, :runtime_builder)
+
+    if supports_callback?(builder, :embed_script) do
+      normalize_snippet(builder.embed_script(id, base_url))
+    else
+      {:error, :widget_embed_not_configured}
+    end
+  rescue
+    _error -> {:error, :widget_embed_failed}
+  catch
+    _kind, _reason -> {:error, :widget_embed_failed}
+  end
+
+  def embed_script(_id, _base_url, _opts), do: {:error, :invalid_widget_embed_request}
+
+  @doc "Returns adapter readiness and a secret-free live runtime status."
+  def status(id, opts \\ []) do
+    definition = Zaq.Config.get(:zaq, :channels, %{}, opts) |> Map.get(:web_widget, %{})
+    builder = Map.get(definition, :runtime_builder)
+
+    {:ok,
+     %{
+       available?:
+         supports_callback?(builder, :build) and supports_callback?(builder, :embed_script),
+       runtime: runtime_status(id)
+     }}
+  end
+
+  defp runtime_status(id) when is_integer(id) and id > 0 do
+    case Zaq.Channels.Supervisor.lookup_runtime("web_widget_#{id}") do
+      {:ok, _} -> :running
+      _ -> :not_running
+    end
+  end
+
+  defp runtime_status(_id), do: :not_running
+
+  defp supports_callback?(builder, callback) do
+    is_atom(builder) and not is_nil(builder) and Code.ensure_loaded?(builder) and
+      function_exported?(builder, callback, 2)
+  end
+
+  defp normalize_snippet({:ok, snippet})
+       when is_binary(snippet) and byte_size(snippet) in 1..32_768 do
+    if String.valid?(snippet), do: {:ok, snippet}, else: {:error, :invalid_widget_embed_script}
+  end
+
+  defp normalize_snippet({:error, _reason}), do: {:error, :widget_embed_failed}
+  defp normalize_snippet(_result), do: {:error, :invalid_widget_embed_script}
 
   @doc "Validates persisted widget presentation/embedding inputs; endpoint enforcement is adapter-owned."
   defdelegate validate_settings(settings), to: WidgetSettings, as: :validate

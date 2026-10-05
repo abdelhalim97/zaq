@@ -7,7 +7,7 @@ defmodule Zaq.Channels.Web.Command do
   actor, capability or delivery context.
   """
 
-  alias Zaq.Channels.Web.Validation
+  alias Zaq.Channels.Web.{Stylesheet, Validation}
 
   @allowed_fields [:request_id, :type, :conversation_id, :params]
   @forbidden_params [:action, :actor, :delivery, :function, :mfa, :module, :skip_permissions]
@@ -35,7 +35,8 @@ defmodule Zaq.Channels.Web.Command do
          {:ok, conversation_id} <-
            Validation.identifier(Validation.fetch(attrs, :conversation_id), :conversation_id),
          {:ok, params} <- Validation.map(Validation.fetch(attrs, :params), :params),
-         :ok <- Validation.forbidden_keys(params, @forbidden_params, :forbidden_params) do
+         :ok <- Validation.forbidden_keys(params, @forbidden_params, :forbidden_params),
+         :ok <- validate_stylesheet(type, params) do
       {:ok,
        %__MODULE__{
          request_id: request_id,
@@ -47,6 +48,22 @@ defmodule Zaq.Channels.Web.Command do
   end
 
   def new(_attrs), do: {:error, {:invalid_field, :command}}
+
+  defp validate_stylesheet(type, params) do
+    Enum.reduce_while([:stylesheet_url, "stylesheet_url"], :ok, fn key, :ok ->
+      case validate_style_param(type, Map.fetch(params, key)) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp validate_style_param(_type, :error), do: :ok
+
+  defp validate_style_param(:conversation_init, {:ok, value}), do: Stylesheet.validate(value)
+
+  defp validate_style_param(_type, {:ok, _value}),
+    do: {:error, {:invalid_field, :stylesheet_url}}
 
   defp type(type) when type in [:conversation_init, "conversation.init"],
     do: {:ok, :conversation_init}

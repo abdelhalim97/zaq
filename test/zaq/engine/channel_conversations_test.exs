@@ -19,6 +19,8 @@ defmodule Zaq.Engine.ChannelConversationsTest do
   alias Zaq.SystemConfigFixtures
 
   setup do
+    assert :ok = Zaq.System.set_global_base_url("https://zaq.example.test")
+
     {:ok, config} =
       %ChannelConfig{}
       |> ChannelConfig.changeset(%{

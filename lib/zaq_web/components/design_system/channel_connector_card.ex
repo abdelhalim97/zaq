@@ -8,6 +8,8 @@ defmodule ZaqWeb.Components.DesignSystem.ChannelConnectorCard do
 
   use Phoenix.Component
 
+  import ZaqWeb.CoreComponents, only: [icon: 1]
+
   attr :id, :string, required: true
   attr :name, :string, required: true
   attr :provider, :string, required: true
@@ -16,6 +18,7 @@ defmodule ZaqWeb.Components.DesignSystem.ChannelConnectorCard do
   attr :selected, :boolean, default: false
   attr :select_event, :string, default: nil
   attr :connector_id, :integer, default: nil
+  attr :icon, :string, default: nil
 
   slot :status
   slot :detail
@@ -26,7 +29,7 @@ defmodule ZaqWeb.Components.DesignSystem.ChannelConnectorCard do
     <div
       id={@id}
       class={[
-        "bg-white rounded-xl border p-5 flex items-center justify-between",
+        "bg-white rounded-xl border p-5 flex flex-wrap gap-4 items-center justify-between",
         if(@selected, do: "border-[var(--zaq-border-color-accent)]", else: "border-black/10")
       ]}
     >
@@ -35,7 +38,9 @@ defmodule ZaqWeb.Components.DesignSystem.ChannelConnectorCard do
           "w-10 h-10 rounded-xl grid place-items-center",
           if(@enabled, do: "bg-[#0058CC]/10", else: "bg-black/5")
         ]}>
+          <.icon :if={@icon} name={@icon} class="zaq-icon-md" />
           <svg
+            :if={!@icon}
             class={if(@enabled, do: "w-5 h-5 text-[#0058CC]", else: "w-5 h-5 text-black/30")}
             fill="none"
             stroke="currentColor"
@@ -80,7 +85,7 @@ defmodule ZaqWeb.Components.DesignSystem.ChannelConnectorCard do
           {render_slot(@detail)}
         </div>
       </div>
-      <div class="flex items-center gap-2">{render_slot(@actions)}</div>
+      <div class="flex flex-wrap items-center gap-2">{render_slot(@actions)}</div>
     </div>
     """
   end

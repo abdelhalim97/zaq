@@ -41,6 +41,8 @@ defmodule Zaq.Channels.Web.WidgetConformanceTest do
   end
 
   setup do
+    assert :ok = Zaq.System.set_global_base_url("https://zaq.example.test")
+
     {spec, endpoint} =
       OpenAIStub.server(
         fn conn, body ->

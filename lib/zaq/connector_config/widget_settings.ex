@@ -2,6 +2,8 @@ defmodule Zaq.ConnectorConfig.WidgetSettings do
   @moduledoc """
   Pure validation of persisted widget presentation and embedding settings.
 
+  Stylesheet URLs belong to instance initialization, never connector settings.
+
   Engine connector persistence and Channels runtime construction share this
   value contract. It does not build runtimes, authenticate senders or enforce
   endpoint access; those responsibilities remain with their existing owners.
@@ -14,7 +16,8 @@ defmodule Zaq.ConnectorConfig.WidgetSettings do
       not Map.has_key?(settings, "widget_id") and not Map.has_key?(settings, :widget_id) and
         valid_name?(Map.get(settings, "display_name")) and
         valid_domains?(Map.get(settings, "allowed_domains", [])) and
-        valid_style?(Map.get(settings, "stylesheet_url"))
+        not Map.has_key?(settings, "stylesheet_url") and
+        not Map.has_key?(settings, :stylesheet_url)
 
     if valid, do: :ok, else: {:error, :invalid_widget_settings}
   end
@@ -42,13 +45,4 @@ defmodule Zaq.ConnectorConfig.WidgetSettings do
   end
 
   defp valid_origin?(_origin), do: false
-
-  defp valid_style?(nil), do: true
-
-  defp valid_style?(path) when is_binary(path),
-    do:
-      String.starts_with?(path, "/") and not String.starts_with?(path, "//") and
-        not String.contains?(path, ["..", "\\", "?", "#"]) and byte_size(path) <= 2_048
-
-  defp valid_style?(_path), do: false
 end

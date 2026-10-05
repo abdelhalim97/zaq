@@ -10,6 +10,7 @@ defmodule Zaq.Engine.Api do
   alias Zaq.Accounts.People
   alias Zaq.Channels.Events, as: ChannelsEvents
   alias Zaq.Contracts.Record
+  alias Zaq.Engine.Actions.ManageWidgetConnector
   alias Zaq.Engine.Actions.SaveEmailConnector
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.ChannelConversations
@@ -43,6 +44,23 @@ defmodule Zaq.Engine.Api do
   alias Zaq.System
 
   @impl true
+  def handle_event(%Event{} = event, :widget_connector_settings, _context) do
+    response =
+      with true <- Keyword.get(event.opts, :confidential) == true,
+           {:ok, _user} <- BOActor.current_user(event.actor),
+           {:ok, %{result: result}} <-
+             Jido.Exec.run(ManageWidgetConnector, %{request: event.request}, %{
+               actor: event.actor,
+               opts: event.opts
+             }) do
+        result
+      else
+        _ -> {:error, :unauthorized}
+      end
+
+    %{event | response: response}
+  end
+
   def handle_event(
         %Event{request: %{op: :snapshot, provider: provider} = request} = event,
         :email_connector_settings,

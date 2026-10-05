@@ -43,6 +43,22 @@ defmodule Storybook.Components.Cards.ChannelConnectorCard do
         connector_id={102}
         select_event="select_config"
       />
+      <.channel_connector_card
+        id="config-card-103"
+        name="Website support"
+        provider="Web Widget"
+        url="Widget ID: 103"
+        icon="hero-globe-alt"
+      >
+        <:actions>
+          <ZaqWeb.Components.DesignSystem.Button.button variant={:secondary}>
+            Installation script
+          </ZaqWeb.Components.DesignSystem.Button.button>
+          <ZaqWeb.Components.DesignSystem.Button.button variant={:tertiary} icon="hero-pencil-square">
+            Edit
+          </ZaqWeb.Components.DesignSystem.Button.button>
+        </:actions>
+      </.channel_connector_card>
     </div>
     """
   end

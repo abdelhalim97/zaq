@@ -18,7 +18,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
   @pending_ingress_status_retry_ms 200
   @pending_ingress_status_max_attempts 25
 
-  @retrieval_providers ~w(slack teams mattermost discord telegram webhook email)
+  @retrieval_providers ~w(slack teams mattermost discord telegram webhook email web_widget)
   @data_source_providers ~w(disk google_drive sharepoint)
   @notification_providers ~w(email:smtp)
 
@@ -27,6 +27,12 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
   # ---------------------------------------------------------------------------
 
   @retrieval_cards [
+    %{
+      id: "web_widget",
+      label: "Web Widget",
+      color: "#027589",
+      desc: "Embed authenticated conversations on your website with an external widget adapter."
+    },
     %{
       id: "slack",
       label: ChannelProvider.label("slack"),

@@ -6,6 +6,9 @@ defmodule Zaq.Channels.Web.RuntimeTest do
   alias Zaq.Engine.ChannelConfig
 
   defmodule Builder do
+    @behaviour Zaq.Channels.Web.WidgetAdapter
+
+    @impl true
     def build(config, hooks) do
       send(config.settings["test_pid"], {:hooks, hooks})
 
@@ -14,6 +17,18 @@ defmodule Zaq.Channels.Web.RuntimeTest do
         else:
           {:ok, {%{id: :widget_state, start: {Agent, :start_link, [fn -> config.id end]}}, []}}
     end
+
+    @impl true
+    def embed_script(widget_id, base_url),
+      do: {:ok, "<script src=\"#{base_url}/widget.js\" data-widget-id=\"#{widget_id}\"></script>"}
+  end
+
+  defmodule InvalidSnippetBuilder do
+    def embed_script(_, _), do: {:ok, %{secret: "not a snippet"}}
+  end
+
+  defmodule RaisingSnippetBuilder do
+    def embed_script(_, _), do: raise("secret failure details")
   end
 
   setup do
@@ -34,8 +49,7 @@ defmodule Zaq.Channels.Web.RuntimeTest do
       settings: %{
         "test_pid" => self(),
         "display_name" => "Support",
-        "allowed_domains" => ["https://parent.example.test"],
-        "stylesheet_url" => "/assets/widget.css"
+        "allowed_domains" => ["https://parent.example.test"]
       }
     }
 
@@ -52,8 +66,9 @@ defmodule Zaq.Channels.Web.RuntimeTest do
     assert hooks.message == Zaq.Channels.Web.Message
     assert hooks.command == Zaq.Channels.Web.Command
     assert hooks.context == Zaq.Channels.Web.Context
-    assert hooks.sink_mfa == {Runtime, :from_listener, [config]}
+    assert hooks.sink_mfa == {Runtime, :from_listener, [%{id: config.id}]}
     assert hooks.allowed_domains == ["https://parent.example.test"]
+    refute Map.has_key?(hooks, :stylesheet_url)
     assert {:ok, %{state_pid: pid}} = Supervisor.lookup_runtime("web_widget_#{config.id}")
     assert :ok = WebBridge.start_runtime(config)
     assert {:ok, %{state_pid: ^pid}} = Supervisor.lookup_runtime("web_widget_#{config.id}")
@@ -99,10 +114,41 @@ defmodule Zaq.Channels.Web.RuntimeTest do
              %ChannelConfig{},
              Map.put(base, :settings, %{
                "allowed_domains" => ["https://parent.example.test"],
-               "stylesheet_url" => "/assets/widget.css",
                "display_name" => "Support"
              })
            ).valid?
+  end
+
+  test "trusted adapter generates an installation snippet with only ID and base URL", %{
+    config: config
+  } do
+    assert {:ok, snippet} = Runtime.embed_script(config.id, "https://zaq.example.test")
+
+    assert snippet ==
+             "<script src=\"https://zaq.example.test/widget.js\" data-widget-id=\"#{config.id}\"></script>"
+
+    assert {:error, :invalid_widget_embed_request} =
+             Runtime.embed_script(0, "https://zaq.example.test")
+
+    assert {:error, :invalid_widget_embed_request} = Runtime.embed_script(config.id, nil)
+  end
+
+  test "missing, malformed and raising snippet callbacks return bounded errors", %{config: config} do
+    channels = Application.get_env(:zaq, :channels)
+
+    for {builder, error} <- [
+          {nil, :widget_embed_not_configured},
+          {InvalidSnippetBuilder, :invalid_widget_embed_script},
+          {RaisingSnippetBuilder, :widget_embed_failed}
+        ] do
+      Application.put_env(
+        :zaq,
+        :channels,
+        Map.put(channels, :web_widget, %{runtime_builder: builder})
+      )
+
+      assert {:error, ^error} = Runtime.embed_script(config.id, "https://zaq.example.test")
+    end
   end
 
   test "multiple runtime configurations remain isolated during teardown", %{config: config} do
@@ -139,5 +185,19 @@ defmodule Zaq.Channels.Web.RuntimeTest do
     {:ok, command} = Command.new(%{request_id: "r1", type: :conversation_init})
     assert {:error, :unauthorized} = Runtime.from_listener(config, command, context: context)
     assert {:error, :unauthorized} = Runtime.from_listener(config, %{context: context}, [])
+  end
+
+  test "ingress revalidates stylesheet URLs in manually constructed commands", %{config: config} do
+    {:ok, context} =
+      Context.new(nil, consumer: :widget, sender_id: "trusted", channel_config_id: config.id)
+
+    command = %Command{
+      request_id: "r1",
+      type: :conversation_init,
+      params: %{stylesheet_url: "/private.css"}
+    }
+
+    assert {:error, {:invalid_field, :stylesheet_url}} =
+             WebBridge.handle_from_listener(config, command, context: context)
   end
 end

@@ -4,18 +4,17 @@ defmodule Zaq.ConnectorConfig.WidgetSettingsTest do
 
   alias Zaq.ConnectorConfig.WidgetSettings
 
-  test "accepts absent settings and bounded local presentation settings" do
+  test "accepts absent settings and bounded presentation settings" do
     assert :ok = WidgetSettings.validate(%{})
 
     assert :ok =
              WidgetSettings.validate(%{
                "display_name" => String.duplicate("a", 200),
-               "allowed_domains" => List.duplicate("https://parent.example.test", 100),
-               "stylesheet_url" => "/assets/widget.css"
+               "allowed_domains" => List.duplicate("https://parent.example.test", 100)
              })
   end
 
-  test "rejects invalid names, origin policies, external assets and malformed settings" do
+  test "rejects invalid names, origin policies, persisted stylesheets and malformed settings" do
     for settings <- [
           nil,
           [],
@@ -31,6 +30,13 @@ defmodule Zaq.ConnectorConfig.WidgetSettingsTest do
           %{"stylesheet_url" => 42}
         ] do
       assert {:error, :invalid_widget_settings} = WidgetSettings.validate(settings)
+    end
+  end
+
+  test "stylesheets are init-only, including nil and atom-keyed persisted values" do
+    for key <- [:stylesheet_url, "stylesheet_url"],
+        value <- [nil, "/assets/widget.css", "http://localhost:4000/style.css"] do
+      assert {:error, :invalid_widget_settings} = WidgetSettings.validate(%{key => value})
     end
   end
 

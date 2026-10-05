@@ -72,6 +72,14 @@ and `:conversation_history` / `"conversation.history.request"`. Adapter wire
 Executable action/module/function/MFA, actor, bypass and delivery keys are forbidden
 inside params, including nested values. Commands never enter the Agent pipeline.
 
+Initialization may include `params.stylesheet_url`: an optional absolute HTTP(S)
+URL of at most 2,048 bytes, without credentials, whitespace or control characters.
+Local paths, `zaq://`, protocol-relative URLs and other schemes are rejected.
+Styling is instance-scoped; the adapter loads the URL in the browser, not through
+ZAQ fetching/proxying. It is not persisted or sent to the Agent. History commands
+cannot supply styling. HTTPS is recommended; browsers may block HTTP stylesheets
+on HTTPS pages. Both constructors and ingress validate manually constructed commands.
+
 | Consumer / operation | Response |
 | --- | --- |
 | BO init | `:conversation_initialized`; conversation ID and `created`, optionally `replaced_missing_id` |
@@ -196,7 +204,9 @@ Do not expose raw internal error tuples, credentials or execution traces on the 
 ## Widget runtime construction
 
 Configure `:zaq, :channels, :web_widget` with `bridge: Zaq.Channels.WebBridge` and a
-trusted `runtime_builder` exporting `build(config, hooks)`. Return
+trusted `runtime_builder` implementing the widget-specific
+[`WidgetAdapter`](../../lib/zaq/channels/web/widget_adapter.ex) behaviour:
+`build(config, hooks)` and `embed_script(widget_id, base_url)`. Return from `build/2`
 `{:ok, {state_child_spec_or_nil, listener_specs}}` or `{:error, reason}`. Existing
 BridgeSupervisor starts children, rolls back partial startup and follows automatically
 restarted PIDs. Start is idempotent; unchanged enabled config preserves runtime, changes
@@ -205,14 +215,17 @@ widget runtime. Startup/construction errors are returned, not success receipts.
 
 Hooks include shared Message/Command/Context/Delivery/Response modules,
 `widget_id = config.id`, presentation settings and
-`sink_mfa: {Zaq.Channels.Web.Runtime, :from_listener, [config]}`. Invoke it with
+`sink_mfa: {Zaq.Channels.Web.Runtime, :from_listener, [%{id: config.id}]}`. Invoke it with
 `payload, [context: verified_context]`. It accepts shared structs and a matching
 widget Context, then dispatches closed Channels `:web_ingress` through NodeRouter.
 Event data cannot replace bound config or choose a builder module.
 
-Persisted settings are `display_name` (nonblank, ≤200 bytes), `allowed_domains`
-(≤100 exact HTTP(S) origins without paths/wildcards/userinfo/query/fragment) and
-`stylesheet_url` (root-relative locally served asset path, not a remote URL).
+Persisted presentation/embedding settings are `display_name` (nonblank, ≤200 bytes)
+and `allowed_domains` (≤100 exact HTTP(S) origins without
+paths/wildcards/userinfo/query/fragment). `stylesheet_url` is init-only and is
+rejected in persisted settings. Server-owned `key_rotated_at` records key generation.
+Saving an older connector removes its obsolete persisted `stylesheet_url` while
+preserving unrelated settings.
 Absent settings are allowed; the adapter must enforce its policy, including an empty
 origin allowlist. A separate `widget_id` setting is rejected. ZAQ installs no widget
 HTTP endpoint, route macro or socket. Follow the [handoff](../guides/web-widget-integration.md)
@@ -221,3 +234,36 @@ for BO references, constructor examples, executable fixtures and real-package ac
 Engine persistence and Channels construction reuse the same pure
 [`WidgetSettings.validate/1`](../../lib/zaq/connector_config/widget_settings.ex)
 contract; neither role duplicates its validation or calls the other role's runtime.
+
+## BO configuration and installation
+
+Channels → Communication → Web Widget uses
+[`WebWidgetLive`](../../lib/zaq_web/live/bo/communication/web_widget_live.ex).
+Engine's confidential `:widget_connector_settings` action authenticates the current
+BO actor and invokes `ManageWidgetConnector` through `Jido.Exec`. Snapshots are
+allowlisted and contain no keys or raw configuration schemas. Saves and key mutations
+lock the exact unarchived `web_widget`/retrieval connector and check the lifecycle
+revision. Agent choices write the existing connector-scoped `IncomingMessageRouting`
+rule, not widget settings. Archival reuses `ConnectorLifecycle`.
+
+Disabled configurations can be saved without an installed adapter. Enablement
+requires global `system.global.base_url` and an adapter implementing both callbacks.
+Configuration changes use confidential `:sync_channel_runtime` with resolved
+before/after configurations. A saved result can have pending runtime synchronization;
+it is not a rollback or confirmation that the endpoint is secure.
+
+`embed_script(widget_id, base_url)` returns `{:ok, String.t()}` or `{:error, reason}`.
+Engine authorizes the selected ID and resolves the global base URL; a confidential
+Channels `:widget_adapter_setup` event invokes the trusted configured builder.
+ZAQ accepts nonempty UTF-8 markup of at most 32,768 bytes and displays it as escaped,
+copyable text, never executable BO markup. No signing secret is supplied to this callback.
+
+Key generation/rotation uses 32 cryptographically random bytes encoded as unpadded
+base64url and the existing encrypted `channel_configs.token` field. The administrator
+receives the new key once in the confidential operation response for secure host-backend
+provisioning. Dismissal, selection, refresh or reconnect clears the reveal; ordinary
+snapshots never reveal a stored key. Resolved `config.token` is available only to the
+trusted server-side runtime builder. Sink hooks retain only the bound ID, not the key.
+Rotation refreshes the runtime; failed synchronization is explicitly pending and must
+be retried. The external adapter owns rejection of old-key assertions and revocation
+of affected sessions; ZAQ cannot promise that an external session has been revoked.

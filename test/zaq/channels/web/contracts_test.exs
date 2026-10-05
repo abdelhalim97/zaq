@@ -81,6 +81,70 @@ defmodule Zaq.Channels.Web.ContractsTest do
   end
 
   describe "Command.new/1" do
+    test "initialization accepts optional absolute HTTP(S) stylesheet URLs" do
+      for key <- [:stylesheet_url, "stylesheet_url"],
+          url <- ["https://cdn.example.test/widget.css?v=1", "http://localhost:4000/widget.css"] do
+        assert {:ok, command} =
+                 Command.new(%{request_id: "r1", type: :conversation_init, params: %{key => url}})
+
+        assert command.params[key] == url
+      end
+    end
+
+    test "rejects local, malformed and non-HTTP stylesheet URLs and styling history commands" do
+      for url <- [
+            "/assets/widget.css",
+            "//cdn.example.test/widget.css",
+            "zaq://1/widget.css",
+            "javascript:alert(1)",
+            "data:text/css,a{}",
+            "https:///style.css",
+            "https://user:password@cdn.example.test/style.css",
+            "https://cdn.example.test:bad/style.css",
+            "https://cdn.example.test/a b.css",
+            String.duplicate("a", 2049),
+            false,
+            42
+          ] do
+        assert {:error, {:invalid_field, :stylesheet_url}} =
+                 Command.new(%{
+                   request_id: "r1",
+                   type: :conversation_init,
+                   params: %{stylesheet_url: url}
+                 })
+      end
+
+      assert {:error, {:invalid_field, :stylesheet_url}} =
+               Command.new(%{
+                 request_id: "r1",
+                 type: :conversation_history,
+                 params: %{stylesheet_url: "https://cdn.example.test/style.css"}
+               })
+    end
+
+    property "stylesheet schemes outside HTTP(S) never enter initialization" do
+      check all(suffix <- string(:alphanumeric, min_length: 1, max_length: 20)) do
+        assert {:error, {:invalid_field, :stylesheet_url}} =
+                 Command.new(%{
+                   request_id: "r1",
+                   type: :conversation_init,
+                   params: %{stylesheet_url: "custom#{suffix}://example.test/style.css"}
+                 })
+      end
+    end
+
+    test "both spellings of the stylesheet param must validate" do
+      assert {:error, {:invalid_field, :stylesheet_url}} =
+               Command.new(%{
+                 request_id: "r1",
+                 type: :conversation_init,
+                 params: %{
+                   "stylesheet_url" => "/private.css",
+                   stylesheet_url: "https://cdn.example.test/style.css"
+                 }
+               })
+    end
+
     test "accepts only initialization and history commands" do
       assert {:ok, init} = Command.new(%{request_id: "r1", type: "conversation.init"})
       assert init.type == :conversation_init
