@@ -12,6 +12,7 @@ defmodule Zaq.Engine.Api do
   alias Zaq.Contracts.Record
   alias Zaq.Engine.Actions.SaveEmailConnector
   alias Zaq.Engine.ChannelConfig
+  alias Zaq.Engine.ChannelConversations
   alias Zaq.Engine.ChannelHistoryAdmin
   alias Zaq.Engine.ChannelHistoryMembership
   alias Zaq.Engine.Connect
@@ -109,6 +110,10 @@ defmodule Zaq.Engine.Api do
       end
 
     %{event | response: response}
+  end
+
+  def handle_event(%Event{} = event, :channel_conversations, _context) do
+    %{event | response: ChannelConversations.dispatch(event.request), next_hop: nil}
   end
 
   def handle_event(%Event{} = event, :people_conversations, _context) do

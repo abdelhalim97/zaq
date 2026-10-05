@@ -380,66 +380,34 @@ for cache refresh/expiry and eventual-consistency limitations.
 ## Web transport contracts
 
 `Zaq.Channels.Web.Message` and `Zaq.Channels.Web.Command` are the shared adapter-facing
-inputs for BO chat and the future web widget. They are not replacements for Engine
+inputs for BO chat and web widget adapters. They are not replacements for Engine
 `Incoming`/`Outgoing`: WebBridge owns the translation from a validated `Message` into
 canonical `Incoming`, while commands represent non-message operations such as conversation
 initialization and history retrieval.
 
 Trusted values remain separate from adapter-decoded payloads:
 
-- `Zaq.Channels.Web.Context` carries the authenticated actor, explicit capabilities and
-  BO routing inputs. Nil identity never grants a capability.
+- `Zaq.Channels.Web.Context` carries trusted identity/configuration and BO's explicit
+  capabilities/routing inputs. Nil actor never grants a BO capability; widget Context
+  instead requires the adapter-verified sender and scoped connector identity.
 - `Zaq.Channels.Web.Delivery` carries a server-resolved PubSub topic and a closed semantic
   event mapping. Browser payloads must not construct or override it.
 - `Zaq.Channels.Web.Response` is the versioned semantic result before adapter wire encoding;
   it rejects private execution and credential fields.
 
-The Channels role accepts `%{payload: Message.t() | Command.t(), context: Context.t()}`
-through action `:web_ingress`. It verifies that the Event actor matches the trusted context,
-then delegates to `WebBridge.from_listener/3`. Message ingress translates to `Incoming` and
-uses the existing Engine routing/admission/finalization path. BO initialization and history
-commands reuse Engine conversation actions and return semantic `Response` values without
-entering the Agent pipeline. `ZaqWeb.Chat.BridgeClient` is the BO-side Event builder. ChatLive
-message send, initialization, history restoration and response handling use this shared ingress
-and normalized delivery contract.
+The detailed [WebBridge protocol](web-bridge.md) owns field/signature tables, message
+translation, command results, trusted identity, response/event projection, ordering,
+timeouts, restoration and version compatibility. Its
+[runtime construction contract](web-bridge.md#widget-runtime-construction) describes
+adapter-owned children and the fixed config-bound sink; the
+[integration handoff](../guides/web-widget-integration.md) supplies installation examples
+and external acceptance responsibilities.
 
-For BO initialization, ChatLive sends `:conversation_init`; WebBridge reuses Engine get/create
-operations and preserves the existing missing-conversation fallback. ChatLive remains the owner
-of the BO welcome presentation policy and asks Engine to persist the fixed welcome message only
-when initialization reports a newly created conversation. For restoration, ChatLive sends
-`:conversation_history`; WebBridge reuses Engine message listing and returns ordered projections
-containing the persisted IDs, sources, ratings and message-info fields needed by the existing UI.
-Sidebar listing/deletion, title subscriptions, ratings and source previews remain on their
-existing supported role actions.
-
-BO migration is complete: flat BO payloads and legacy standalone `:status_update` /
-`:pipeline_result` tuples are no longer supported. Final and status delivery require a
-trusted `Delivery` descriptor; missing descriptors return `:missing_delivery_descriptor`
-rather than deriving a PubSub topic from metadata. New chat, conversation restoration and
-deletion of the active conversation clear request correlation so late responses cannot
-populate a different chat. Widget runtime is not active.
-
-### Semantic delivery
-
-Validated `Delivery` descriptors are serialized into the namespaced
-`routing_context.attributes["web_delivery"]` reference. `Outgoing` already preserves routing
-context, and Channels preserves it when converting status upserts. Pipeline result metadata
-cannot replace this trusted destination. A malformed descriptor fails delivery instead of
-falling back to a caller-selected topic.
-
-| Semantic response | BO event name | Meaning |
-| --- | --- | --- |
-| `:status` | `:status_update` | Non-streaming pipeline activity with stage and full status text |
-| `:message_edit` | `:status_update` | Full current assistant content; replacement, not append-only delta |
-| `:message_complete` | `:pipeline_result` | Final successful content and allowlisted runtime/persistence metadata |
-| `:message_failed` / `:error` | `:pipeline_result` | Correlated safe execution/protocol failure |
-
-Normalized PubSub messages use `{:web_response, adapter_event_name, %Web.Response{}}`.
-The request ID provides correlation; transport message IDs and persisted assistant message
-IDs remain distinct. PubSub is best-effort live delivery, not durable replay or exactly-once
-processing. Consumers restore durable state through authorized history. Legacy tuple delivery
-remains only for payloads without a shared delivery descriptor and is removed after remaining
-BO callers migrate.
+Channels exposes the closed `:web_ingress` action through NodeRouter and preserves the
+trusted serialized Delivery reference across Engine/Agent hops. BO remains on its
+authenticated session policy; widget requests use connector-scoped People identity and
+private Direct history. Only an actual widget question creates a chat. These are host-side
+integration seams, not an installed widget endpoint or an endpoint-security guarantee.
 
 ---
 
@@ -1188,7 +1156,7 @@ stored-map projections; none of these shared helpers accesses Repo or credential
 
 `Zaq.Channels.WebBridge` serves the ChatLive web channel.
 
-- `to_internal/2` — translates a normalized `Web.Message` and trusted `Web.Context` into canonical `%Incoming{provider: :web}`.
+- `to_internal/2` — translates a normalized `Web.Message` and trusted `Web.Context` into canonical Incoming (`:web` for BO, `:web_widget` for widgets).
 - `send_reply/2` and `upsert_message/3` — publish `{:web_response, adapter_event_name, %Web.Response{}}` using the trusted delivery descriptor, never a metadata-selected topic.
 - ChatLive uses `ZaqWeb.Chat.BridgeClient` to dispatch normalized messages and commands to Channels through `:web_ingress`. WebBridge owns canonical Engine routing. BO agent selection remains transient `event.assigns["agent_selection"]` (`source: "bo_explicit"`) and is resolved by Engine before the event continues to Agent.
 

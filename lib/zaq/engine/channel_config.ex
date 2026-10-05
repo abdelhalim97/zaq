@@ -16,7 +16,7 @@ defmodule Zaq.Engine.ChannelConfig do
   alias Zaq.Channels.AgentRouting
   alias Zaq.Channels.Bridge
   alias Zaq.Channels.RetrievalChannel
-  alias Zaq.ConnectorConfig.Settings
+  alias Zaq.ConnectorConfig.{Settings, WidgetSettings}
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Event
   alias Zaq.NodeRouter
@@ -27,7 +27,7 @@ defmodule Zaq.Engine.ChannelConfig do
   @smtp_provider "email:smtp"
   @imap_provider "email:imap"
   @valid_kinds ~w(data_source retrieval)
-  @valid_providers ~w(mattermost slack teams google_drive sharepoint email:smtp email:imap telegram discord disk)
+  @valid_providers ~w(mattermost slack teams google_drive sharepoint email:smtp email:imap telegram discord disk web_widget)
 
   schema "channel_configs" do
     field :name, :string
@@ -56,6 +56,7 @@ defmodule Zaq.Engine.ChannelConfig do
     |> maybe_require_connection_fields()
     |> maybe_validate_imap_settings()
     |> maybe_validate_disk_settings()
+    |> maybe_validate_widget_settings()
     |> maybe_validate_imap_smtp_dependency_on_persist()
     |> maybe_encrypt_token()
     |> reject_archived_reactivation()
@@ -64,6 +65,20 @@ defmodule Zaq.Engine.ChannelConfig do
   defp reject_archived_reactivation(changeset) do
     if get_field(changeset, :archived_at) && get_field(changeset, :enabled) do
       add_error(changeset, :enabled, "archived connectors cannot be reactivated")
+    else
+      changeset
+    end
+  end
+
+  defp maybe_validate_widget_settings(changeset) do
+    if get_field(changeset, :provider) == "web_widget" do
+      case WidgetSettings.validate(get_field(changeset, :settings) || %{}) do
+        :ok ->
+          changeset
+
+        {:error, reason} ->
+          add_error(changeset, :settings, "invalid widget settings", validation: reason)
+      end
     else
       changeset
     end
@@ -95,6 +110,11 @@ defmodule Zaq.Engine.ChannelConfig do
 
     case {kind, get_field(changeset, :provider)} do
       {"data_source", _provider} ->
+        changeset
+        |> maybe_put_placeholder(:url)
+        |> maybe_put_placeholder(:token)
+
+      {"retrieval", "web_widget"} ->
         changeset
         |> maybe_put_placeholder(:url)
         |> maybe_put_placeholder(:token)

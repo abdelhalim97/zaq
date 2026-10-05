@@ -19,11 +19,13 @@ defmodule Zaq.Channels.Web.Message do
     :conversation_id,
     :author_id,
     :author_name,
-    :attachments
+    :attachments,
+    :prompt_context
   ]
 
   @enforce_keys [:request_id, :message_id, :content, :timestamp, :channel, :mode]
-  defstruct @enforce_keys ++ [:conversation_id, :author_id, :author_name, attachments: []]
+  defstruct @enforce_keys ++
+              [:conversation_id, :author_id, :author_name, :prompt_context, attachments: []]
 
   @type mode :: :async | :sync
   @type t :: %__MODULE__{
@@ -36,6 +38,7 @@ defmodule Zaq.Channels.Web.Message do
           conversation_id: String.t() | nil,
           author_id: String.t() | nil,
           author_name: String.t() | nil,
+          prompt_context: String.t() | nil,
           attachments: list()
         }
 
@@ -64,7 +67,8 @@ defmodule Zaq.Channels.Web.Message do
          {:ok, author_name} <-
            Validation.identifier(Validation.fetch(attrs, :author_name), :author_name),
          {:ok, attachments} <-
-           Validation.list(Validation.fetch(attrs, :attachments), :attachments) do
+           Validation.list(Validation.fetch(attrs, :attachments), :attachments),
+         {:ok, prompt_context} <- prompt_context(Validation.fetch(attrs, :prompt_context)) do
       {:ok,
        %__MODULE__{
          request_id: request_id,
@@ -76,12 +80,16 @@ defmodule Zaq.Channels.Web.Message do
          conversation_id: conversation_id,
          author_id: author_id,
          author_name: author_name,
+         prompt_context: prompt_context,
          attachments: attachments
        }}
     end
   end
 
   def new(_attrs), do: {:error, {:invalid_field, :message}}
+
+  defp prompt_context(nil), do: {:ok, nil}
+  defp prompt_context(content), do: Validation.required_text(content, :prompt_context, 100_000)
 
   defp timestamp(%DateTime{time_zone: "Etc/UTC"} = timestamp), do: {:ok, timestamp}
   defp timestamp(_timestamp), do: {:error, {:invalid_field, :timestamp}}

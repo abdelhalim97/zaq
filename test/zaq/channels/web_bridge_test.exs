@@ -123,6 +123,62 @@ defmodule Zaq.Channels.WebBridgeTest do
     end
   end
 
+  test "widget final projection excludes private traces and raw tool calls" do
+    {delivery, context} = widget_delivery()
+
+    outgoing = %Outgoing{
+      body: "answer",
+      provider: :web_widget,
+      channel_id: "native-chat",
+      in_reply_to: "question-1",
+      routing_context: context,
+      metadata: %{
+        request_id: "request-1",
+        conversation_id: "chat-1",
+        assistant_message_id: "persisted-answer",
+        user_message_id: "persisted-question",
+        trace: [%{reasoning: "private reasoning"}],
+        tool_calls: [%{arguments: "private arguments"}],
+        agent: %{credentials: "private credential"},
+        error_type: nil
+      }
+    }
+
+    assert {:ok, %{delivered: true}} = WebBridge.send_reply(outgoing, %{})
+    assert_receive {:web_response, "response.message.complete", %Response{payload: payload}}
+    assert payload.body == "answer"
+    assert payload.assistant_message_id == "persisted-answer"
+    refute Map.has_key?(payload, :trace)
+    refute Map.has_key?(payload, :tool_calls)
+    refute Map.has_key?(payload, :agent)
+    assert delivery.consumer == :widget
+  end
+
+  defp widget_delivery do
+    topic = "widget:#{Ecto.UUID.generate()}"
+    Phoenix.PubSub.subscribe(Zaq.PubSub, topic)
+
+    {:ok, delivery} =
+      Delivery.new(%{
+        consumer: :widget,
+        topic: topic,
+        protocol_version: 1,
+        channel_config_id: 123,
+        events: %{
+          message_complete: "response.message.complete",
+          message_failed: "response.message.failed",
+          message_edit: "response.message.edit",
+          message_create: "response.message.create"
+        }
+      })
+
+    {delivery,
+     %RoutingContext{
+       channel_config_id: 123,
+       attributes: %{"web_delivery" => Delivery.reference(delivery)}
+     }}
+  end
+
   test "rejects final and status delivery without a trusted descriptor" do
     outgoing = %Outgoing{body: "answer", provider: :web, channel_id: "bo"}
     assert {:error, :missing_delivery_descriptor} = WebBridge.send_reply(outgoing, %{})

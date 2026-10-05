@@ -17,6 +17,8 @@ defmodule Zaq.Channels.Web.Context do
                 :actor,
                 :delivery,
                 :selected_agent_id,
+                :sender_id,
+                :channel_config_id,
                 content_filter: [],
                 history: %{}
               ]
@@ -27,6 +29,8 @@ defmodule Zaq.Channels.Web.Context do
           capabilities: MapSet.t(atom()),
           delivery: Delivery.t() | nil,
           selected_agent_id: String.t() | nil,
+          sender_id: String.t() | nil,
+          channel_config_id: pos_integer() | nil,
           content_filter: [String.t()],
           history: map()
         }
@@ -40,13 +44,24 @@ defmodule Zaq.Channels.Web.Context do
     selected_agent_id = normalize_optional_string(Keyword.get(opts, :selected_agent_id))
     content_filter = Keyword.get(opts, :content_filter, [])
     history = Keyword.get(opts, :history, %{})
+    sender_id = normalize_optional_string(Keyword.get(opts, :sender_id))
+    channel_config_id = Keyword.get(opts, :channel_config_id)
 
     with :ok <- validate_consumer(consumer),
          {:ok, capabilities} <- validate_capabilities(capabilities),
-         :ok <- validate_actor_capabilities(actor, capabilities),
          :ok <- validate_delivery(delivery, consumer),
          :ok <- validate_content_filter(content_filter),
-         true <- is_map(history) || {:error, {:invalid_field, :history}} do
+         true <- is_map(history) || {:error, {:invalid_field, :history}},
+         :ok <-
+           validate_widget_options(
+             consumer,
+             capabilities,
+             selected_agent_id,
+             content_filter,
+             history
+           ),
+         :ok <- validate_actor_capabilities(actor, capabilities),
+         :ok <- validate_config_scope(channel_config_id, delivery) do
       {:ok,
        %__MODULE__{
          consumer: consumer,
@@ -54,6 +69,8 @@ defmodule Zaq.Channels.Web.Context do
          capabilities: capabilities,
          delivery: delivery,
          selected_agent_id: selected_agent_id,
+         sender_id: sender_id,
+         channel_config_id: channel_config_id,
          content_filter: content_filter,
          history: history
        }}
@@ -61,6 +78,40 @@ defmodule Zaq.Channels.Web.Context do
   end
 
   def new(_actor, _opts), do: {:error, :unauthorized}
+
+  @doc "Revalidates context at ingress, including values constructed without new/2."
+  def validate(%__MODULE__{capabilities: %MapSet{} = capabilities} = context) do
+    new(context.actor,
+      consumer: context.consumer,
+      capabilities: MapSet.to_list(capabilities),
+      delivery: context.delivery,
+      selected_agent_id: context.selected_agent_id,
+      content_filter: context.content_filter,
+      history: context.history,
+      sender_id: context.sender_id,
+      channel_config_id: context.channel_config_id
+    )
+  end
+
+  def validate(_context), do: {:error, :invalid_web_context}
+
+  defp validate_widget_options(:bo, _capabilities, _agent, _filters, _history), do: :ok
+
+  defp validate_widget_options(:widget, capabilities, agent, filters, history) do
+    if MapSet.size(capabilities) == 0 and is_nil(agent) and filters == [] and history == %{},
+      do: :ok,
+      else: {:error, :forbidden_widget_options}
+  end
+
+  defp validate_config_scope(nil, _delivery), do: :ok
+
+  defp validate_config_scope(id, delivery) when is_integer(id) and id > 0 do
+    if is_nil(delivery) or delivery.channel_config_id == id,
+      do: :ok,
+      else: {:error, {:invalid_field, :channel_config_id}}
+  end
+
+  defp validate_config_scope(_id, _delivery), do: {:error, {:invalid_field, :channel_config_id}}
 
   defp validate_consumer(consumer) when consumer in [:bo, :widget], do: :ok
   defp validate_consumer(_consumer), do: {:error, {:invalid_field, :consumer}}
@@ -81,7 +132,14 @@ defmodule Zaq.Channels.Web.Context do
   defp validate_actor_capabilities(_actor, _capabilities), do: :ok
 
   defp validate_delivery(nil, _consumer), do: :ok
-  defp validate_delivery(%Delivery{consumer: consumer}, consumer), do: :ok
+
+  defp validate_delivery(%Delivery{consumer: consumer} = delivery, consumer) do
+    case Delivery.new(Map.from_struct(delivery)) do
+      {:ok, _delivery} -> :ok
+      _ -> {:error, {:invalid_field, :delivery}}
+    end
+  end
+
   defp validate_delivery(%Delivery{}, _consumer), do: {:error, {:invalid_field, :delivery}}
   defp validate_delivery(_delivery, _consumer), do: {:error, {:invalid_field, :delivery}}
 

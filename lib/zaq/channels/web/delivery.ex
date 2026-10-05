@@ -151,8 +151,11 @@ defmodule Zaq.Channels.Web.Delivery do
     end
   end
 
-  defp valid_event_name?(name) when is_atom(name), do: true
-  defp valid_event_name?(name) when is_binary(name), do: String.trim(name) != ""
+  defp valid_event_name?(name) when is_atom(name), do: name not in [nil, true, false]
+
+  defp valid_event_name?(name) when is_binary(name),
+    do: String.trim(name) != "" and byte_size(name) <= 255
+
   defp valid_event_name?(_name), do: false
 
   defp channel_config_id(nil), do: {:ok, nil}
