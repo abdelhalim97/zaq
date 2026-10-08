@@ -882,6 +882,104 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     {binding, capture}
   end
 
+  test "recipient-owned canonical replies bind admission to each sender, not the email thread's first owner",
+       ctx do
+    %ChannelConfig{}
+    |> ChannelConfig.changeset(%{
+      name: "Recipient delivery",
+      provider: "email:smtp",
+      kind: "retrieval",
+      enabled: true,
+      url: "localhost",
+      token: "test-token",
+      settings: %{"from_email" => "bot@example.com", "from_name" => "ZAQ"}
+    })
+    |> Repo.insert!()
+
+    config =
+      %ChannelConfig{}
+      |> ChannelConfig.changeset(%{
+        name: "Recipient admission",
+        provider: "email:imap",
+        kind: "retrieval",
+        enabled: true,
+        url: "localhost",
+        token: "test-token",
+        settings: %{
+          "imap" => %{"username" => "bot@example.com", "selected_mailboxes" => ["INBOX"]}
+        }
+      })
+      |> Repo.insert!()
+
+    for {person, email} <- [{ctx.alice, "alice@example.com"}, {ctx.bob, "bob@example.com"}] do
+      assert {:ok, _} =
+               People.add_channel(%{
+                 person_id: person.id,
+                 platform: "email",
+                 channel_identifier: email,
+                 channel_config_id: config.id
+               })
+    end
+
+    bindings =
+      Enum.map(
+        [
+          {ctx.alice, "alice@example.com", "alice-input"},
+          {ctx.bob, "bob@example.com", "bob-input"}
+        ],
+        fn {person, email, id} ->
+          incoming =
+            Incoming.new(%{
+              content: "#{person.full_name} question",
+              provider: :"email:imap",
+              channel_id: email,
+              author_id: email,
+              message_id: id,
+              person: person,
+              routing_context: %{
+                channel_config_id: config.id,
+                conversation_type: :recipient_addressed,
+                conversation_id: "public-thread",
+                source_scope: "INBOX",
+                audience: %{
+                  platform: "email",
+                  sender: email,
+                  recipients: ["alice@example.com", "bob@example.com"]
+                }
+              }
+            })
+            |> CommunicationBridge.put_conversation_identity()
+
+          assert {:ok, capture} = HistoryIngress.capture(incoming)
+          assert {:ok, binding} = Conversations.admit_incoming(incoming)
+          conversation = Conversations.get_conversation!(binding.conversation_id)
+          assert conversation.person_id == person.id
+          assert conversation.channel_config_id == config.id
+          assert conversation.external_channel_id == "public-thread"
+          assert Repo.get!(Message, binding.user_message_id).id == capture.message_id
+
+          assert {:ok, %{kind: :canonical, transcript_id: transcript_id}} =
+                   Conversations.execution_history(binding, actor(person))
+
+          assert %{strategy: "replicated", owner_person_id: owner_id} =
+                   Repo.get!(Transcript, transcript_id)
+
+          assert owner_id == person.id
+          other = if person.id == ctx.alice.id, do: ctx.bob, else: ctx.alice
+          assert {:error, :unauthorized} = Conversations.execution_history(binding, actor(other))
+          assert {:ok, replay} = Conversations.admit_incoming(incoming)
+          assert replay.admitted? == false
+          assert replay.user_message_id == binding.user_message_id
+          assert replay.conversation_id == binding.conversation_id
+          binding
+        end
+      )
+
+    [alice, bob] = bindings
+    refute alice.conversation_id == bob.conversation_id
+    assert Conversations.get_conversation!(alice.conversation_id).person_id == ctx.alice.id
+  end
+
   defp incoming(ctx, person, id, thread, content, type \\ :room) do
     Incoming.new(%{
       content: content,

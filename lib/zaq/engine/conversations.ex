@@ -616,10 +616,7 @@ defmodule Zaq.Engine.Conversations do
   end
 
   defp admit_unlocked(msg, source) do
-    identity = conversation_identity(msg)
-    channel_user_id = identity.conversation_key || identity.participant_id || msg.author_id
-
-    with {:ok, conv} <- conversation_for_persistence(msg, channel_user_id, identity),
+    with {:ok, conv} <- conversation_for_admission(msg, source),
          {:ok, conv} <- maybe_store_author_id(conv, msg.author_id),
          {:ok, conv} <- maybe_assign_person(conv, Incoming.person_id(msg)),
          {:ok, {user_message, admitted?, finalization_token}} <-
@@ -634,6 +631,81 @@ defmodule Zaq.Engine.Conversations do
          finalization_token: finalization_token
        }}
     end
+  end
+
+  defp conversation_for_admission(msg, {:ok, provider, account_key}) do
+    captured =
+      Repo.get_by(Message,
+        source_provider: provider,
+        source_account_key: account_key,
+        external_message_id: msg.message_id
+      )
+
+    person_id = Incoming.person_id(msg)
+    recipient_admission_conversation(captured, msg, person_id)
+  end
+
+  defp conversation_for_admission(msg, _source), do: legacy_admission_conversation(msg)
+
+  defp recipient_admission_conversation(%Message{conversation_id: nil} = captured, msg, person_id)
+       when is_integer(person_id) and person_id > 0 do
+    transcripts =
+      Repo.all(
+        from t in Transcript,
+          join: p in TranscriptMessage,
+          on: p.transcript_id == t.id,
+          where:
+            p.message_id == ^captured.id and t.owner_person_id == ^person_id and
+              t.provider == ^captured.source_provider,
+          limit: 2
+      )
+
+    case transcripts do
+      [transcript] ->
+        Repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+          Jason.encode!(["history_execution:conversation", transcript.id, person_id])
+        ])
+
+        identity = %{
+          scoped?: true,
+          channel_type: transcript.provider,
+          channel_config_id: transcript.channel_config_id,
+          external_channel_id: transcript.external_channel_id,
+          external_thread_id: transcript.external_thread_id
+        }
+
+        key = "history:#{transcript.id}:person:#{person_id}"
+        conversation_for_persistence(msg, key, identity)
+
+      [] ->
+        legacy_admission_conversation(msg)
+
+      _ ->
+        {:error, :ambiguous_execution_scope}
+    end
+  end
+
+  defp recipient_admission_conversation(
+         %Message{role: "user", conversation_id: id},
+         _msg,
+         person_id
+       )
+       when is_binary(id) do
+    # Preserve immutable canonical bindings on replay, including pre-cutover
+    # containers. A new recipient's input must never inherit their ownership.
+    case get_conversation(id) do
+      %Conversation{person_id: ^person_id} = conversation -> {:ok, conversation}
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp recipient_admission_conversation(_captured, msg, _person_id),
+    do: legacy_admission_conversation(msg)
+
+  defp legacy_admission_conversation(msg) do
+    identity = conversation_identity(msg)
+    key = identity.conversation_key || identity.participant_id || msg.author_id
+    conversation_for_persistence(msg, key, identity)
   end
 
   defp get_or_insert_admitted_message(%Conversation{} = conv, %Incoming{} = msg, source) do
