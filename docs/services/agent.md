@@ -170,6 +170,14 @@ Each module broadcasts its own stage — orchestrators broadcast nothing:
 - Injectable via `status_module:` opt in `Api` and `Executor`; inject a `FakeNodeRouter` (calls `apply/3` locally) in unit tests to avoid real RPC
 
 ### Agent API + Executor
+- Inspect/steer/inject require the registry's same trusted principal; a request ID
+  alone never grants private state or control. A supplied execution scope must
+  match the immutable registry scope. Person controls dispatch confidential
+  `:authorize_execution_control` to Engine, rechecking the literal active Person
+  and canonical grants from the immutable admitted-input UUID. No raw admission
+  token is added to inspection state. Runtime PID and actual Jido ID fences remain
+  authoritative for steering/injection. Non-Person legacy controls require the
+  same explicit kind/subject principal as their registered owner.
 - `Zaq.Agent.Api` is the role boundary entrypoint used by `NodeRouter.dispatch/1`
 - Channel requests require an Engine admission binding with non-empty conversation ID,
   user-message ID and finalization token. Missing or malformed bindings return

@@ -11,7 +11,14 @@ defmodule Zaq.Agent.RequestRegistry do
   use GenServer
 
   @table :zaq_agent_request_registry
-  @ownership_fields [:runtime_pid, :server_id, :owner_node, :actor, :execution_scope]
+  @ownership_fields [
+    :runtime_pid,
+    :server_id,
+    :owner_node,
+    :actor,
+    :execution_scope,
+    :execution_user_message_id
+  ]
   @terminal_statuses [:completed, :failed, :cancelled]
 
   @spec start_link(keyword()) :: GenServer.on_start()

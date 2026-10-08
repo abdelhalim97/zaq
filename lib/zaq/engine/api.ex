@@ -230,6 +230,17 @@ defmodule Zaq.Engine.Api do
     %{event | response: response}
   end
 
+  def handle_event(%Event{} = event, :authorize_execution_control, _context) do
+    response =
+      if Keyword.get(event.opts, :confidential) == true and is_map(event.request) do
+        Conversations.authorize_execution_control(event.request[:user_message_id], event.actor)
+      else
+        {:error, :confidential_event_required}
+      end
+
+    %{event | response: response}
+  end
+
   def handle_event(%Event{} = event, :execution_history, _context) do
     response =
       if Keyword.get(event.opts, :confidential) == true do

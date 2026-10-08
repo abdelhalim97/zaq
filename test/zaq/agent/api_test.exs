@@ -12,6 +12,8 @@ defmodule Zaq.Agent.ApiTest do
 
   import ExUnit.CaptureLog
 
+  @control_actor %{kind: :system, subject: "api-control-owner"}
+
   defmodule StubPipeline do
     def run(%Incoming{} = incoming, opts) do
       send(self(), {:pipeline_called, incoming, opts})
@@ -500,12 +502,60 @@ defmodule Zaq.Agent.ApiTest do
 
   test "inspect_request returns in-flight request state" do
     request_id = "req-api-#{System.unique_integer([:positive])}"
-    RequestRegistry.put(request_id, %{status: :streaming, server_id: "server-1"})
 
-    event = Event.new(%{request_id: request_id}, :agent, opts: [action: :inspect_request])
+    RequestRegistry.put(request_id, %{
+      status: :streaming,
+      server_id: "server-1",
+      actor: @control_actor
+    })
+
+    event =
+      Event.new(%{request_id: request_id}, :agent,
+        actor: @control_actor,
+        opts: [action: :inspect_request]
+      )
+
     result = Api.handle_event(event, :inspect_request, nil)
 
     assert {:ok, %{status: :streaming, server_id: "server-1"}} = result.response
+  end
+
+  test "request keys do not authorize foreign or missing principals to inspect or control" do
+    request_id = "private-request-#{System.unique_integer([:positive])}"
+    actor = %{kind: :system, subject: "request-owner"}
+
+    assert :ok =
+             RequestRegistry.put(request_id, %{
+               actor: actor,
+               execution_scope: "owner-scope",
+               status: :streaming,
+               runtime_pid: self(),
+               server_id: "private-server",
+               trace: [%{content: "PRIVATE_TRACE"}]
+             })
+
+    for action <- [:inspect_request, :steer_request, :inject_request],
+        caller <- [nil, %{kind: :system, subject: "foreign"}] do
+      event =
+        Event.new(%{request_id: request_id, content: "Unauthorized"}, :agent,
+          actor: caller,
+          opts: [action: action, factory_module: StubFactory]
+        )
+
+      assert %{response: {:error, :unauthorized}} = Api.handle_event(event, action, nil)
+    end
+
+    event =
+      Event.new(
+        %{request_id: request_id, content: "Wrong scope", execution_scope: "other"},
+        :agent,
+        actor: actor,
+        opts: [action: :steer_request, factory_module: StubFactory]
+      )
+
+    assert %{response: {:error, :scope_conflict}} = Api.handle_event(event, :steer_request, nil)
+    refute_received {:steer_called, _, _, _}
+    refute_received {:inject_called, _, _, _}
   end
 
   test "inspect_request returns invalid_request for missing request_id" do
@@ -532,10 +582,16 @@ defmodule Zaq.Agent.ApiTest do
 
   test "steer_request routes to active server through factory" do
     request_id = "req-steer-#{System.unique_integer([:positive])}"
-    RequestRegistry.put(request_id, %{status: :streaming, server_id: "server-steer"})
+
+    RequestRegistry.put(request_id, %{
+      status: :streaming,
+      server_id: "server-steer",
+      actor: @control_actor
+    })
 
     event =
       Event.new(%{request_id: request_id, content: "adjust"}, :agent,
+        actor: @control_actor,
         opts: [action: :steer_request, factory_module: StubFactory]
       )
 
@@ -547,10 +603,16 @@ defmodule Zaq.Agent.ApiTest do
 
   test "inject_request routes to active server through factory" do
     request_id = "req-inject-#{System.unique_integer([:positive])}"
-    RequestRegistry.put(request_id, %{status: :streaming, server_id: "server-inject"})
+
+    RequestRegistry.put(request_id, %{
+      status: :streaming,
+      server_id: "server-inject",
+      actor: @control_actor
+    })
 
     event =
       Event.new(%{request_id: request_id, content: "tool result"}, :agent,
+        actor: @control_actor,
         opts: [action: :inject_request, factory_module: StubFactory]
       )
 
@@ -569,11 +631,13 @@ defmodule Zaq.Agent.ApiTest do
     RequestRegistry.put(request_id, %{
       status: :streaming,
       server_id: "reusable-name",
+      actor: @control_actor,
       runtime_pid: owner
     })
 
     event =
       Event.new(%{request_id: request_id, content: "adjust"}, :agent,
+        actor: @control_actor,
         opts: [action: :steer_request, factory_module: StubFactory]
       )
 
@@ -591,11 +655,13 @@ defmodule Zaq.Agent.ApiTest do
       RequestRegistry.put(request_id, %{
         status: status,
         server_id: "replacement-name",
+        actor: @control_actor,
         runtime_pid: runtime
       })
 
       event =
         Event.new(%{request_id: request_id, content: "adjust"}, :agent,
+          actor: @control_actor,
           opts: [action: :inject_request, factory_module: StubFactory]
         )
 
@@ -606,10 +672,11 @@ defmodule Zaq.Agent.ApiTest do
 
   test "steer_request returns missing_server_id when registry state lacks server_id" do
     request_id = "req-steer-missing-server-#{System.unique_integer([:positive])}"
-    RequestRegistry.put(request_id, %{status: :streaming})
+    RequestRegistry.put(request_id, %{status: :streaming, actor: @control_actor})
 
     event =
       Event.new(%{request_id: request_id, content: "adjust"}, :agent,
+        actor: @control_actor,
         opts: [action: :steer_request, factory_module: StubFactory]
       )
 
@@ -759,7 +826,7 @@ defmodule Zaq.Agent.ApiTest do
     assert result.response == {:error, :missing_content}
   end
 
-  test "inject_request wraps non-map registry state" do
+  test "inject_request denies non-map registry state without exposing it" do
     request_id = "req-inject-bad-state-#{System.unique_integer([:positive])}"
 
     try do
@@ -772,7 +839,7 @@ defmodule Zaq.Agent.ApiTest do
 
       result = Api.handle_event(event, :inject_request, nil)
 
-      assert result.response == {:error, {:ok, :bad_state}}
+      assert result.response == {:error, :unauthorized}
     after
       RequestRegistry.delete(request_id)
     end

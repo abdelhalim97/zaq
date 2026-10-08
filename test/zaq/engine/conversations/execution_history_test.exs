@@ -3,6 +3,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
 
   alias Zaq.Accounts.People
   alias Zaq.Agent.Api, as: AgentApi
+  alias Zaq.Agent.RequestRegistry
   alias Zaq.Channels.CommunicationBridge
   alias Zaq.Engine.{ChannelConfig, Conversations, HistoryIngress}
   alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript}
@@ -292,6 +293,35 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert execution.outcome["error_type"] == "timeout"
     assert execution.trace_entries == [%{"content" => "PRIVATE_FAILURE"}]
     assert Repo.get!(Message, binding.user_message_id).trace == []
+  end
+
+  test "request inspection revalidates the literal Person and current canonical grants", ctx do
+    {binding, _} = admitted(ctx)
+    {:ok, permission} = grant(ctx)
+    request_id = "authorized-control-#{System.unique_integer([:positive])}"
+
+    state = %{
+      actor: actor(ctx.alice),
+      execution_scope: "canonical-scope",
+      status: :streaming,
+      execution_user_message_id: binding.user_message_id,
+      runtime_pid: self(),
+      server_id: "private"
+    }
+
+    assert :ok = RequestRegistry.put(request_id, state)
+    event = Event.new(%{request_id: request_id}, :agent, actor: actor(ctx.alice))
+    assert %{response: {:ok, ^state}} = AgentApi.handle_event(event, :inspect_request, nil)
+
+    assert %{response: {:error, :unauthorized}} =
+             AgentApi.handle_event(%{event | actor: actor(ctx.bob)}, :inspect_request, nil)
+
+    assert :ok = Permissions.revoke(resource(ctx), permission)
+
+    assert %{response: {:error, :unauthorized}} =
+             AgentApi.handle_event(event, :inspect_request, nil)
+
+    assert :ok = RequestRegistry.delete(request_id)
   end
 
   defp admitted(ctx, thread \\ nil) do

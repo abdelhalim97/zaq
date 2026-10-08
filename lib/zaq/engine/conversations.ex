@@ -71,6 +71,31 @@ defmodule Zaq.Engine.Conversations do
 
   def execution_history(_binding, _actor), do: {:error, :unauthorized}
 
+  @doc "Revalidates Person request-control authority without exposing admission capabilities."
+  def authorize_execution_control(input_id, actor) when is_binary(input_id) do
+    with {:ok, id} <- Ecto.UUID.cast(input_id),
+         %Message{} = input <- Repo.get(Message, id),
+         %Conversation{} = conversation <- Repo.get(Conversation, input.conversation_id),
+         {:ok, person} <- execution_history_owner(conversation, actor),
+         :ok <- ExecutionLifecycle.authorize(input, actor),
+         {:ok, _projection} <- ExecutionHistory.project(input, conversation, person) do
+      :ok
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  def authorize_execution_control(nil, actor) do
+    with {:ok, %{person: %{id: id}}} <- ExecutionActor.validate(actor),
+         %Person{status: "active"} <- Repo.get(Person, id) do
+      :ok
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  def authorize_execution_control(_input_id, _actor), do: {:error, :unauthorized}
+
   defp execution_history_owner(conversation, actor) do
     case ExecutionActor.validate(actor) do
       {:ok, %{person: %{id: id}}} when id == conversation.person_id and id > 0 ->
