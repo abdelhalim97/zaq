@@ -966,6 +966,11 @@ Confidential `:reject_execution_input` seals a queued receipt when the actual
 runtime refuses its control. Proven `consumed` receipts cannot regress; existing
 `unconsumed` evidence is idempotent. Stored rejection reasons are bounded safe
 categories, not arbitrary Jido diagnostics or payloads.
+Loaded execution identity (Person, input UUID and capability hash), assigned
+receipt root and public-answer linkage cannot be rebound through ordinary
+execution changesets. Terminal statuses cannot reopen or regress. Authorized
+People merges use the existing owner-change boundary, which changes only Person
+ownership while preserving receipt/root/message identities and private payloads.
 Agent automatic
 same-Person busy-input routing reuses this receipt path. Rejection/finalizing
 race coverage remains tracked in B3 (`zaq-emb.30.4`).
