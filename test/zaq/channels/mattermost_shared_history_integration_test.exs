@@ -784,11 +784,19 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert_receive {:history_llm_barrier, first_worker}, 5_000
     on_exit(fn -> send(first_worker, :release_history_llm) end)
     refute Jason.encode!(initial["input"]) =~ "Cumulative background"
+    assert Repo.get_by(Message, external_message_id: "root-human") == nil
 
     assert {{:ok, _}, _} =
              MattermostHistoryFixture.post(ctx.config, "human", false, %{
                "id" => "cumulative-a",
                "message" => "Cumulative background A"
+             })
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, nil, false, %{
+               "id" => "root-human",
+               "message" => "Late retained root",
+               "create_at" => 1_600_000_000_000
              })
 
     send(first_worker, :release_history_llm)
@@ -798,6 +806,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     on_exit(fn -> send(second_worker, :release_history_llm) end)
     second_input = Jason.encode!(second["input"])
     assert length(Regex.scan(~r/Cumulative background A/, second_input)) == 1
+    assert length(Regex.scan(~r/Late retained root/, second_input)) == 1
     refute second_input =~ "Cumulative background B"
 
     assert {{:ok, _}, _} =
@@ -812,12 +821,14 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     third_input = Jason.encode!(third["input"])
     assert length(Regex.scan(~r/Cumulative background A/, third_input)) == 1
     assert length(Regex.scan(~r/Cumulative background B/, third_input)) == 1
+    assert length(Regex.scan(~r/Late retained root/, third_input)) == 1
     assert length(Regex.scan(~r/history question/, third_input)) == 1
     assert String.contains?(third_input, "alice")
-    [system, a, b, current, call1, output1, call2, output2] = third["input"]
+    [system, root_entry, a, b, current, call1, output1, call2, output2] = third["input"]
     assert system == List.first(initial["input"])
     assert current == List.last(initial["input"])
-    assert a == Enum.at(second["input"], 1)
+    assert root_entry == Enum.at(second["input"], 1)
+    assert a == Enum.at(second["input"], 2)
 
     assert MultiAgentOpenAIStub.latest_user_message(%{"input" => [b]}) ==
              "alice (alice): Cumulative background B"
@@ -838,6 +849,8 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     answer = await_answer(transcript.id)
     assert answer.content == "Cumulative history answer"
     root = Repo.get_by!(Message, external_message_id: "cumulative-root")
+    late_root = Repo.get_by!(Message, external_message_id: "root-human")
+    assert DateTime.compare(late_root.provider_sent_at, root.provider_sent_at) == :lt
     execution = Repo.get_by!(ExecutionRecord, user_message_id: root.id)
     assert execution.status == "completed"
     assert execution.public_answer_message_id == answer.id
@@ -848,9 +861,64 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert Repo.aggregate(ExecutionRecord, :count) == 1
   end
 
+  @tag :refresh_budget
+  @tag :authorized_execution
+  @tag :input_consumption
+  test "refreshed budget pressure drops only background and preserves the active two-tool exchange",
+       ctx do
+    assert {:ok, _} =
+             Zaq.Permissions.grant(
+               ChannelHistoryResource.for("mattermost", ctx.config.id, "shared-room"),
+               %{person_id: ctx.person.id, access_rights: ["read"]}
+             )
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "budget-refresh-root",
+               "message" => "@zaq history question"
+             })
+
+    assert_receive {:history_llm, initial}, 5_000
+    assert_receive {:history_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_history_llm) end)
+    content = String.duplicate("EVICTABLE_REFRESH_BACKGROUND ", 2_000)
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", false, %{
+               "id" => "budget-background",
+               "message" => content
+             })
+
+    send(worker, :release_history_llm)
+    assert_receive {:history_llm, second}, 5_000
+    assert_receive {:history_llm, third}, 5_000
+
+    for request <- [second, third] do
+      refute Jason.encode!(request["input"]) =~ "EVICTABLE_REFRESH_BACKGROUND"
+      assert List.first(request["input"]) == List.first(initial["input"])
+      assert Enum.at(request["input"], 1) == List.last(initial["input"])
+    end
+
+    [_, _, call1, output1, call2, output2] = third["input"]
+    assert call1["type"] == "function_call"
+    assert output1["type"] == "function_call_output"
+    assert call1["call_id"] == output1["call_id"]
+    assert call1["call_id"] == "refresh-call-1"
+    assert call2["type"] == "function_call"
+    assert output2["type"] == "function_call_output"
+    assert call2["call_id"] == output2["call_id"]
+    assert call2["call_id"] == "refresh-call-2"
+    transcript = Repo.get_by!(Transcript, external_thread_id: "root-human")
+    answer = await_answer(transcript.id)
+    assert answer.content == "Cumulative history answer"
+    assert Repo.get_by!(Message, external_message_id: "budget-background").content == content
+    assert Repo.aggregate(ExecutionRecord, :count) == 1
+    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 1
+  end
+
   defp history_llm_handler(tags, owner) do
     cond do
-      tags[:per_turn_refresh] == true or tags[:refresh_revocation] == true ->
+      cumulative_refresh?(tags) ->
         &cumulative_refresh_response/2
 
       tags[:root_failure] ->
@@ -881,6 +949,9 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         nil
     end
   end
+
+  defp cumulative_refresh?(tags),
+    do: Enum.any?([:per_turn_refresh, :refresh_revocation, :refresh_budget], &(tags[&1] == true))
 
   @tag :refresh_revocation
   @tag :authorized_execution
