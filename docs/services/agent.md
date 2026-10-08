@@ -559,6 +559,10 @@ without safe permission mutation support return `:unsupported`.
   or `ReqLLM.ToolResult.output` into `trace_artifacts`, then removes content from
   its JSON trace copy.
 - Extracts `measurements`, `model`, and sanitized `agent` metadata from the stream result; token counts come from stream usage.
+- Turn/model-call measurements include native `llm_started`/`llm_completed`
+  evidence, including tool-only calls without text deltas. Repeated lifecycle
+  events are deduplicated by call identity; legacy delta-only consumers retain
+  their fallback counts.
 - Executor preserves accumulated trace, tool/LLM calls, artifacts, measurements, model and
   agent metadata when the stream returns a handled failure, so Engine can persist the
   available evidence without incremental database writes.

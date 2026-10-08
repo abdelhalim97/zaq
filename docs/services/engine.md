@@ -972,6 +972,12 @@ references; no historical repair is performed. The existing token aggregator
 uses completed execution counters in preference to Message counters, with a
 per-counter legacy fallback; retries still recompute totals once per answer.
 
+Available runtime timings and turn/model/tool-call measurements are retained in
+the root's private `outcome["measurements"]`, for success and handled failure.
+Token aliases are excluded there: authoritative counters remain in private
+`usage`. Missing measurements are not manufactured; measured zero is preserved.
+Child receipts do not inherit root measurements or own accounting.
+
 Recipient-owned canonical inputs resolve an execution container by their exact
 transcript, connector and Person, not by the provider's public thread key alone.
 The existing communication-scope unique index and a container-scope transaction
