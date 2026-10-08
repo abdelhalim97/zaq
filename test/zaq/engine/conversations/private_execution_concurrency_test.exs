@@ -205,6 +205,88 @@ defmodule Zaq.Engine.Conversations.PrivateExecutionConcurrencyTest do
     end
   end
 
+  test "a concurrent committed association remains beyond the captured upper bound", fixture do
+    initial =
+      Sandbox.unboxed_run(Repo, fn ->
+        assert {:ok, projection} = Conversations.execution_history(fixture.root, fixture.actor)
+        projection
+      end)
+
+    parent = self()
+    barrier = make_ref()
+
+    reader =
+      Task.async(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          handler = {__MODULE__, barrier}
+
+          :telemetry.attach(
+            handler,
+            [:zaq, :repo, :query],
+            &__MODULE__.pause_history_snapshot/4,
+            %{owner: self(), parent: parent, barrier: barrier}
+          )
+
+          try do
+            Conversations.execution_history(fixture.root, fixture.actor,
+              after_cursors: initial.cursors
+            )
+          after
+            :telemetry.detach(handler)
+          end
+        end)
+      end)
+
+    try do
+      assert_receive {:history_snapshot_captured, ^barrier}, 5_000
+      fresh = Sandbox.unboxed_run(Repo, fn -> admit(fixture, "Concurrent association") end)
+
+      on_exit(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.delete_all(
+            from e in ExecutionRecord, where: e.user_message_id == ^fresh.user_message_id
+          )
+        end)
+      end)
+
+      send(reader.pid, {:resume, barrier})
+      assert {:ok, bounded} = Task.await(reader, 5_000)
+      assert bounded.messages == []
+      assert bounded.upper_cursors == initial.cursors
+      assert bounded.cursors == initial.cursors
+
+      Sandbox.unboxed_run(Repo, fn ->
+        assert {:ok, next} =
+                 Conversations.execution_history(fixture.root, fixture.actor,
+                   after_cursors: initial.cursors
+                 )
+
+        assert [message] = next.messages
+        assert message.message_id == fresh.user_message_id
+        assert message.content == "Concurrent association"
+        assert next.cursors == next.upper_cursors
+      end)
+    after
+      send(reader.pid, {:resume, barrier})
+      Task.shutdown(reader)
+    end
+  end
+
+  @doc "Pauses after the actual input-scope read captures its association upper bound."
+  def pause_history_snapshot(_, _, %{query: query}, config) do
+    if self() == config.owner and String.contains?(query, "JOIN \"transcript_messages\"") and
+         String.contains?(query, "LIMIT") and not Process.get({__MODULE__, config.barrier}, false) do
+      Process.put({__MODULE__, config.barrier}, true)
+      send(config.parent, {:history_snapshot_captured, config.barrier})
+
+      receive do
+        {:resume, barrier} when barrier == config.barrier -> :ok
+      after
+        5_000 -> raise "History snapshot barrier was not released"
+      end
+    end
+  end
+
   defp assert_blocked(:finalize, fixture) do
     error =
       assert_raise Postgrex.Error, fn ->

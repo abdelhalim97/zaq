@@ -8,7 +8,8 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
   alias Zaq.Agent.StreamEvents
   alias Zaq.Channels.CommunicationBridge
   alias Zaq.Engine.{ChannelConfig, Conversations, HistoryIngress}
-  alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript}
+  alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript, TranscriptHistory}
+  alias Zaq.Engine.History.Facts
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Event
   alias Zaq.Permissions
@@ -769,6 +770,60 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
 
     assert Repo.get_by!(ExecutionRecord, user_message_id: root.user_message_id).status ==
              "pending"
+  end
+
+  test "an older canonical message attached later is a new association delta", ctx do
+    grant(ctx)
+
+    assert {:ok, facts} =
+             Facts.new(%{
+               provider: "mattermost",
+               channel_config_id: ctx.config.id,
+               channel_id: "room",
+               kind: :channel,
+               actor_person_id: ctx.bob.id
+             })
+
+    attrs = %{
+      role: "external",
+      content: "Earlier canonical content",
+      author_id: "bob",
+      author_name: "Bob",
+      external_message_id: "prepared-old",
+      provider_sent_at: ~U[2020-01-01 00:00:00Z],
+      attachments: []
+    }
+
+    source = %{
+      provider: "mattermost",
+      channel_config_id: ctx.config.id,
+      provenance: "provider_event"
+    }
+
+    assert {:ok, prepared} = TranscriptHistory.prepare_capture(facts, attrs, source)
+    old = Repo.get!(Message, prepared.message_id)
+    {binding, _} = admitted(ctx)
+    assert {:ok, initial} = Conversations.execution_history(binding, actor(ctx.alice))
+    assert initial.messages == []
+
+    assert DateTime.compare(
+             old.inserted_at,
+             Repo.get!(Message, binding.user_message_id).inserted_at
+           ) in [:lt, :eq]
+
+    assert {:ok, attached} = TranscriptHistory.capture(facts, attrs, source)
+    assert attached.message_id == old.id
+
+    assert {:ok, delta} =
+             Conversations.execution_history(binding, actor(ctx.alice),
+               after_cursors: initial.cursors
+             )
+
+    assert [message] = delta.messages
+    assert message.message_id == old.id
+    assert message.provider_sent_at == ~U[2020-01-01 00:00:00.000000Z]
+    assert message.position > initial.cursors[initial.transcript_id]
+    assert Repo.get!(Message, old.id) == old
   end
 
   defp admitted(ctx, thread \\ nil) do
