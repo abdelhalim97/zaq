@@ -334,6 +334,52 @@ defmodule Zaq.Agent.Factory do
     }
   end
 
+  @doc """
+  Applies an idle history snapshot to one exact runtime PID and verifies Jido's
+  applied-operation receipt. The lifecycle caller must hold exclusive admission
+  through this operation; this helper does not acquire a scope lease. Active runs
+  are rejected before dispatch, never deliberately queued for later replacement.
+  """
+  @spec apply_history_context(pid(), AIContext.t(), String.t()) :: :ok | {:error, atom()}
+  def apply_history_context(pid, %AIContext{} = context, op_id)
+      when is_pid(pid) and is_binary(op_id) and op_id != "" do
+    with {:ok, %{raw_state: %{__strategy__: strategy}}} <- Jido.AgentServer.status(pid),
+         :ok <- history_context_idle(strategy),
+         signal <-
+           Jido.Signal.new!(
+             "ai.react.context.modify",
+             %{
+               op_id: op_id,
+               operation: %{type: :replace, reason: :system, result_context: context}
+             },
+             source: "/zaq/agent/history"
+           ),
+         {:ok, agent} <- Jido.AgentServer.call(pid, signal, 5_000) do
+      confirm_history_context(StrategyState.get(agent, %{}), context, op_id)
+    else
+      {:error, :runtime_busy} = error -> error
+      _ -> {:error, :context_apply_failed}
+    end
+  catch
+    :exit, _ -> {:error, :runtime_unavailable}
+  end
+
+  def apply_history_context(_pid, _context, _op_id), do: {:error, :invalid_context_operation}
+
+  defp history_context_idle(strategy) do
+    if is_binary(strategy[:active_request_id]) or
+         strategy[:status] in [:awaiting_llm, :awaiting_tool],
+       do: {:error, :runtime_busy},
+       else: :ok
+  end
+
+  defp confirm_history_context(strategy, context, op_id) do
+    if op_id in Map.get(strategy, :applied_context_ops, []) and
+         is_nil(strategy[:pending_context_op]) and strategy[:context] == context,
+       do: :ok,
+       else: {:error, :context_apply_unconfirmed}
+  end
+
   defp put_context_window(opts, config) do
     context =
       opts

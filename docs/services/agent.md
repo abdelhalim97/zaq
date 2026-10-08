@@ -645,6 +645,12 @@ without safe permission mutation support return `:unsupported`.
   tool exchanges, then existing context-window enforcement applies. This does not
   modify retained Jido state or advance runtime cursors. Warm request-boundary
   context/cursor synchronization remains separately tracked.
+- `Factory.apply_history_context/3` provides the native idle-apply mechanic for
+  that follow-on lifecycle: it accepts only an exact PID and operation ID, rejects
+  active runs before dispatch, and verifies Jido's applied-operation receipt and
+  resulting context rather than treating a queued command as success. Its caller
+  must serialize admission across the operation; ServerManager lease/cursor
+  integration remains pending in `zaq-emb.16`.
 - Factory hydrates conversation-backed runtimes only from the explicit Engine-issued
   `conversation_id`; it never parses a runtime server name to recover persistence identity.
 - The legacy loader excludes pending and failed admitted user messages. Canonical
