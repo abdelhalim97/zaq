@@ -4,11 +4,12 @@ defmodule Zaq.Engine.ChannelHistoryAdminTest do
   import Zaq.AccountsFixtures
 
   alias Zaq.Accounts.People
+  alias Zaq.Channels.CommunicationBridge
   alias Zaq.Engine.Api
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.ChannelHistoryAdmin
   alias Zaq.Engine.Conversations
-  alias Zaq.Engine.Conversations.{Message, MessageRating}
+  alias Zaq.Engine.Conversations.{ExecutionRecord, Message, MessageRating}
   alias Zaq.Engine.History.Facts
   alias Zaq.Engine.HistoryIngress
   alias Zaq.Engine.Messages.Incoming
@@ -240,6 +241,95 @@ defmodule Zaq.Engine.ChannelHistoryAdminTest do
     assert Enum.find(messages, &(&1.message_id == answer.message_id)).feedback == :negative
     assert Enum.find(messages, &(&1.message_id == ctx.captured.message_id)).display_name == "Alex"
     refute Enum.any?(messages, &(Map.has_key?(&1, :metadata) or Map.has_key?(&1, :trace)))
+  end
+
+  test "message info projects only the exact completed private root without altering canonical data",
+       ctx do
+    {answer, execution} = completed_private_answer(ctx)
+    info = %{op: :message_info, id: ctx.captured.transcript_id, message_id: answer.id}
+    assert {:ok, projected} = request(ctx.admin, info)
+    assert projected.id == answer.id
+    assert projected.trace == execution.trace_entries
+    assert projected.prompt_tokens == 0
+    assert projected.completion_tokens == 2
+    assert projected.total_tokens == 2
+    assert projected.metadata["measurements"] == execution.outcome["measurements"]
+    assert Repo.get!(Message, answer.id) == answer
+    assert {:error, :unauthorized} = request(ctx.regular, info)
+    {:ok, other} = capture(ctx, "other-room", "unrelated", "external")
+    assert {:error, :not_found} = request(ctx.admin, %{info | id: other.transcript_id})
+
+    assert {:ok, %{messages: messages}} =
+             request(ctx.admin, %{op: :detail, id: ctx.captured.transcript_id})
+
+    refute inspect(messages) =~ "PRIVATE_TOOL"
+    refute Enum.any?(messages, &Map.has_key?(&1, :trace))
+  end
+
+  test "a private answer with inconsistent ownership fails closed instead of projecting another Person's data",
+       ctx do
+    {answer, execution} = completed_private_answer(ctx)
+    {:ok, other} = People.create_person(%{full_name: "Unrelated owner"})
+    execution |> Ecto.Changeset.change(person_id: other.id) |> Repo.update!()
+
+    assert {:error, :not_found} =
+             request(
+               ctx.admin,
+               %{op: :message_info, id: ctx.captured.transcript_id, message_id: answer.id}
+             )
+  end
+
+  defp completed_private_answer(ctx) do
+    incoming =
+      Incoming.new(%{
+        content: "hello",
+        channel_id: "room",
+        provider: :mattermost,
+        author_id: "alex",
+        message_id: "m1",
+        person: ctx.person,
+        routing_context: %{channel_config_id: ctx.config.id, conversation_type: :room}
+      })
+      |> CommunicationBridge.put_conversation_identity()
+
+    assert {:ok, binding} = Conversations.admit_incoming(incoming)
+
+    assert {:ok, finalized} =
+             Conversations.finalize_incoming(
+               binding.user_message_id,
+               binding.finalization_token,
+               %{
+                 answer: "Public answer",
+                 model: "model-private",
+                 prompt_tokens: 0,
+                 completion_tokens: 2,
+                 total_tokens: 2,
+                 trace: [%{"type" => "tool_call", "name" => "add", "response" => "PRIVATE_TOOL"}],
+                 measurements: %{
+                   "latency_ms" => 0,
+                   "turn_count" => 2,
+                   "llm_call_count" => 2,
+                   "tool_call_count" => 1
+                 }
+               },
+               actor: %{person: %{id: ctx.person.id}}
+             )
+
+    assert {:ok, _} =
+             HistoryIngress.capture_confirmed(%{
+               confirmation: :confirmed,
+               provider: "mattermost",
+               kind: :channel,
+               channel_config_id: ctx.config.id,
+               channel_id: "room",
+               message_id: "private-reply",
+               content: "Public answer",
+               user_message_id: binding.user_message_id,
+               assistant_message_id: finalized.assistant_message_id
+             })
+
+    {Repo.get!(Message, finalized.assistant_message_id),
+     Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)}
   end
 
   defp capture(ctx, room, external_id, role) do

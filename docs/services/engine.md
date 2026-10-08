@@ -186,6 +186,15 @@ or a Person plus connector, checks a current super-admin again, and is not an
 agent tool. Person refresh changes only that Person's grants in existing Shared
 rooms of the selected connector; it does not discover new rooms.
 
+The confidential `:channel_history_admin` message-info operation also validates
+the exact transcript placement before projecting a completed private answer root.
+Its input, answer conversation and Person ownership must agree; inconsistent
+links fail closed. Only this explicit super-admin inspection receives private
+traces, usage and measurements in the existing presentation shape. Public history
+rows stay sanitized and unchanged, and messages without a private answer root
+retain the legacy message-based inspection fallback. Lost historical measurements
+are not reconstructed.
+
 Normalized add/remove events use provider-supplied room revisions. Durable
 per-member fences let unrelated reordered events apply while preventing stale
 events or snapshots from restoring removed access. Targeted snapshots fence only
