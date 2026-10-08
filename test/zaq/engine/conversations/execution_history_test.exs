@@ -1,5 +1,6 @@
 defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
   use Zaq.DataCase, async: true
+  use ExUnitProperties
 
   alias Zaq.Accounts.People
   alias Zaq.Agent.Api, as: AgentApi
@@ -80,6 +81,156 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
 
     assert {:ok, _} = People.update_person(ctx.alice, %{status: "inactive"})
     assert {:error, :unauthorized} = Conversations.execution_history(binding, actor(ctx.alice))
+  end
+
+  test "fixed association cursors return cumulative A then A+B without current input", ctx do
+    grant(ctx)
+    {binding, _} = admitted(ctx)
+    assert {:ok, initial} = Conversations.execution_history(binding, actor(ctx.alice))
+    opts = [after_cursors: initial.cursors]
+    assert {:ok, _} = HistoryIngress.capture(incoming(ctx, ctx.bob, "delta-a", nil, "A"))
+    assert {:ok, first} = Conversations.execution_history(binding, actor(ctx.alice), opts)
+    assert Enum.map(first.messages, & &1.content) == ["A"]
+    assert {:ok, _} = HistoryIngress.capture(incoming(ctx, ctx.bob, "delta-b", nil, "B"))
+    assert {:ok, second} = Conversations.execution_history(binding, actor(ctx.alice), opts)
+    assert Enum.map(second.messages, & &1.content) == ["A", "B"]
+    assert first.cursors[initial.transcript_id] < second.cursors[initial.transcript_id]
+    assert second.cursors == second.upper_cursors
+
+    assert {:ok, empty} =
+             Conversations.execution_history(binding, actor(ctx.alice),
+               after_cursors: second.cursors
+             )
+
+    assert empty.messages == []
+  end
+
+  test "delta pages never advance past omitted associations", ctx do
+    grant(ctx)
+    {binding, _} = admitted(ctx)
+    assert {:ok, initial} = Conversations.execution_history(binding, actor(ctx.alice))
+
+    for index <- 1..103 do
+      assert {:ok, _} =
+               HistoryIngress.capture(
+                 incoming(ctx, ctx.bob, "page-#{index}", nil, "Note #{index}")
+               )
+    end
+
+    assert {:ok, first} =
+             Conversations.execution_history(binding, actor(ctx.alice),
+               after_cursors: initial.cursors
+             )
+
+    assert length(first.messages) == 100
+    assert first.cursors[initial.transcript_id] < first.upper_cursors[initial.transcript_id]
+
+    assert {:ok, second} =
+             Conversations.execution_history(binding, actor(ctx.alice),
+               after_cursors: first.cursors
+             )
+
+    assert Enum.map(second.messages, & &1.content) == ["Note 101", "Note 102", "Note 103"]
+    assert second.cursors == second.upper_cursors
+  end
+
+  test "delta cursors are source-specific and every refresh rechecks grants", ctx do
+    assert {:ok, _} = HistoryIngress.capture(incoming(ctx, ctx.bob, "root", nil, "Root"))
+    {:ok, permission} = grant(ctx)
+    {binding, _} = admitted(ctx, "root")
+    assert {:ok, initial} = Conversations.execution_history(binding, actor(ctx.alice))
+
+    assert {:ok, _} =
+             HistoryIngress.capture(incoming(ctx, ctx.bob, "parent-delta", nil, "Parent"))
+
+    assert {:ok, _} =
+             HistoryIngress.capture(incoming(ctx, ctx.bob, "thread-delta", "root", "Local"))
+
+    assert {:ok, delta} =
+             Conversations.execution_history(binding, actor(ctx.alice),
+               after_cursors: initial.cursors
+             )
+
+    assert Enum.map(delta.messages, & &1.content) == ["Parent", "Local"]
+
+    for cursors <- [
+          %{},
+          %{Ecto.UUID.generate() => 0},
+          Map.put(initial.cursors, initial.transcript_id, -1),
+          Map.put(initial.cursors, initial.transcript_id, 1_000_000)
+        ] do
+      assert {:error, :invalid_history_cursor} =
+               Conversations.execution_history(binding, actor(ctx.alice), after_cursors: cursors)
+    end
+
+    assert :ok = Permissions.revoke(resource(ctx), permission)
+
+    assert {:error, :unauthorized} =
+             Conversations.execution_history(binding, actor(ctx.alice),
+               after_cursors: initial.cursors
+             )
+  end
+
+  property "association suffixes preserve order, identity and cursor bounds", ctx do
+    grant(ctx)
+    {binding, _} = admitted(ctx)
+
+    check all(count <- integer(0..12), skip <- integer(0..count), max_runs: 8) do
+      assert {:ok, initial} = Conversations.execution_history(binding, actor(ctx.alice))
+
+      messages =
+        for index <- Enum.take(1..12, count) do
+          id = Ecto.UUID.generate()
+
+          assert {:ok, capture} =
+                   HistoryIngress.capture(incoming(ctx, ctx.bob, id, nil, "Note #{index}"))
+
+          capture.message_id
+        end
+
+      cursors = Map.update!(initial.cursors, initial.transcript_id, &(&1 + skip))
+
+      assert {:ok, delta} =
+               Conversations.execution_history(binding, actor(ctx.alice), after_cursors: cursors)
+
+      assert Enum.map(delta.messages, & &1.message_id) == Enum.drop(messages, skip)
+      assert delta.cursors == delta.upper_cursors
+
+      assert delta.cursors[initial.transcript_id] ==
+               initial.cursors[initial.transcript_id] + count
+
+      assert {:ok, ^delta} =
+               Conversations.execution_history(binding, actor(ctx.alice), after_cursors: cursors)
+    end
+  end
+
+  test "Engine confidential dispatch forwards delta cursors without bypassing capability checks",
+       ctx do
+    grant(ctx)
+    {binding, _} = admitted(ctx)
+    assert {:ok, initial} = Conversations.execution_history(binding, actor(ctx.alice))
+    assert {:ok, _} = HistoryIngress.capture(incoming(ctx, ctx.bob, "api-delta", nil, "Fresh"))
+    request = Map.put(binding, :after_cursors, initial.cursors)
+    event = Event.new(request, :engine, actor: actor(ctx.alice), opts: [confidential: true])
+    assert %{response: {:ok, delta}} = Zaq.Engine.Api.handle_event(event, :execution_history, nil)
+    assert Enum.map(delta.messages, & &1.content) == ["Fresh"]
+
+    assert %{response: {:error, :confidential_event_required}} =
+             Zaq.Engine.Api.handle_event(%{event | opts: []}, :execution_history, nil)
+
+    assert %{response: {:error, :unauthorized}} =
+             Zaq.Engine.Api.handle_event(
+               %{event | actor: actor(ctx.bob)},
+               :execution_history,
+               nil
+             )
+
+    assert %{response: {:error, :unauthorized}} =
+             Zaq.Engine.Api.handle_event(
+               %{event | request: %{request | finalization_token: "forged"}},
+               :execution_history,
+               nil
+             )
   end
 
   test "revocation on a later read denies access rather than falling back to private history",

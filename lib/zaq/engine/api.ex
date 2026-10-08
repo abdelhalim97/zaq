@@ -256,7 +256,13 @@ defmodule Zaq.Engine.Api do
   def handle_event(%Event{} = event, :execution_history, _context) do
     response =
       if Keyword.get(event.opts, :confidential) == true do
-        Conversations.execution_history(event.request, event.actor)
+        history_opts =
+          case event.request do
+            %{after_cursors: cursors} -> [after_cursors: cursors]
+            _ -> []
+          end
+
+        Conversations.execution_history(event.request, event.actor, history_opts)
       else
         {:error, :confidential_event_required}
       end

@@ -53,8 +53,10 @@ defmodule Zaq.Engine.Conversations do
     do: TranscriptHistory.list(person, transcript_id, opts)
 
   @doc "Validates an Engine admission capability and returns only authorized execution history."
-  @spec execution_history(map(), term()) :: {:ok, map()} | {:error, term()}
-  def execution_history(binding, actor) when is_map(binding) do
+  @spec execution_history(map(), term(), keyword()) :: {:ok, map()} | {:error, term()}
+  def execution_history(binding, actor, opts \\ [])
+
+  def execution_history(binding, actor, opts) when is_map(binding) do
     with {:ok, conversation_id} <- Ecto.UUID.cast(binding[:conversation_id]),
          {:ok, input_id} <- Ecto.UUID.cast(binding[:user_message_id]),
          token when is_binary(token) <- binding[:finalization_token],
@@ -63,13 +65,21 @@ defmodule Zaq.Engine.Conversations do
          true <- valid_finalization_token?(input, token),
          %Conversation{} = conversation <- Repo.get(Conversation, conversation_id),
          {:ok, person} <- execution_history_owner(conversation, actor) do
-      ExecutionHistory.project(input, conversation, person)
+      if Keyword.has_key?(opts, :after_cursors),
+        do:
+          ExecutionHistory.delta(
+            input,
+            conversation,
+            person,
+            Keyword.fetch!(opts, :after_cursors)
+          ),
+        else: ExecutionHistory.project(input, conversation, person)
     else
       _ -> {:error, :unauthorized}
     end
   end
 
-  def execution_history(_binding, _actor), do: {:error, :unauthorized}
+  def execution_history(_binding, _actor, _opts), do: {:error, :unauthorized}
 
   @doc "Revalidates Person request-control authority without exposing admission capabilities."
   def authorize_execution_control(input_id, actor) when is_binary(input_id) do
