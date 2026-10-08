@@ -544,6 +544,48 @@ defmodule Zaq.Agent.ApiTest do
                      [expected_request_id: ^request_id]}
   end
 
+  test "request control targets the recorded runtime PID, never its reusable server name" do
+    request_id = "req-pid-#{System.unique_integer([:positive])}"
+    owner = self()
+
+    RequestRegistry.put(request_id, %{
+      status: :streaming,
+      server_id: "reusable-name",
+      runtime_pid: owner
+    })
+
+    event =
+      Event.new(%{request_id: request_id, content: "adjust"}, :agent,
+        opts: [action: :steer_request, factory_module: StubFactory]
+      )
+
+    assert %{response: {:ok, :steered}} = Api.handle_event(event, :steer_request, nil)
+    assert_received {:steer_called, ^owner, "adjust", [expected_request_id: ^request_id]}
+  end
+
+  test "request control rejects a dead incarnation and terminal requests before factory calls" do
+    {runtime, monitor} = spawn_monitor(fn -> :ok end)
+    assert_receive {:DOWN, ^monitor, :process, ^runtime, :normal}
+
+    for {status, expected} <- [{:streaming, :stale_runtime}, {:completed, :terminal_request}] do
+      request_id = "req-stale-#{System.unique_integer([:positive])}"
+
+      RequestRegistry.put(request_id, %{
+        status: status,
+        server_id: "replacement-name",
+        runtime_pid: runtime
+      })
+
+      event =
+        Event.new(%{request_id: request_id, content: "adjust"}, :agent,
+          opts: [action: :inject_request, factory_module: StubFactory]
+        )
+
+      assert %{response: {:error, ^expected}} = Api.handle_event(event, :inject_request, nil)
+      refute_received {:inject_called, _, _, _}
+    end
+  end
+
   test "steer_request returns missing_server_id when registry state lacks server_id" do
     request_id = "req-steer-missing-server-#{System.unique_integer([:positive])}"
     RequestRegistry.put(request_id, %{status: :streaming})

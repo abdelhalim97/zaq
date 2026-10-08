@@ -1,5 +1,6 @@
 defmodule Zaq.Agent.RequestRegistryTest do
   use ExUnit.Case, async: false
+  use ExUnitProperties
 
   alias Zaq.Agent.RequestRegistry
 
@@ -34,6 +35,109 @@ defmodule Zaq.Agent.RequestRegistryTest do
     assert :ok = RequestRegistry.delete(nil)
     assert :ok = RequestRegistry.delete(:request_id)
     assert :ok = RequestRegistry.delete(123)
+  end
+
+  test "terminal request state cannot be reopened by a trailing stream flush" do
+    id = "terminal-#{System.unique_integer([:positive])}"
+    assert :ok = RequestRegistry.put(id, %{status: :running, runtime_pid: self()})
+    assert :ok = RequestRegistry.put(id, %{status: :completed, runtime_pid: self()})
+
+    assert {:error, :terminal_request} =
+             RequestRegistry.put(id, %{status: :streaming, runtime_pid: self()})
+
+    assert {:ok, %{status: :completed}} = RequestRegistry.get(id)
+    RequestRegistry.delete(id)
+  end
+
+  test "another runtime incarnation cannot overwrite ownership or terminalize a request" do
+    id = "owned-#{System.unique_integer([:positive])}"
+
+    other =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    on_exit(fn -> send(other, :stop) end)
+
+    assert :ok = RequestRegistry.put(id, %{status: :running, runtime_pid: self()})
+
+    assert {:error, :ownership_conflict} =
+             RequestRegistry.put(id, %{status: :failed, runtime_pid: other})
+
+    owner = self()
+    assert {:ok, %{status: :running, runtime_pid: ^owner}} = RequestRegistry.get(id)
+    RequestRegistry.delete(id)
+  end
+
+  test "concurrent updates retain independently recorded request fields" do
+    id = "concurrent-#{System.unique_integer([:positive])}"
+    owner = self()
+    assert :ok = RequestRegistry.put(id, %{status: :running, runtime_pid: owner})
+
+    tasks =
+      for n <- 1..32 do
+        Task.async(fn ->
+          RequestRegistry.put(id, %{"field-#{n}" => n, runtime_pid: owner})
+        end)
+      end
+
+    Enum.each(tasks, &assert(:ok == Task.await(&1)))
+    assert {:ok, recorded} = RequestRegistry.get(id)
+    for n <- 1..32, do: assert(recorded["field-#{n}"] == n)
+    RequestRegistry.delete(id)
+  end
+
+  property "the first terminal disposition survives all later stream status updates" do
+    check all(statuses <- list_of(member_of([:streaming, :completed, :failed, :cancelled]))) do
+      id = "status-property-#{System.unique_integer([:positive])}"
+      assert :ok = RequestRegistry.put(id, %{status: :running, runtime_pid: self()})
+
+      Enum.reduce(statuses, :running, fn status, current ->
+        result = RequestRegistry.put(id, %{status: status, runtime_pid: self()})
+
+        expected =
+          if current in [:completed, :failed, :cancelled] and status != current do
+            assert result == {:error, :terminal_request}
+            current
+          else
+            assert result == :ok
+            status
+          end
+
+        assert {:ok, %{status: ^expected}} = RequestRegistry.get(id)
+        expected
+      end)
+
+      assert :ok = RequestRegistry.delete(id)
+    end
+  end
+
+  property "actor and execution scope cannot be reassigned by another update" do
+    check all(person_id <- positive_integer(), scope <- string(:alphanumeric, min_length: 1)) do
+      id = "scope-property-#{System.unique_integer([:positive])}"
+      actor = %{person: %{id: person_id}}
+
+      assert :ok =
+               RequestRegistry.put(id, %{
+                 actor: actor,
+                 execution_scope: scope,
+                 status: :running,
+                 runtime_pid: self()
+               })
+
+      assert {:error, :ownership_conflict} =
+               RequestRegistry.put(id, %{actor: %{person: %{id: person_id + 1}}})
+
+      assert {:error, :ownership_conflict} =
+               RequestRegistry.put(id, %{execution_scope: scope <> "-other"})
+
+      assert {:ok, %{actor: ^actor, execution_scope: ^scope, status: :running}} =
+               RequestRegistry.get(id)
+
+      assert :ok = RequestRegistry.delete(id)
+    end
   end
 
   test "get returns not_found when registry table is unavailable" do
