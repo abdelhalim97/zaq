@@ -340,9 +340,10 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
       from: %{address: "carol@example.com", name: "Carol"},
       body_text: "FORBIDDEN_RECIPIENT_ONLY",
       raw_header:
-        "To: bot@example.com\r\nMessage-ID: <carol-only@example.com>\r\nReferences: <strategy-input@example.com>\r\nAuto-Submitted: auto-generated"
+        "To: bot@example.com\r\nMessage-ID: <carol-only@example.com>\r\nReferences: <strategy-input@example.com>\r\nAuto-Submitted: auto-replied"
     }
 
+    assert ImapAdapter.to_internal(payload, %{}).metadata["email"]["automatic_reply"] == true
     assert :ok = EmailBridge.from_listener(config, payload, mailbox: "INBOX")
     carol_only = Repo.get_by!(Message, external_message_id: "<carol-only@example.com>")
 

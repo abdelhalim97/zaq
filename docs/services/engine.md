@@ -972,6 +972,14 @@ references; no historical repair is performed. The existing token aggregator
 uses completed execution counters in preference to Message counters, with a
 per-counter legacy fallback; retries still recompute totals once per answer.
 
+Recipient-owned canonical inputs resolve an execution container by their exact
+transcript, connector and Person, not by the provider's public thread key alone.
+The existing communication-scope unique index and a container-scope transaction
+lock prevent duplicate active containers. Canonical message UUIDs, recipient
+placements and email reply threading remain unchanged. Replays retain their
+already-bound container and owner, including pre-cutover records; historical
+containers are never reassigned to a replying participant.
+
 `ExecutionRecord.root_execution_id` distinguishes private per-input receipts from
 public-answer roots. Only roots use `pending`/`completed`/`failed`; children use
 `queued`/`consumed`/`unconsumed` and cannot link a public answer. The additive
