@@ -230,6 +230,18 @@ defmodule Zaq.Engine.Api do
     %{event | response: response}
   end
 
+  def handle_event(%Event{} = event, action, _context)
+      when action in [:queue_execution_input, :consume_execution_input] do
+    response =
+      if Keyword.get(event.opts, :confidential) == true and is_map(event.request) do
+        execution_input_event(action, event.request, event.actor)
+      else
+        {:error, :confidential_event_required}
+      end
+
+    %{event | response: response}
+  end
+
   def handle_event(%Event{} = event, :authorize_execution_control, _context) do
     response =
       if Keyword.get(event.opts, :confidential) == true and is_map(event.request) do
@@ -1045,6 +1057,23 @@ defmodule Zaq.Engine.Api do
   #
   # `:message_id` is rejected rather than ignored: it would silently override the
   # message resolved from `message_ref` inside `MessageRating.changeset/2`.
+  defp execution_input_event(:queue_execution_input, request, actor),
+    do:
+      Conversations.queue_execution_input(
+        request[:root_user_message_id],
+        request[:binding],
+        actor,
+        content: request[:content]
+      )
+
+  defp execution_input_event(:consume_execution_input, request, actor),
+    do:
+      Conversations.consume_execution_input(
+        request[:root_user_message_id],
+        request[:user_message_id],
+        actor
+      )
+
   defp handle_rate_message(conversations_module, message_ref, rater_attrs) do
     if smuggled_message_id?(rater_attrs) do
       {:error, {:invalid_request, %{rater_attrs: rater_attrs}}}

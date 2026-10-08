@@ -4,17 +4,27 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   import Zaq.SystemConfigFixtures
 
   alias Zaq.Accounts.People
+  alias Zaq.Agent.RequestRegistry
   alias Zaq.Agent.ServerManager
+  alias Zaq.Channels.CommunicationBridge
   alias Zaq.Channels.JidoChatBridge
   alias Zaq.Channels.MattermostAdmin
   alias Zaq.Engine.Api
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript, TranscriptMessage}
+  alias Zaq.Engine.HistoryIngress
   alias Zaq.Engine.IncomingMessageRouting
+  alias Zaq.Engine.Messages.Incoming
   alias Zaq.Engine.Messages.Outgoing
   alias Zaq.Permissions.ChannelHistoryResource
-  alias Zaq.TestSupport.{MattermostHistoryFixture, OpenAIStub, ToolCallingLLMStub}
+
+  alias Zaq.TestSupport.{
+    MattermostHistoryFixture,
+    MultiAgentOpenAIStub,
+    OpenAIStub,
+    ToolCallingLLMStub
+  }
 
   @keys [
     :channels,
@@ -50,22 +60,37 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     end)
 
     llm_handler =
-      if tags[:authorized_execution] do
-        ToolCallingLLMStub.handler(
-          routes: [
-            %{
-              match: &String.contains?(&1, "history question"),
-              tool: "add",
-              arguments: fn _ -> %{value: 2, amount: 3} end
-            }
-          ],
-          final_response: "History answer"
-        )
+      if tags[:input_consumption] do
+        consumption_llm_handler(owner)
+      else
+        if tags[:authorized_execution] do
+          ToolCallingLLMStub.handler(
+            routes: [
+              %{
+                match: &String.contains?(&1, "history question"),
+                tool: "add",
+                arguments: fn _ -> %{value: 2, amount: 3} end
+              }
+            ],
+            final_response: "History answer"
+          )
+        end
       end
 
     handler = fn conn, body ->
       if llm_handler && conn.request_path == "/v1/responses" do
         send(owner, {:history_llm, Jason.decode!(body)})
+
+        if tags[:input_consumption] and not String.contains?(body, "function_call_output") do
+          send(owner, {:history_llm_barrier, self()})
+
+          receive do
+            :release_history_llm -> :ok
+          after
+            10_000 -> flunk("external LLM barrier was not released")
+          end
+        end
+
         llm_handler.(conn, body)
       else
         MattermostHistoryFixture.http(conn, body, owner)
@@ -142,6 +167,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   end
 
   @tag :authorized_execution
+  @tag :input_consumption
   test "authorized thread history reaches the real tool-calling agent without private data",
        ctx do
     {:ok, bob} = People.create_person(%{full_name: "Bob"})
@@ -202,6 +228,45 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
     assert {{:ok, _}, post} = MattermostHistoryFixture.post(ctx.config, "human", true)
     assert_receive {:history_llm, request}, 5_000
+    assert_receive {:history_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_history_llm) end)
+
+    scope =
+      "history:#{Repo.get_by!(Transcript, external_thread_id: "root-human").id}:person:#{ctx.person.id}"
+
+    actor = %{person: %{id: ctx.person.id}}
+    assert {:ok, {request_id, _state}} = RequestRegistry.find_active(scope, actor)
+
+    steering =
+      Incoming.new(%{
+        content: "Retain the arithmetic tool result",
+        channel_id: "shared-room",
+        author_id: "alice",
+        author_name: "Alice",
+        message_id: "steering-input",
+        thread_id: "root-human",
+        provider: :mattermost,
+        person: ctx.person,
+        routing_context: %{channel_config_id: ctx.config.id, conversation_type: :room}
+      })
+      |> CommunicationBridge.put_conversation_identity()
+
+    assert {:ok, _} = HistoryIngress.capture(steering)
+    assert {:ok, binding} = Conversations.admit_incoming(steering)
+
+    control =
+      Zaq.Event.new(
+        %{request_id: request_id, content: steering.content, conversation_binding: binding},
+        :agent,
+        actor: actor
+      )
+
+    assert %{response: {:ok, _}} = Zaq.Agent.Api.handle_event(control, :steer_request, nil)
+
+    assert Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id).status ==
+             "queued"
+
+    send(worker, :release_history_llm)
     input = Jason.encode!(request["input"])
     assert input =~ "Authorized project root"
     assert input =~ "Authorized thread evidence"
@@ -215,6 +280,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert result == %{"ok" => true, "result" => %{"result" => 5.0}}
     assert_receive {:history_llm, continuation}, 5_000
     refute Jason.encode!(continuation["input"]) =~ "FORBIDDEN_"
+    assert Jason.encode!(continuation["input"]) =~ steering.content
 
     assert_receive {:history_post, %{"channel_id" => "shared-room", "root_id" => "root-human"}},
                    5_000
@@ -231,6 +297,10 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert execution.person_id == ctx.person.id
     assert execution.status == "completed"
     assert execution.public_answer_message_id == answer.id
+    receipt = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
+    assert receipt.status == "consumed"
+    assert receipt.root_execution_id == execution.id
+    assert receipt.public_answer_message_id == nil
 
     ids = Repo.all(from m in Message, select: m.id, order_by: m.id)
     count = Repo.aggregate(TranscriptMessage, :count)
@@ -454,6 +524,46 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   test "provider root lookup rejects a post from a different room", ctx do
     assert {:error, :unavailable} =
              MattermostAdmin.fetch_room_message(ctx.config, "another-room", "root-human")
+  end
+
+  defp consumption_llm_handler(owner) do
+    state = start_supervised!({Agent, fn -> :initial end}, id: make_ref())
+    args = %{"value" => 2, "amount" => 3}
+    call_id = "receipt-call-#{System.unique_integer([:positive])}"
+
+    fn _conn, body ->
+      request = Jason.decode!(body)
+
+      Agent.get_and_update(state, fn
+        :initial ->
+          send(owner, {:llm_tool_call, "add", args})
+
+          response =
+            MultiAgentOpenAIStub.tool_call_sse("add", args,
+              model: request["model"],
+              call_id: call_id
+            )
+
+          {{200, response}, {:continuation, request["input"]}}
+
+        {:continuation, initial} ->
+          assert Enum.take(request["input"], length(initial)) == initial
+          [call, output, correction] = Enum.drop(request["input"], length(initial))
+          assert call["type"] == "function_call"
+          assert call["call_id"] == call_id
+          assert call["name"] == "add"
+          assert Jason.decode!(call["arguments"]) == args
+          assert output["type"] == "function_call_output"
+          assert output["call_id"] == call_id
+
+          assert MultiAgentOpenAIStub.latest_user_message(%{"input" => [correction]}) ==
+                   "Retain the arithmetic tool result"
+
+          [result] = MultiAgentOpenAIStub.tool_results(request)
+          send(owner, {:llm_tool_result, "add", result.output})
+          {{200, MultiAgentOpenAIStub.text_sse("History answer", request["model"])}, :done}
+      end)
+    end
   end
 
   defp await_delivery_event do

@@ -12,6 +12,7 @@ defmodule Zaq.Agent.StreamEvents do
   alias Zaq.Agent.Status
   alias Zaq.Contracts.Record
   alias Zaq.Engine.Messages.Incoming
+  alias Zaq.Event
 
   @flush_chars 20
   @flush_interval_ms 100
@@ -111,6 +112,7 @@ defmodule Zaq.Agent.StreamEvents do
   defp handle_event(:llm_completed, event, state), do: handle_llm_completed(event, state)
   defp handle_event(:tool_started, event, state), do: handle_tool_started(event, state)
   defp handle_event(:tool_completed, event, state), do: handle_tool_completed(event, state)
+  defp handle_event(:input_injected, event, state), do: record_input_consumption(event, state)
 
   defp handle_event(:request_completed, event, state),
     do: state |> flush_trace_segment(event) |> handle_request_completed(event)
@@ -127,6 +129,29 @@ defmodule Zaq.Agent.StreamEvents do
   end
 
   defp handle_event(_kind, _event, state), do: state
+
+  defp record_input_consumption(event, state) do
+    refs = data_get(data(event), :refs) || %{}
+    input_id = data_get(refs, :message_id)
+
+    if is_binary(input_id) and is_binary(state.execution_user_message_id) do
+      request =
+        Event.new(
+          %{root_user_message_id: state.execution_user_message_id, user_message_id: input_id},
+          :engine,
+          actor: state.actor,
+          opts: [action: :consume_execution_input, confidential: true]
+        )
+
+      case state.node_router.dispatch(request) do
+        %{response: :ok} -> state
+        %{response: {:error, reason}} -> %{state | error: {:input_receipt_failed, reason}}
+        _ -> %{state | error: {:input_receipt_failed, :unavailable}}
+      end
+    else
+      state
+    end
+  end
 
   defp handle_llm_delta(event, state) do
     data = data(event)

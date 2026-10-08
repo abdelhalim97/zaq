@@ -4,6 +4,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
   alias Zaq.Accounts.People
   alias Zaq.Agent.Api, as: AgentApi
   alias Zaq.Agent.RequestRegistry
+  alias Zaq.Agent.StreamEvents
   alias Zaq.Channels.CommunicationBridge
   alias Zaq.Engine.{ChannelConfig, Conversations, HistoryIngress}
   alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript}
@@ -312,6 +313,10 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert :ok = RequestRegistry.put(request_id, state)
     event = Event.new(%{request_id: request_id}, :agent, actor: actor(ctx.alice))
     assert %{response: {:ok, ^state}} = AgentApi.handle_event(event, :inspect_request, nil)
+    unadmitted = %{event | request: %{request_id: request_id, content: "Unadmitted input"}}
+
+    assert %{response: {:error, :admission_required}} =
+             AgentApi.handle_event(unadmitted, :steer_request, nil)
 
     assert %{response: {:error, :unauthorized}} =
              AgentApi.handle_event(%{event | actor: actor(ctx.bob)}, :inspect_request, nil)
@@ -322,6 +327,88 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
              AgentApi.handle_event(event, :inspect_request, nil)
 
     assert :ok = RequestRegistry.delete(request_id)
+  end
+
+  test "queued input is not consumption proof and root termination seals outstanding receipts",
+       ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    child_input = incoming(ctx, ctx.alice, "steering", nil, "Use this correction")
+    assert {:ok, _} = HistoryIngress.capture(child_input)
+    assert {:ok, child} = Conversations.admit_incoming(child_input)
+
+    assert {:ok, receipt} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
+
+    assert receipt.refs.message_id == child.user_message_id
+    assert Repo.get!(ExecutionRecord, receipt.execution_id).status == "queued"
+
+    assert {:ok, result} =
+             Conversations.finalize_incoming(
+               root.user_message_id,
+               root.finalization_token,
+               %{answer: "Root answer"},
+               actor: actor(ctx.alice)
+             )
+
+    record = Repo.get!(ExecutionRecord, receipt.execution_id)
+    assert record.status == "unconsumed"
+    assert record.public_answer_message_id == nil
+
+    assert record.root_execution_id ==
+             Repo.get_by!(ExecutionRecord, user_message_id: root.user_message_id).id
+
+    assert {:error, :terminal_request} =
+             Conversations.consume_execution_input(
+               root.user_message_id,
+               child.user_message_id,
+               actor(ctx.alice)
+             )
+
+    assert result.assistant_message_id != nil
+    assert Repo.aggregate(Message, :count) == 3
+  end
+
+  test "consumption is idempotent, private and never transfers the public answer", ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    input = incoming(ctx, ctx.alice, "consumed", nil, "Correction")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, child} = Conversations.admit_incoming(input)
+
+    assert {:ok, receipt} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
+
+    assert {:ok, _} =
+             StreamEvents.consume(
+               [
+                 %{kind: :input_injected, data: %{refs: receipt.refs}}
+               ],
+               incoming(ctx, ctx.alice, "question", nil, "Current input"),
+               actor: actor(ctx.alice),
+               execution_user_message_id: root.user_message_id
+             )
+
+    assert :ok =
+             Conversations.consume_execution_input(
+               root.user_message_id,
+               child.user_message_id,
+               actor(ctx.alice)
+             )
+
+    assert {:ok, _} =
+             Conversations.finalize_incoming(
+               root.user_message_id,
+               root.finalization_token,
+               %{answer: "One answer"},
+               actor: actor(ctx.alice)
+             )
+
+    assert Repo.get!(ExecutionRecord, receipt.execution_id).status == "consumed"
+    assert Repo.get!(ExecutionRecord, receipt.execution_id).public_answer_message_id == nil
+
+    assert {:error, :terminal_request} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
   end
 
   defp admitted(ctx, thread \\ nil) do
