@@ -110,13 +110,18 @@ defmodule Zaq.Engine.Conversations do
            {:ok, receipt} <- ExecutionLifecycle.queue(root, child) do
         receipt
       else
+        {:rejected, reason} -> {:rejected, reason}
         {:error, reason} -> Repo.rollback(reason)
         _ -> Repo.rollback(:unauthorized)
       end
     end)
+    |> committed_input_result()
   end
 
   def queue_execution_input(_root_input_id, _binding, _actor, _opts), do: {:error, :unauthorized}
+
+  defp committed_input_result({:ok, {:rejected, reason}}), do: {:error, reason}
+  defp committed_input_result(result), do: result
 
   defp matching_control_content(child, opts) do
     case Keyword.fetch(opts, :content) do

@@ -52,23 +52,53 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
     root = Repo.get_by(ExecutionRecord, user_message_id: root_input.id)
     child = Repo.get_by(ExecutionRecord, user_message_id: child_input.id)
 
-    with :ok <- pending_root(root),
+    queue_records(root, child, child_input.id)
+  end
+
+  defp queue_records(
+         %ExecutionRecord{id: id, status: status},
+         %ExecutionRecord{root_execution_id: id},
+         _input_id
+       )
+       when status in ["completed", "failed"],
+       do: {:error, :terminal_request}
+
+  defp queue_records(root, child, input_id) do
+    with %ExecutionRecord{root_execution_id: nil} <- root,
          %ExecutionRecord{status: "pending", root_execution_id: nil, person_id: person_id} <-
            child,
-         true <- person_id == root.person_id,
-         {:ok, child} <-
-           child
-           |> ExecutionRecord.changeset(%{root_execution_id: root.id, status: "queued"})
-           |> Repo.update() do
-      {:ok,
-       %{
-         execution_id: child.id,
-         root_execution_id: root.id,
-         refs: %{message_id: child_input.id, execution_id: child.id, root_execution_id: root.id}
-       }}
+         true <- person_id == root.person_id do
+      link_input(root, child, input_id)
     else
       {:error, _} = error -> error
       _ -> {:error, :input_conflict}
+    end
+  end
+
+  defp link_input(root, child, input_id) do
+    {status, outcome} =
+      if root.status == "pending",
+        do: {"queued", child.outcome},
+        else: {"unconsumed", Map.put(child.outcome, "reason", "terminal_request")}
+
+    with {:ok, child} <-
+           child
+           |> ExecutionRecord.changeset(%{
+             root_execution_id: root.id,
+             status: status,
+             outcome: outcome
+           })
+           |> Repo.update() do
+      if status == "queued" do
+        {:ok,
+         %{
+           execution_id: child.id,
+           root_execution_id: root.id,
+           refs: %{message_id: input_id, execution_id: child.id, root_execution_id: root.id}
+         }}
+      else
+        {:rejected, :terminal_request}
+      end
     end
   end
 

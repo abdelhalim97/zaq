@@ -411,6 +411,68 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
              Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
   end
 
+  test "an input losing the root-finalization race has a durable unconsumed disposition", ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+
+    assert {:ok, _} =
+             Conversations.finalize_incoming(
+               root.user_message_id,
+               root.finalization_token,
+               %{answer: "Already completed"},
+               actor: actor(ctx.alice)
+             )
+
+    incoming = incoming(ctx, ctx.alice, "late-input", nil, "Late correction")
+    assert {:ok, _} = HistoryIngress.capture(incoming)
+    assert {:ok, child} = Conversations.admit_incoming(incoming)
+
+    assert {:error, :terminal_request} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
+
+    record = Repo.get_by!(ExecutionRecord, user_message_id: child.user_message_id)
+    assert record.status == "unconsumed"
+    assert record.public_answer_message_id == nil
+    assert record.outcome["reason"] == "terminal_request"
+
+    assert {:error, :terminal_request} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
+
+    assert Repo.get!(ExecutionRecord, record.id) == record
+    assert Repo.aggregate(Message, :count) == 3
+  end
+
+  test "terminal-input disposition cannot be forged by a foreign actor or invalid capability",
+       ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+
+    assert {:ok, _} =
+             Conversations.finalize_incoming(
+               root.user_message_id,
+               root.finalization_token,
+               %{answer: "Completed"},
+               actor: actor(ctx.alice)
+             )
+
+    input = incoming(ctx, ctx.alice, "forged-late", nil, "Late correction")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, child} = Conversations.admit_incoming(input)
+    before = Repo.get_by!(ExecutionRecord, user_message_id: child.user_message_id)
+
+    assert {:error, :unauthorized} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.bob))
+
+    assert {:error, :unauthorized} =
+             Conversations.queue_execution_input(
+               root.user_message_id,
+               %{child | finalization_token: "forged"},
+               actor(ctx.alice)
+             )
+
+    assert Repo.get!(ExecutionRecord, before.id) == before
+  end
+
   defp admitted(ctx, thread \\ nil) do
     input = incoming(ctx, ctx.alice, "question", thread, "Current input")
     assert {:ok, capture} = HistoryIngress.capture(input)
