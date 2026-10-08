@@ -16,6 +16,14 @@ defmodule Zaq.TestSupport.MattermostHistoryFixture do
   end
 
   def post(config, root_author, mention?, attrs \\ %{}) do
+    post_frame(config, root_author, mention?, attrs, "O")
+  end
+
+  def direct_post(config, attrs \\ %{}) do
+    post_frame(config, nil, false, Map.put_new(attrs, "channel_id", "alice-dm"), "D")
+  end
+
+  defp post_frame(config, root_author, mention?, attrs, channel_type) do
     root = if root_author, do: "root-#{root_author}", else: ""
 
     post =
@@ -36,7 +44,7 @@ defmodule Zaq.TestSupport.MattermostHistoryFixture do
        Jason.encode!(%{
          "event" => "posted",
          "data" => %{
-           "channel_type" => "O",
+           "channel_type" => channel_type,
            "post" => Jason.encode!(post),
            "mentions" => Jason.encode!(if(mention?, do: ["bot"], else: []))
          }
