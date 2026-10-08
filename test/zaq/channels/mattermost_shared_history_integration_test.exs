@@ -14,7 +14,15 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   alias Zaq.Engine.Api
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
-  alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript, TranscriptMessage}
+
+  alias Zaq.Engine.Conversations.{
+    ExecutionRecord,
+    Message,
+    TokenUsageAggregator,
+    Transcript,
+    TranscriptMessage
+  }
+
   alias Zaq.Engine.HistoryIngress
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Engine.Messages.Incoming
@@ -160,11 +168,16 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     %{config: config, person: person, agent: agent}
   end
 
-  for steering_mode <- [:explicit_control, :provider_mention] do
+  for {steering_mode, retained_root?} <- [
+        {:explicit_control, true},
+        {:provider_mention, true},
+        {:explicit_control, false}
+      ] do
     @steering_mode steering_mode
+    @retained_root retained_root?
     @tag :authorized_execution
     @tag :input_consumption
-    test "authorized thread history and #{@steering_mode} reach the real tool-calling agent without private data",
+    test "authorized thread history and #{@steering_mode} with retained root #{@retained_root} reach the real tool-calling agent without private data",
          ctx do
       {:ok, bob} = People.create_person(%{full_name: "Bob"})
 
@@ -178,9 +191,13 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
       assert {{:ok, _}, _} =
                MattermostHistoryFixture.post(ctx.config, nil, false, %{
-                 "id" => "root-human",
+                 "id" => if(@retained_root, do: "root-human", else: "passive-parent"),
                  "user_id" => "bob",
-                 "message" => "Authorized project root"
+                 "message" =>
+                   if(@retained_root,
+                     do: "Authorized project root",
+                     else: "Authorized parent context"
+                   )
                })
 
       parent =
@@ -195,7 +212,10 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
                  %{person_id: ctx.person.id, access_rights: ["read"]}
                )
 
-      root = Repo.get_by!(Message, external_message_id: "root-human")
+      root =
+        Repo.get_by!(Message,
+          external_message_id: if(@retained_root, do: "root-human", else: "passive-parent")
+        )
 
       %ExecutionRecord{}
       |> ExecutionRecord.changeset(%{
@@ -232,6 +252,11 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
       actor = %{person: %{id: ctx.person.id}}
       assert {:ok, {request_id, state}} = RequestRegistry.find_active(scope, actor)
+      assert state.actor.person.id == ctx.person.id
+      assert state.execution_scope == scope
+      assert state.agent.id == ctx.agent.id
+      assert is_pid(state.runtime_pid)
+      assert Process.alive?(state.runtime_pid)
       assert_rejected_control_receipt(ctx, state, actor)
       assert_failed_receipt_persistence(ctx, request_id, actor)
 
@@ -287,10 +312,18 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
       send(worker, :release_history_llm)
       input = Jason.encode!(request["input"])
-      assert input =~ "Authorized project root"
+
+      if @retained_root do
+        assert input =~ "Authorized project root"
+        assert length(Regex.scan(~r/Authorized project root/, input)) == 1
+      else
+        assert input =~ "Authorized parent context"
+        refute input =~ "Authorized project root"
+        assert Repo.get_by(Message, external_message_id: "root-human") == nil
+      end
+
       assert input =~ "Authorized thread evidence"
       assert input =~ "#{root.author_name} (#{root.author_id})"
-      assert length(Regex.scan(~r/Authorized project root/, input)) == 1
       assert length(Regex.scan(~r/history question/, input)) == 1
       refute input =~ "FORBIDDEN_"
 
@@ -316,6 +349,31 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
       assert execution.person_id == ctx.person.id
       assert execution.status == "completed"
       assert execution.public_answer_message_id == answer.id
+      assert execution.usage["prompt_tokens"] == 10
+      assert execution.usage["completion_tokens"] == 2
+      assert execution.usage["total_tokens"] == 12
+      assert length(execution.tool_results) == 1
+      assert answer.trace == []
+      assert answer.prompt_tokens == nil
+      assert answer.completion_tokens == nil
+      date = answer.inserted_at |> DateTime.to_date() |> Date.to_iso8601()
+
+      job = %Oban.Job{
+        args: %{
+          "conversation_id" => answer.conversation_id,
+          "model" => answer.model,
+          "date" => date
+        }
+      }
+
+      assert :ok = TokenUsageAggregator.perform(job)
+      metadata = Conversations.get_conversation!(answer.conversation_id).metadata
+
+      assert metadata["token_usage"][date][answer.model] ==
+               %{"prompt_tokens" => 10, "completion_tokens" => 2, "total_tokens" => 12}
+
+      assert :ok = TokenUsageAggregator.perform(job)
+      assert Conversations.get_conversation!(answer.conversation_id).metadata == metadata
       receipt = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
       assert receipt.status == "consumed"
       assert receipt.root_execution_id == execution.id
