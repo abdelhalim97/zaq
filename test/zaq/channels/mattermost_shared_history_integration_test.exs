@@ -59,35 +59,23 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
       end)
     end)
 
-    llm_handler =
-      if tags[:input_consumption] do
-        consumption_llm_handler(owner)
-      else
-        if tags[:authorized_execution] do
-          ToolCallingLLMStub.handler(
-            routes: [
-              %{
-                match: &String.contains?(&1, "history question"),
-                tool: "add",
-                arguments: fn _ -> %{value: 2, amount: 3} end
-              }
-            ],
-            final_response: "History answer"
-          )
-        end
-      end
+    llm_handler = history_llm_handler(tags, owner)
 
     handler = fn conn, body ->
       if llm_handler && conn.request_path == "/v1/responses" do
         send(owner, {:history_llm, Jason.decode!(body)})
 
-        if tags[:input_consumption] and not String.contains?(body, "function_call_output") do
+        initial_request? = not Map.has_key?(Jason.decode!(body), "previous_response_id")
+
+        if tags[:input_consumption] and not String.contains?(body, "function_call_output") and
+             (tags[:queue_overflow] != true or initial_request?) do
+          barrier_timeout = if tags[:queue_overflow], do: 60_000, else: 10_000
           send(owner, {:history_llm_barrier, self()})
 
           receive do
             :release_history_llm -> :ok
           after
-            10_000 -> flunk("external LLM barrier was not released")
+            barrier_timeout -> flunk("external LLM barrier was not released")
           end
         end
 
@@ -114,7 +102,11 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         enabled_tool_keys: if(tags[:authorized_execution], do: ["arithmetic.add"], else: []),
         conversation_enabled: true,
         active: true,
-        advanced_options: %{"stream" => false}
+        advanced_options:
+          if(tags[:queue_overflow],
+            do: %{"stream" => false, "receive_timeout" => 120_000},
+            else: %{"stream" => false}
+          )
       })
 
     config =
@@ -551,6 +543,183 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
              MattermostAdmin.fetch_room_message(ctx.config, "another-room", "root-human")
   end
 
+  @tag :queue_overflow
+  @tag :input_consumption
+  @tag timeout: 120_000
+  test "real Jido overflow preserves consumption and rejection without extra answers", ctx do
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "overflow-root",
+               "message" => "@zaq history question"
+             })
+
+    assert_receive {:history_llm, _}, 5_000
+    assert_receive {:history_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_history_llm) end)
+    transcript = Repo.get_by!(Transcript, external_thread_id: "root-human")
+    actor = %{person: %{id: ctx.person.id}}
+    scope = "history:#{transcript.id}:person:#{ctx.person.id}"
+    assert {:ok, {request_id, _state}} = RequestRegistry.find_active(scope, actor)
+
+    receipts =
+      for index <- 1..65 do
+        input =
+          Incoming.new(%{
+            content: "@zaq correction #{index}",
+            channel_id: "shared-room",
+            author_id: "alice",
+            message_id: "overflow-#{index}",
+            thread_id: "root-human",
+            provider: :mattermost,
+            person: ctx.person,
+            routing_context: %{channel_config_id: ctx.config.id, conversation_type: :room}
+          })
+          |> CommunicationBridge.put_conversation_identity()
+
+        assert {:ok, _} = HistoryIngress.capture(input)
+        assert {:ok, binding} = Conversations.admit_incoming(input)
+
+        event =
+          Zaq.Event.new(
+            %{request_id: request_id, content: input.content, conversation_binding: binding},
+            :agent,
+            actor: actor
+          )
+
+        result = Zaq.Agent.Api.handle_event(event, :steer_request, nil)
+        record = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
+
+        if index <= 64 do
+          assert %{response: {:ok, _}} = result
+          assert record.status == "queued"
+        else
+          assert %{response: {:error, {:rejected, :queue_full}}} = result
+          assert record.status == "unconsumed"
+          assert record.outcome["reason"] == "runtime_rejected"
+        end
+
+        record.id
+      end
+
+    send(worker, :release_history_llm)
+    answer = await_answer(transcript.id)
+    assert answer.content == "Sealed root answer"
+    root_input = Repo.get_by!(Message, external_message_id: "overflow-root")
+    root = Repo.get_by!(ExecutionRecord, user_message_id: root_input.id)
+    assert root.status == "completed"
+    assert root.public_answer_message_id == answer.id
+
+    for {id, index} <- Enum.with_index(receipts, 1) do
+      receipt = Repo.get!(ExecutionRecord, id)
+      assert receipt.status == if(index <= 64, do: "consumed", else: "unconsumed")
+      assert receipt.root_execution_id == root.id
+      assert receipt.public_answer_message_id == nil
+    end
+
+    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 1
+    assert Repo.aggregate(from(m in Message, where: m.role == "user"), :count) == 66
+  end
+
+  @tag :root_failure
+  @tag :input_consumption
+  test "real LLM failure seals accepted corrections without claiming consumption or an answer",
+       ctx do
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "failed-root",
+               "message" => "@zaq history question"
+             })
+
+    assert_receive {:history_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_history_llm) end)
+    transcript = Repo.get_by!(Transcript, external_thread_id: "root-human")
+    actor = %{person: %{id: ctx.person.id}}
+    scope = "history:#{transcript.id}:person:#{ctx.person.id}"
+    assert {:ok, {request_id, _}} = RequestRegistry.find_active(scope, actor)
+
+    receipts =
+      for index <- 1..2 do
+        input =
+          Incoming.new(%{
+            content: "@zaq failed-run correction #{index}",
+            channel_id: "shared-room",
+            author_id: "alice",
+            message_id: "failed-correction-#{index}",
+            thread_id: "root-human",
+            provider: :mattermost,
+            person: ctx.person,
+            routing_context: %{channel_config_id: ctx.config.id, conversation_type: :room}
+          })
+          |> CommunicationBridge.put_conversation_identity()
+
+        assert {:ok, _} = HistoryIngress.capture(input)
+        assert {:ok, binding} = Conversations.admit_incoming(input)
+
+        event =
+          Zaq.Event.new(
+            %{request_id: request_id, content: input.content, conversation_binding: binding},
+            :agent,
+            actor: actor
+          )
+
+        assert %{response: {:ok, _}} = Zaq.Agent.Api.handle_event(event, :steer_request, nil)
+        receipt = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
+        assert receipt.status == "queued"
+        receipt.id
+      end
+
+    send(worker, :release_history_llm)
+    assert_receive {:history_execution_failed, writer}, 5_000
+    monitor = Process.monitor(writer)
+    assert_receive {:DOWN, ^monitor, :process, ^writer, reason}, 5_000
+    assert reason in [:normal, :noproc]
+    root_input = Repo.get_by!(Message, external_message_id: "failed-root")
+    root = Repo.get_by!(ExecutionRecord, user_message_id: root_input.id)
+    assert root.status == "failed"
+    assert root.public_answer_message_id == nil
+
+    for id <- receipts do
+      receipt = Repo.get!(ExecutionRecord, id)
+      assert receipt.status == "unconsumed"
+      assert receipt.public_answer_message_id == nil
+      assert receipt.root_execution_id == root.id
+    end
+
+    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 0
+    assert Repo.aggregate(from(m in Message, where: m.role == "user"), :count) == 3
+  end
+
+  defp history_llm_handler(tags, owner) do
+    cond do
+      tags[:root_failure] ->
+        fn _conn, _body -> {400, %{"error" => %{"message" => "Scripted rejection"}}} end
+
+      tags[:queue_overflow] ->
+        fn _conn, body ->
+          request = Jason.decode!(body)
+          {200, MultiAgentOpenAIStub.text_sse("Sealed root answer", request["model"])}
+        end
+
+      tags[:input_consumption] ->
+        consumption_llm_handler(owner)
+
+      tags[:authorized_execution] ->
+        ToolCallingLLMStub.handler(
+          routes: [
+            %{
+              match: &String.contains?(&1, "history question"),
+              tool: "add",
+              arguments: fn _ -> %{value: 2, amount: 3} end
+            }
+          ],
+          final_response: "History answer"
+        )
+
+      true ->
+        nil
+    end
+  end
+
   defp assert_rejected_control_receipt(ctx, state, actor) do
     # A stale registry handle must be refused by the real active Jido runtime.
     # Exercise the queue -> runtime rejection -> receipt persistence path without
@@ -656,23 +825,40 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   defp observe_history_query(metadata, owner, handler) do
     if self() != owner do
       cond do
+        failed_execution_query?(metadata) ->
+          Process.put({handler, :failed_execution}, true)
+
         queued_record_query?(metadata) ->
           Process.put({handler, :receipt}, true)
 
         confirmed_placement_query?(metadata) ->
           Process.put(handler, true)
 
-        metadata.query == "commit" and Process.delete(handler) ->
-          send(owner, {:history_placement_committed, self()})
-
-        metadata.query == "commit" and Process.delete({handler, :receipt}) ->
-          send(owner, :history_input_queued)
+        metadata.query == "commit" ->
+          notify_history_commit(owner, handler)
 
         true ->
           :ok
       end
     end
   end
+
+  defp notify_history_commit(owner, handler) do
+    flags = [
+      {handler, {:history_placement_committed, self()}},
+      {{handler, :receipt}, :history_input_queued},
+      {{handler, :failed_execution}, {:history_execution_failed, self()}}
+    ]
+
+    Enum.each(flags, fn {key, message} ->
+      if Process.delete(key), do: send(owner, message)
+    end)
+  end
+
+  defp failed_execution_query?(metadata),
+    do:
+      metadata[:source] == "execution_records" and String.starts_with?(metadata.query, "UPDATE") and
+        "failed" in (metadata[:cast_params] || [])
 
   defp queued_record_query?(metadata),
     do:
