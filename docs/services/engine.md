@@ -195,6 +195,19 @@ can take over. Mattermost currently declares complete snapshot support, not push
 event synchronization; provider event wiring remains separate. Both refresh and
 events use the same resource lock and preserve manual grants.
 
+Committed provider-grant removals also stage `HistoryRuntimeRemovalWorker` work
+in that transaction. `HistoryRuntimeRemoval` fans out the provider-neutral source,
+Person set and removal generation to discovered Agent nodes after top-level commit;
+an enclosing transaction defers effects to its committed job. Rollbacks, incomplete
+snapshots, stale events and surviving membership never cancel runtimes. The root's
+`membership_state` retains an Engine-owned removal generation across snapshots;
+authorized execution projections include each source's generation so delayed jobs
+cannot cancel a runtime admitted after that removal. This marker is not a grant.
+Discovery or acknowledgement failure returns `:runtime_removal_pending` while
+transactional work remains available for retry; acknowledgement does not guarantee
+delivery to partitioned or undiscovered nodes. Manual grants remain independently
+valid for ordinary restart authorization.
+
 Replicated capture seeds an ordinary recipient read grant atomically with each new
 copy. Its resource is scoped by provider, connector, conversation and recipient;
 ownership determines message associations, not an alternative authorization path.

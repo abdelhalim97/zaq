@@ -47,12 +47,17 @@ defmodule Zaq.Agent.StreamEvents do
 
     final_state =
       Enum.reduce_while(events, state, fn event, state ->
-        state = handle_event(event, state)
+        state = if removed?(state), do: removed_state(state), else: handle_event(event, state)
 
-        if terminal_kind?(kind(event)) do
-          {:halt, flush(state, force?: true, now: field(event, :at_ms))}
-        else
-          {:cont, state}
+        cond do
+          state.error == :history_membership_removed ->
+            {:halt, state}
+
+          terminal_kind?(kind(event)) ->
+            {:halt, flush(state, force?: true, now: field(event, :at_ms))}
+
+          true ->
+            {:cont, state}
         end
       end)
 
@@ -436,8 +441,13 @@ defmodule Zaq.Agent.StreamEvents do
   end
 
   defp flush(%{buffer: ""} = state, _opts), do: state
+  defp flush(%{error: :history_membership_removed} = state, _opts), do: state
 
   defp flush(state, opts) do
+    if removed?(state), do: removed_state(state), else: do_flush(state, opts)
+  end
+
+  defp do_flush(state, opts) do
     now = Keyword.get(opts, :now) || System.monotonic_time(:millisecond)
 
     incoming =
@@ -454,6 +464,12 @@ defmodule Zaq.Agent.StreamEvents do
   end
 
   defp broadcast_tool(state, tool_call, status) do
+    if removed?(state),
+      do: removed_state(state),
+      else: do_broadcast_tool(state, tool_call, status)
+  end
+
+  defp do_broadcast_tool(state, tool_call, status) do
     name = Map.get(tool_call, "name") || "tool"
     message = if status == :completed, do: "Finished #{name}", else: "Using #{name}"
 
@@ -464,6 +480,17 @@ defmodule Zaq.Agent.StreamEvents do
 
     %{state | incoming: incoming}
   end
+
+  defp removed?(state),
+    do: RequestRegistry.history_runtime_removed?(state.runtime_pid, state.actor)
+
+  defp removed_state(state),
+    do: %{
+      state
+      | error: :history_membership_removed,
+        buffer: "",
+        termination_reason: "history_membership_removed"
+    }
 
   defp result(state) do
     %{
@@ -518,6 +545,7 @@ defmodule Zaq.Agent.StreamEvents do
       status: status,
       server_id: state.server_id,
       runtime_pid: state.runtime_pid,
+      consumer_pid: self(),
       owner_node: if(is_pid(state.runtime_pid), do: node(state.runtime_pid)),
       correlation_id: state.correlation_id,
       actor: state.actor,

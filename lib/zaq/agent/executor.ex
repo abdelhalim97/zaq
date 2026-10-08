@@ -210,6 +210,7 @@ defmodule Zaq.Agent.Executor do
              question
              |> append_attachments(incoming.attachments, server_id)
              |> timestamp_question(),
+           :ok <- live_history_runtime(runtime_pid, actor),
            _ <-
              Event.new(
                %{provider: incoming.provider, channel_id: incoming.channel_id},
@@ -218,6 +219,7 @@ defmodule Zaq.Agent.Executor do
                type: :async
              )
              |> node_router(execution_opts).dispatch(),
+           :ok <- live_history_runtime(runtime_pid, actor),
            status_result <-
              status_mod(execution_opts).broadcast(
                incoming,
@@ -226,6 +228,7 @@ defmodule Zaq.Agent.Executor do
                node_router(execution_opts)
              ),
            %Incoming{} = incoming <- normalize_status_result(status_result, incoming),
+           :ok <- live_history_runtime(runtime_pid, actor),
            {:ok, %{request: request, events: events}} <-
              ask_or_queue(factory_module, runtime_pid, question, configured_agent,
                extra_refs: %{message_id: execution_input_id(execution_opts)},
@@ -324,6 +327,12 @@ defmodule Zaq.Agent.Executor do
     result
   end
 
+  defp live_history_runtime(pid, actor) do
+    if RequestRegistry.history_runtime_removed?(pid, actor),
+      do: {:error, :history_membership_removed},
+      else: :ok
+  end
+
   # A streaming error after tokens were already delivered means the answer is
   # visible; suppress the error bubble so we don't overlay a complete response.
   # Otherwise (failed before any content — e.g. budget/rate limit on the first
@@ -388,6 +397,28 @@ defmodule Zaq.Agent.Executor do
            server_manager_module,
            nil
          )
+
+  defp surface_execution_error(
+         incoming,
+         :history_membership_removed,
+         dims,
+         _selected,
+         _opts,
+         _manager,
+         partial
+       ) do
+    record_execution_error(dims, :history_membership_removed)
+
+    Outgoing.from_pipeline_result(
+      incoming,
+      Map.merge(partial_execution_data(partial), %{
+        answer: "",
+        error: true,
+        execution_disposition: "removed",
+        termination_reason: "history_membership_removed"
+      })
+    )
+  end
 
   defp surface_execution_error(
          incoming,
@@ -459,7 +490,9 @@ defmodule Zaq.Agent.Executor do
     server_manager_module.ensure_server(configured_agent, server_id, Keyword.get(opts, :context),
       actor: actor,
       history_binding: history_binding(opts),
-      history_cursors: (Keyword.get(opts, :execution_history) || %{})[:cursors]
+      history_cursors: (Keyword.get(opts, :execution_history) || %{})[:cursors],
+      history_removal_generations:
+        (Keyword.get(opts, :execution_history) || %{})[:removal_generations]
     )
   end
 
@@ -530,6 +563,7 @@ defmodule Zaq.Agent.Executor do
            |> Keyword.put(:execution_history, %{
              binding: request,
              cursors: projection.cursors,
+             removal_generations: Map.get(projection, :removal_generations),
              scope: scope
            })
            |> Keyword.put(:canonical_execution, true)}

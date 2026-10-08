@@ -18,12 +18,30 @@ defmodule Zaq.Agent.HistoryLifecycle do
     do: if(valid_cursors?(cursors), do: :ok, else: {:error, :invalid_history_cursor})
 
   @doc "Initializes one incarnation, disposing any replaced lease and its waiting admissions."
-  def initialize(history, server_id, pid, cursors) do
+  def initialize(history, server_id, pid, cursors, principal \\ nil, generations \\ nil) do
     history = drop(history, server_id)
 
     if is_nil(cursors),
       do: history,
-      else: Map.put(history, server_id, %{pid: pid, cursors: cursors, lease: nil, waiters: []})
+      else:
+        Map.put(history, server_id, %{
+          pid: pid,
+          principal: principal,
+          cursors: cursors,
+          generations: generations || Map.new(cursors, fn {id, _} -> {id, 0} end),
+          lease: nil,
+          waiters: []
+        })
+  end
+
+  @doc "Validates initial Engine generation bindings against the exact source vector."
+  def validate_generations(_cursors, nil), do: :ok
+
+  def validate_generations(cursors, generations) do
+    if valid_cursors?(cursors) and valid_cursors?(generations) and
+         Enum.sort(Map.keys(cursors)) == Enum.sort(Map.keys(generations)),
+       do: :ok,
+       else: {:error, :invalid_history_generation}
   end
 
   @doc "Grants a process-owned lease, or defers another caller without advancing its cursor."
@@ -80,14 +98,14 @@ defmodule Zaq.Agent.HistoryLifecycle do
   end
 
   @doc "Disposes one incarnation's ledger and rejects its queued callers as stale."
-  def drop(history, server_id) do
+  def drop(history, server_id, reason \\ :stale_runtime) do
     case Map.get(history, server_id) do
       nil ->
         :ok
 
       entry ->
         if entry.lease, do: Process.demonitor(entry.lease.monitor, [:flush])
-        Enum.each(entry.waiters, &GenServer.reply(&1, {:error, :stale_runtime}))
+        Enum.each(entry.waiters, &GenServer.reply(&1, {:error, reason}))
     end
 
     Map.delete(history, server_id)

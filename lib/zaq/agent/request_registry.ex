@@ -16,6 +16,7 @@ defmodule Zaq.Agent.RequestRegistry do
   @ownership_fields [
     :agent,
     :runtime_pid,
+    :consumer_pid,
     :server_id,
     :owner_node,
     :actor,
@@ -67,6 +68,41 @@ defmodule Zaq.Agent.RequestRegistry do
   end
 
   def get(_request_id), do: {:error, :not_found}
+
+  @doc "Fences all request records bound to one removed Person/runtime incarnation."
+  def remove_history_runtime(pid, person_id, input_id \\ nil)
+      when is_pid(pid) and is_integer(person_id),
+      do: GenServer.call(__MODULE__, {:remove_history_runtime, pid, person_id, input_id})
+
+  @doc "Checks removal of an immutable admitted input without granting access to its private state."
+  def history_removed?(input_id, actor) when is_binary(input_id) do
+    with table when table != :undefined <- table_ref(),
+         {:ok, identity} <- ExecutionActor.identity(actor) do
+      :ets.foldl(
+        fn {_id, state}, removed ->
+          removed or
+            (state[:execution_user_message_id] == input_id and state[:history_removed] == true and
+               ExecutionActor.identity(state[:actor]) == {:ok, identity})
+        end,
+        false,
+        table
+      )
+    else
+      _ -> false
+    end
+  end
+
+  def history_removed?(_, _), do: false
+
+  @doc "Checks an exact removed incarnation even before its stream consumer registers a request."
+  def history_runtime_removed?(pid, actor) do
+    with table when table != :undefined <- table_ref(),
+         {:ok, {:person, id}} <- ExecutionActor.identity(actor) do
+      :ets.member(table, {:removed_runtime, pid, id})
+    else
+      _ -> false
+    end
+  end
 
   @doc "Finds one active local request by exact scope/principal; callers must authorize controls."
   def find_active(scope, actor, runtime \\ nil)
@@ -132,13 +168,14 @@ defmodule Zaq.Agent.RequestRegistry do
         [] -> %{}
       end
 
+    attrs = inherit_runtime_removal(attrs, current)
+
     result =
       cond do
         ownership_conflict?(current, attrs) ->
           {:error, :ownership_conflict}
 
-        current[:status] in @terminal_statuses and
-            Map.get(attrs, :status, current[:status]) != current[:status] ->
+        terminal_update_conflict?(current, attrs) ->
           {:error, :terminal_request}
 
         true ->
@@ -152,6 +189,77 @@ defmodule Zaq.Agent.RequestRegistry do
   def handle_call({:delete, request_id}, _from, state) do
     :ets.delete(state.table, request_id)
     {:reply, :ok, state}
+  end
+
+  def handle_call({:remove_history_runtime, pid, person_id, input_id}, _from, state) do
+    :ets.insert(
+      state.table,
+      {{:removed_runtime, pid, person_id},
+       %{
+         history_removed: true,
+         runtime_pid: pid,
+         actor: %{person: %{id: person_id}},
+         status: :cancelled
+       }}
+    )
+
+    if is_binary(input_id) do
+      :ets.insert(
+        state.table,
+        {{:removed_input, input_id, person_id},
+         %{
+           history_removed: true,
+           execution_user_message_id: input_id,
+           runtime_pid: pid,
+           actor: %{person: %{id: person_id}},
+           status: :cancelled
+         }}
+      )
+    end
+
+    sinks =
+      :ets.foldl(
+        fn
+          {id, %{runtime_pid: ^pid, actor: actor} = request}, sinks ->
+            mark_history_removed(state.table, id, request, actor, person_id)
+            removed_stream_sink(id, request, actor, person_id, sinks)
+
+          _, sinks ->
+            sinks
+        end,
+        [],
+        state.table
+      )
+
+    {:reply, {:ok, sinks}, state}
+  end
+
+  defp removed_stream_sink(id, %{consumer_pid: consumer}, actor, person_id, sinks)
+       when is_binary(id) and is_pid(consumer) do
+    if ExecutionActor.identity(actor) == {:ok, {:person, person_id}},
+      do: [{id, consumer} | sinks],
+      else: sinks
+  end
+
+  defp removed_stream_sink(_id, _request, _actor, _person_id, sinks), do: sinks
+
+  defp inherit_runtime_removal(attrs, current) do
+    if map_size(current) == 0 and history_runtime_removed?(attrs[:runtime_pid], attrs[:actor]),
+      do: Map.merge(attrs, %{history_removed: true, status: :cancelled}),
+      else: attrs
+  end
+
+  defp terminal_update_conflict?(current, attrs) do
+    (current[:history_removed] == true and attrs[:history_removed] == false) or
+      (current[:status] in @terminal_statuses and
+         Map.get(attrs, :status, current[:status]) != current[:status])
+  end
+
+  defp mark_history_removed(table, id, request, actor, person_id) do
+    if ExecutionActor.identity(actor) == {:ok, {:person, person_id}} do
+      status = if request[:status] in @terminal_statuses, do: request[:status], else: :cancelled
+      :ets.insert(table, {id, Map.merge(request, %{status: status, history_removed: true})})
+    end
   end
 
   defp ownership_conflict?(current, attrs) do

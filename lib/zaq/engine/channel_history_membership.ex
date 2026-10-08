@@ -12,6 +12,7 @@ defmodule Zaq.Engine.ChannelHistoryMembership do
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations.Transcript
   alias Zaq.Engine.History.MembershipOrder
+  alias Zaq.Engine.HistoryRuntimeRemoval
   alias Zaq.Event
   alias Zaq.NodeRouter
   alias Zaq.Permissions
@@ -27,8 +28,12 @@ defmodule Zaq.Engine.ChannelHistoryMembership do
     router = Keyword.get(opts, :router, NodeRouter)
 
     case Ecto.UUID.cast(transcript_id) do
-      {:ok, id} -> Repo.transaction(fn -> refresh_locked(id, router) end)
-      :error -> {:error, :not_found}
+      {:ok, id} ->
+        Repo.transaction(fn -> refresh_locked(id, router) end)
+        |> HistoryRuntimeRemoval.committed()
+
+      :error ->
+        {:error, :not_found}
     end
   end
 
@@ -53,8 +58,14 @@ defmodule Zaq.Engine.ChannelHistoryMembership do
 
       if ids == [], do: Repo.rollback(:unsupported_membership_refresh)
       results = Enum.map(ids, &refresh_locked(&1, router, person_id))
-      %{rooms: length(results), members: Enum.sum(Enum.map(results, & &1.members))}
+
+      %{
+        rooms: length(results),
+        members: Enum.sum(Enum.map(results, & &1.members)),
+        runtime_removals: Enum.flat_map(results, & &1.runtime_removals)
+      }
     end)
+    |> HistoryRuntimeRemoval.committed()
   end
 
   @doc "Applies internally trusted normalized membership evidence; never accepts provider payloads."
@@ -72,7 +83,7 @@ defmodule Zaq.Engine.ChannelHistoryMembership do
       when is_binary(provider) and is_integer(config_id) and config_id > 0 and
              is_binary(channel_id) and is_binary(platform) and byte_size(platform) in 1..255 and
              is_binary(member) and byte_size(member) in 1..255 do
-    Repo.transaction(fn -> apply_event_locked(event) end)
+    Repo.transaction(fn -> apply_event_locked(event) end) |> HistoryRuntimeRemoval.committed()
   end
 
   def apply_event(_), do: {:error, :invalid_membership_event}
@@ -175,9 +186,9 @@ defmodule Zaq.Engine.ChannelHistoryMembership do
         %{status: :stale}
 
       {:ok, :applied, state} ->
-        apply_member(root, resource, platform, member, state)
-        store_state(root, state)
-        %{status: :applied}
+        removed = apply_member(root, resource, platform, member, state, operation)
+        removals = store_membership_change(root, state, removed)
+        %{status: :applied, runtime_removals: removals}
 
       {:error, reason} ->
         Repo.rollback(reason)
@@ -210,10 +221,14 @@ defmodule Zaq.Engine.ChannelHistoryMembership do
              MembershipOrder.snapshot(root.membership_state, snapshot, targets),
            {:ok, person_ids} <- resolved_people(transcript.channel_config_id, platform, effective),
            person_ids = Enum.filter(person_ids, &(is_nil(person_id) or &1 == person_id)),
-           :ok <-
+           {:ok, removed} <-
              reconcile(resource, person_ids, "channel_history:provider:" <> provider, person_id) do
-        store_state(root, state)
-        %{members: length(person_ids)}
+        removals = store_membership_change(root, state, removed)
+
+        %{
+          members: length(person_ids),
+          runtime_removals: removals
+        }
       else
         %Event{response: {:error, reason}} -> Repo.rollback(reason)
         {:error, reason} -> Repo.rollback(reason)
@@ -272,7 +287,11 @@ defmodule Zaq.Engine.ChannelHistoryMembership do
       end
     end)
 
-    :ok
+    {:ok,
+     existing
+     |> Enum.reject(&MapSet.member?(requested, &1.person_id))
+     |> Enum.map(& &1.person_id)
+     |> Enum.uniq()}
   end
 
   defp revoke_missing(resource, permission, requested) do
@@ -322,19 +341,31 @@ defmodule Zaq.Engine.ChannelHistoryMembership do
     if ids == [], do: {:error, :unlinked_member}, else: {:ok, ids}
   end
 
-  defp apply_member(root, resource, platform, member, state) do
+  defp apply_member(root, resource, platform, member, state, operation) do
     case People.match_by_channel(platform, member, root.channel_config_id) do
       {:ok, %{id: person_id}} ->
         {:ok, members} = resolved_people(root.channel_config_id, platform, state["members"] || [])
         ids = Enum.filter(members, &(&1 == person_id))
-        reconcile(resource, ids, "channel_history:provider:" <> root.provider, person_id)
+
+        {:ok, removed} =
+          reconcile(resource, ids, "channel_history:provider:" <> root.provider, person_id)
+
+        if operation == :remove and ids == [], do: Enum.uniq([person_id | removed]), else: removed
 
       _ ->
-        :ok
+        []
     end
   end
 
   defp store_state(root, state) do
     root |> Ecto.Changeset.change(membership_state: state) |> Repo.update!()
+  end
+
+  defp store_membership_change(root, state, removed) do
+    previous = root.membership_state["removal_generation"] || 0
+    generation = previous + if(removed == [], do: 0, else: 1)
+    state = if generation > 0, do: Map.put(state, "removal_generation", generation), else: state
+    store_state(root, state)
+    HistoryRuntimeRemoval.stage(root.id, removed, generation)
   end
 end

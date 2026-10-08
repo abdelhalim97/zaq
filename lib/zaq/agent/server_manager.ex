@@ -45,9 +45,11 @@ defmodule Zaq.Agent.ServerManager do
     HistoryLifecycle,
     OpaqueAliases,
     ProviderSpec,
+    RequestRegistry,
     RuntimeSync
   }
 
+  alias Zaq.Contracts.HistoryRuntimeRemoval
   alias Zaq.Identity.ExecutionActor
 
   @dynamic_supervisor Zaq.Agent.AgentServerSupervisor
@@ -199,6 +201,23 @@ defmodule Zaq.Agent.ServerManager do
   @doc "Returns only this caller's leases belonging to its internal completion session."
   def history_requests(session), do: GenServer.call(__MODULE__, {:history_requests, session})
 
+  @doc "Stops local exact-incarnation history runtimes selected by their trusted principal/source binding."
+  def stop_history_runtimes(transcript_id, person_ids, event_id, generation \\ 1) do
+    with :ok <-
+           HistoryRuntimeRemoval.validate(%{
+             transcript_id: transcript_id,
+             person_ids: person_ids,
+             event_id: event_id,
+             generation: generation
+           }) do
+      GenServer.call(
+        __MODULE__,
+        {:stop_history_runtimes, transcript_id, person_ids, event_id, generation},
+        @lifecycle_call_timeout
+      )
+    end
+  end
+
   @doc "Disposes an owned lease and its exact runtime after an unhandled or failed outcome."
   def abort_history_request(server_id, token),
     do:
@@ -249,6 +268,11 @@ defmodule Zaq.Agent.ServerManager do
     result =
       with {:ok, actor} <- ExecutionActor.validate(Keyword.get(opts, :actor)),
            :ok <- HistoryLifecycle.validate_initial(Keyword.get(opts, :history_cursors)),
+           :ok <-
+             HistoryLifecycle.validate_generations(
+               Keyword.get(opts, :history_cursors),
+               Keyword.get(opts, :history_removal_generations)
+             ),
            {:ok, history_binding} <- validate_history_binding(Keyword.get(opts, :history_binding)),
            :ok <- validate_binding(safe_whereis(server_id), actor, history_binding) do
         next_state = clear_stale_drain(state, server_id)
@@ -316,6 +340,29 @@ defmodule Zaq.Agent.ServerManager do
       end)
 
     {:reply, requests, state}
+  end
+
+  def handle_call(
+        {:stop_history_runtimes, transcript_id, person_ids, event_id, generation},
+        _from,
+        state
+      ) do
+    payload = {transcript_id, Enum.sort(Enum.uniq(person_ids)), generation}
+    receipts = Map.get(state, :history_removals, %{})
+
+    case Map.fetch(receipts, event_id) do
+      {:ok, ^payload} ->
+        {:reply, {:ok, 0}, state}
+
+      {:ok, _} ->
+        {:reply, {:error, :removal_conflict}, state}
+
+      :error ->
+        {count, state} = stop_bound_history(state, transcript_id, person_ids, generation)
+
+        {:reply, {:ok, count},
+         Map.put(state, :history_removals, Map.put(receipts, event_id, payload))}
+    end
   end
 
   def handle_call({:abort_history_request, server_id, token}, {owner, _}, state) do
@@ -1038,6 +1085,8 @@ defmodule Zaq.Agent.ServerManager do
   end
 
   defp initialize_history_cursor(state, server_id, opts) do
+    {:ok, principal} = ExecutionActor.identity(Keyword.get(opts, :actor))
+
     Map.put(
       state,
       :history,
@@ -1045,9 +1094,40 @@ defmodule Zaq.Agent.ServerManager do
         Map.get(state, :history, %{}),
         server_id,
         safe_whereis(server_id),
-        Keyword.get(opts, :history_cursors)
+        Keyword.get(opts, :history_cursors),
+        principal,
+        Keyword.get(opts, :history_removal_generations)
       )
     )
+  end
+
+  defp stop_bound_history(state, transcript_id, person_ids, generation) do
+    Enum.reduce(state.history, {0, state}, fn
+      {server_id, %{principal: {:person, person_id}, cursors: cursors, pid: pid} = entry},
+      {count, state} ->
+        if person_id in person_ids and Map.has_key?(cursors, transcript_id) and
+             entry.generations[transcript_id] < generation and
+             safe_whereis(server_id) == pid do
+          input_id = get_in(entry, [:lease, :details, :history, :binding, :user_message_id])
+          {:ok, sinks} = RequestRegistry.remove_history_runtime(pid, person_id, input_id)
+          _ = Factory.cancel_history_request(pid)
+          :ok = Factory.wake_history_streams(sinks)
+          _ = stop_server_if_running(server_id)
+
+          state = %{
+            state
+            | history:
+                HistoryLifecycle.drop(state.history, server_id, :history_membership_removed)
+          }
+
+          {count + 1, untrack_server(state, server_id)}
+        else
+          {count, state}
+        end
+
+      _, acc ->
+        acc
+    end)
   end
 
   defp validate_history_actor(pid, actor) do

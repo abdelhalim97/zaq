@@ -667,6 +667,17 @@ without safe permission mutation support return `:unsupported`.
   stale incarnations and failed application; the provider integration suite covers
   warm reuse, post-completion additions, revocation and admission paused through
   an actual Engine finalization transaction.
+- The history ledger also binds the trusted Person and initial Engine source
+  removal generations to the exact PID. Internal `:history_membership_removed`
+  events require the explicit Engine system identity and validated confidential
+  payload. ServerManager selects bindings, never parsed runtime names, and cancels
+  only incarnations older than the removal generation. RequestRegistry fences both
+  that PID and its admitted input before native cancellation/shutdown; Factory
+  wakes local stream sinks, and queued admissions receive the removal reason.
+  StreamEvents discards buffered output and API suppresses fallback/terminal
+  delivery while retaining failed private execution persistence. Other people and
+  unrelated sources remain running; inherited thread runtimes share their parent's
+  source binding. A fresh runtime still requires ordinary Engine authorization.
 - Factory hydrates conversation-backed runtimes only from the explicit Engine-issued
   `conversation_id`; it never parses a runtime server name to recover persistence identity.
 - The legacy loader excludes pending and failed admitted user messages. Canonical

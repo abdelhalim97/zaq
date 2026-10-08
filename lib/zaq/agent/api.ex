@@ -28,6 +28,7 @@ defmodule Zaq.Agent.Api do
     Pipeline,
     PromptGuard,
     RequestControl,
+    RequestRegistry,
     RuntimeSync,
     ServerManager,
     Status
@@ -35,6 +36,7 @@ defmodule Zaq.Agent.Api do
 
   alias Zaq.Channels.EventNames
   alias Zaq.Contracts.CredentialMutation
+  alias Zaq.Contracts.HistoryRuntimeRemoval
   alias Zaq.Engine.Messages.{Incoming, Outgoing}
   alias Zaq.Event
   alias Zaq.EventHop
@@ -107,6 +109,24 @@ defmodule Zaq.Agent.Api do
       {:error, reason} ->
         %{event | response: {:error, reason}}
     end
+  end
+
+  def handle_event(%Event{request: payload} = event, :history_membership_removed, _context) do
+    response =
+      with {:ok, {:system, "engine:history-membership"}} <- ExecutionActor.identity(event.actor),
+           true <- Keyword.get(event.opts, :confidential) == true,
+           :ok <- HistoryRuntimeRemoval.validate(payload) do
+        ServerManager.stop_history_runtimes(
+          payload.transcript_id,
+          payload.person_ids,
+          payload.event_id,
+          payload.generation
+        )
+      else
+        _ -> {:error, :unauthorized}
+      end
+
+    %{event | response: response, next_hop: nil}
   end
 
   def handle_event(%Event{} = event, action, _context)
@@ -522,6 +542,8 @@ defmodule Zaq.Agent.Api do
        do: %{event | response: outgoing, next_hop: nil}
 
   defp maybe_dispatch_return_hop(%Event{} = event, %Incoming{} = incoming, %Outgoing{} = outgoing) do
+    outgoing = fence_removed_outgoing(event, outgoing)
+
     if delivery_through_channels?(outgoing.provider) do
       node_router_mod = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
 
@@ -533,8 +555,7 @@ defmodule Zaq.Agent.Api do
             outgoing
           )
 
-          event
-          |> schedule_return_hop(enrich_outgoing_with_persistence(outgoing, persisted))
+          schedule_persisted_outgoing(event, fence_removed_outgoing(event, outgoing), persisted)
 
         {:error, reason} ->
           log_persist_failure(event, reason)
@@ -548,6 +569,36 @@ defmodule Zaq.Agent.Api do
 
   defp maybe_dispatch_return_hop(%Event{} = event, _incoming, other),
     do: %{event | response: other}
+
+  defp fence_removed_outgoing(event, outgoing) do
+    binding = conversation_binding(event.assigns) || %{}
+
+    if RequestRegistry.history_removed?(binding[:user_message_id], event.actor) do
+      %{
+        outgoing
+        | body: "",
+          metadata:
+            Map.merge(outgoing.metadata, %{
+              answer: "",
+              error: true,
+              execution_disposition: "removed",
+              termination_reason: "history_membership_removed"
+            })
+      }
+    else
+      outgoing
+    end
+  end
+
+  defp schedule_persisted_outgoing(
+         event,
+         %{metadata: %{execution_disposition: "removed"}} = outgoing,
+         _persisted
+       ),
+       do: %{event | response: outgoing, next_hop: nil}
+
+  defp schedule_persisted_outgoing(event, outgoing, persisted),
+    do: schedule_return_hop(event, enrich_outgoing_with_persistence(outgoing, persisted))
 
   defp log_persist_failure(%Event{} = event, reason) do
     Logger.error(
