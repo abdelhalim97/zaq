@@ -850,7 +850,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
   defp history_llm_handler(tags, owner) do
     cond do
-      tags[:per_turn_refresh] ->
+      tags[:per_turn_refresh] == true or tags[:refresh_revocation] == true ->
         &cumulative_refresh_response/2
 
       tags[:root_failure] ->
@@ -880,6 +880,42 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
       true ->
         nil
     end
+  end
+
+  @tag :refresh_revocation
+  @tag :authorized_execution
+  @tag :input_consumption
+  test "revoked grants stop the next real internal model turn without a public answer", ctx do
+    resource = ChannelHistoryResource.for("mattermost", ctx.config.id, "shared-room")
+
+    assert {:ok, permission} =
+             Zaq.Permissions.grant(
+               resource,
+               %{person_id: ctx.person.id, access_rights: ["read"]}
+             )
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "revoked-refresh-root",
+               "message" => "@zaq history question"
+             })
+
+    assert_receive {:history_llm, _initial}, 5_000
+    assert_receive {:history_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_history_llm) end)
+    assert :ok = Zaq.Permissions.revoke(resource, permission)
+    send(worker, :release_history_llm)
+    assert_receive {:history_execution_failed, writer}, 5_000
+    monitor = Process.monitor(writer)
+    assert_receive {:DOWN, ^monitor, :process, ^writer, reason}, 5_000
+    assert reason in [:normal, :noproc]
+    refute_receive {:history_llm, _}, 0
+    input = Repo.get_by!(Message, external_message_id: "revoked-refresh-root")
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: input.id)
+    assert execution.status == "failed"
+    assert execution.public_answer_message_id == nil
+    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 0
+    assert Repo.get!(Message, input.id).content == "@zaq history question"
   end
 
   defp history_barrier?(%{per_turn_refresh: true}, request, _body),
