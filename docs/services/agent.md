@@ -187,6 +187,12 @@ Each module broadcasts its own stage — orchestrators broadcast nothing:
   `StreamEvents` records consumption only on the actual `input_injected` event;
   queued acknowledgement is never treated as an answer. Receipt persistence
   failure remains an execution error, not a successful consumption claim.
+- A provider-ingressed explicit input from the active root's Person uses that
+  same control path before creating new status messages. Lookup matches canonical
+  transcript/Person scope and immutable configured-agent identity. Busy admission
+  races in Executor fall back to the exact active PID/Jido request; legacy
+  unscoped runs retain busy rejection. Queued receipts stop the return hop and
+  never finalize a second public answer.
 - `Zaq.Agent.Api` is the role boundary entrypoint used by `NodeRouter.dispatch/1`
 - Channel requests require an Engine admission binding with non-empty conversation ID,
   user-message ID and finalization token. Missing or malformed bindings return

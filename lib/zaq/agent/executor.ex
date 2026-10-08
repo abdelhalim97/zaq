@@ -39,6 +39,8 @@ defmodule Zaq.Agent.Executor do
     HistoryLoader,
     LogprobsAnalyzer,
     OpaqueAliases,
+    RequestControl,
+    RequestRegistry,
     ServerManager,
     StreamEvents
   }
@@ -212,7 +214,8 @@ defmodule Zaq.Agent.Executor do
              ),
            %Incoming{} = incoming <- normalize_status_result(status_result, incoming),
            {:ok, %{request: request, events: events}} <-
-             factory_module.ask_with_config(runtime_pid, question, configured_agent,
+             ask_or_queue(factory_module, runtime_pid, question, configured_agent,
+               busy_context: %{incoming: incoming, actor: actor, opts: execution_opts},
                tool_context: %{
                  incoming: incoming,
                  person_id: Keyword.get(execution_opts, :person_id),
@@ -224,7 +227,8 @@ defmodule Zaq.Agent.Executor do
                }
              ),
            {:ok, stream_result} <-
-             StreamEvents.consume(events, incoming,
+             consume_or_queue(events, incoming,
+               busy_context: %{incoming: incoming, actor: actor, opts: execution_opts},
                request: request,
                actor: actor,
                execution_scope: Keyword.get(execution_opts, :scope),
@@ -248,6 +252,9 @@ defmodule Zaq.Agent.Executor do
         :ok = record_success_telemetry(result, dims, actor, incoming, configured_agent)
         Outgoing.from_pipeline_result(incoming, result)
       else
+        {:queued, outgoing} ->
+          outgoing
+
         {:error, %ReqLLM.Error.API.Stream{} = reason, partial} ->
           :ok =
             record_partial_llm_telemetry(
@@ -475,6 +482,7 @@ defmodule Zaq.Agent.Executor do
   end
 
   defp authorized_execution_context(opts, actor) do
+    opts = Keyword.delete(opts, :canonical_execution)
     binding = Keyword.get(opts, :conversation_binding) || %{}
     token = Map.get(binding, :finalization_token, Map.get(binding, "finalization_token"))
 
@@ -498,7 +506,12 @@ defmodule Zaq.Agent.Executor do
         %{response: {:ok, %{kind: :canonical} = projection}} ->
           scope = "history:#{projection.transcript_id}:person:#{ActorNormalizer.person_id(actor)}"
           context = HistoryLoader.from_projection(projection.messages, opaque_alias_scope: scope)
-          {:ok, opts |> Keyword.put(:context, context) |> Keyword.put(:scope, scope)}
+
+          {:ok,
+           opts
+           |> Keyword.put(:context, context)
+           |> Keyword.put(:scope, scope)
+           |> Keyword.put(:canonical_execution, true)}
 
         %{response: {:error, reason}} ->
           {:error, reason}
@@ -514,6 +527,63 @@ defmodule Zaq.Agent.Executor do
   defp execution_input_id(opts) do
     binding = Keyword.get(opts, :conversation_binding) || %{}
     Map.get(binding, :user_message_id, Map.get(binding, "user_message_id"))
+  end
+
+  defp ask_or_queue(factory, runtime, question, configured_agent, opts) do
+    {context, ask_opts} = Keyword.pop(opts, :busy_context)
+
+    case factory.ask_with_config(runtime, question, configured_agent, ask_opts) do
+      {:error, reason} = error ->
+        if reusable_runtime_rejection?(reason) and Keyword.get(context.opts, :canonical_execution),
+          do: queue_busy_input(runtime, context),
+          else: error
+
+      result ->
+        result
+    end
+  end
+
+  defp consume_or_queue(events, incoming, opts) do
+    {context, stream_opts} = Keyword.pop(opts, :busy_context)
+
+    case StreamEvents.consume(events, incoming, stream_opts) do
+      {:error, reason, _partial} = error ->
+        if reusable_runtime_rejection?(reason) and Keyword.get(context.opts, :canonical_execution),
+          do: queue_busy_input(Keyword.get(stream_opts, :runtime_pid), context),
+          else: error
+
+      result ->
+        result
+    end
+  end
+
+  defp queue_busy_input(runtime, %{incoming: incoming, actor: actor, opts: opts}) do
+    with {:ok, {request_id, _state}} <-
+           RequestRegistry.find_active(Keyword.get(opts, :scope), actor, runtime),
+         event <-
+           Event.new(%{execution_scope: Keyword.get(opts, :scope)}, :agent,
+             actor: actor,
+             opts: [
+               node_router: node_router(opts),
+               factory_module: Keyword.get(opts, :factory_module, Factory)
+             ]
+           ),
+         {:ok, _} <-
+           RequestControl.control(
+             event,
+             request_id,
+             incoming.content,
+             :steer_request,
+             Keyword.get(opts, :conversation_binding)
+           ) do
+      {:queued,
+       Outgoing.from_pipeline_result(incoming, %{
+         answer: "",
+         error: false,
+         execution_disposition: "queued",
+         root_request_id: request_id
+       })}
+    end
   end
 
   defp conversation_id(opts) do

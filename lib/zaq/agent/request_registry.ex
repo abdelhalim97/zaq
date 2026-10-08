@@ -14,6 +14,7 @@ defmodule Zaq.Agent.RequestRegistry do
 
   @table :zaq_agent_request_registry
   @ownership_fields [
+    :agent,
     :runtime_pid,
     :server_id,
     :owner_node,
@@ -68,10 +69,12 @@ defmodule Zaq.Agent.RequestRegistry do
   def get(_request_id), do: {:error, :not_found}
 
   @doc "Finds one active local request by exact scope/principal; callers must authorize controls."
-  def find_active(scope, actor) when is_binary(scope) do
+  def find_active(scope, actor, runtime \\ nil)
+
+  def find_active(scope, actor, runtime) when is_binary(scope) do
     with table when table != :undefined <- table_ref(),
          {:ok, identity} <- ExecutionActor.identity(actor) do
-      matches = scoped_requests(table, scope, identity)
+      matches = scoped_requests(table, scope, identity, runtime)
 
       case matches do
         [match] -> {:ok, match}
@@ -83,24 +86,33 @@ defmodule Zaq.Agent.RequestRegistry do
     end
   end
 
-  def find_active(_scope, _actor), do: {:error, :not_found}
+  def find_active(_scope, _actor, _runtime), do: {:error, :not_found}
 
-  defp scoped_requests(table, scope, identity) do
+  defp scoped_requests(table, scope, identity, runtime) do
     :ets.foldl(
       fn {id, state}, acc ->
-        if active_owner?(state, scope, identity), do: [{id, state} | acc], else: acc
+        if active_owner?(state, scope, identity, runtime), do: [{id, state} | acc], else: acc
       end,
       [],
       table
     )
   end
 
-  defp active_owner?(state, scope, identity) when is_map(state) do
+  defp active_owner?(state, scope, identity, runtime) when is_map(state) do
     state[:execution_scope] == scope and state[:status] in [:running, :streaming] and
+      matching_runtime?(state, runtime) and
       ExecutionActor.identity(state[:actor]) == {:ok, identity}
   end
 
-  defp active_owner?(_state, _scope, _identity), do: false
+  defp active_owner?(_state, _scope, _identity, _runtime), do: false
+
+  defp matching_runtime?(_state, nil), do: true
+
+  defp matching_runtime?(%{agent: %{id: id}}, %{agent_id: expected}),
+    do: to_string(id) == to_string(expected)
+
+  defp matching_runtime?(state, runtime) when is_pid(runtime), do: state[:runtime_pid] == runtime
+  defp matching_runtime?(_state, _runtime), do: false
 
   @spec delete(String.t()) :: :ok
   def delete(request_id) when is_binary(request_id) do

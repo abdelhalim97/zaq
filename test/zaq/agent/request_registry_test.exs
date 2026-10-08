@@ -27,6 +27,50 @@ defmodule Zaq.Agent.RequestRegistryTest do
 
   @table :zaq_agent_request_registry
 
+  test "same Person/scope requests are selected only for the exact configured agent and incarnation" do
+    scope = "agent-scope-#{System.unique_integer([:positive])}"
+    actor = %{person: %{id: 123}}
+    first = "agent-one-#{System.unique_integer([:positive])}"
+    second = "agent-two-#{System.unique_integer([:positive])}"
+
+    runtime =
+      spawn(fn ->
+        receive do
+          :finish -> :ok
+        end
+      end)
+
+    on_exit(fn -> send(runtime, :finish) end)
+
+    assert :ok =
+             RequestRegistry.put(first, %{
+               actor: actor,
+               execution_scope: scope,
+               status: :streaming,
+               runtime_pid: self(),
+               agent: %{id: 1, name: "One"}
+             })
+
+    assert :ok =
+             RequestRegistry.put(second, %{
+               actor: actor,
+               execution_scope: scope,
+               status: :streaming,
+               runtime_pid: runtime,
+               agent: %{id: 2, name: "Two"}
+             })
+
+    assert {:error, :ambiguous_request} = RequestRegistry.find_active(scope, actor)
+    assert {:ok, {^first, _}} = RequestRegistry.find_active(scope, actor, self())
+    assert {:ok, {^second, _}} = RequestRegistry.find_active(scope, actor, %{agent_id: "2"})
+
+    assert {:error, :ownership_conflict} =
+             RequestRegistry.put(first, %{agent: %{id: 2, name: "Two"}})
+
+    assert :ok = RequestRegistry.delete(first)
+    assert :ok = RequestRegistry.delete(second)
+  end
+
   setup do
     ensure_registry_available!()
 

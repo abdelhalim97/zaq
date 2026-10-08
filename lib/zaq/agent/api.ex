@@ -84,8 +84,8 @@ defmodule Zaq.Agent.Api do
     case event.request do
       %Incoming{} = incoming ->
         with {:ok, actor} <- ExecutionActor.from_event_request(event),
-             :ok <- validate_admission(%{event | actor: actor}, incoming) do
-          run_pipeline(%{event | actor: actor}, incoming)
+             {:ok, projection} <- validate_admission(%{event | actor: actor}, incoming) do
+          run_pipeline(%{event | actor: actor}, incoming, projection)
         else
           {:error, reason} -> %{event | response: {:error, reason}, next_hop: nil}
         end
@@ -360,26 +360,49 @@ defmodule Zaq.Agent.Api do
   defp normalize_action_error({:error, reason}), do: {:error, {:action_failed, reason}}
   defp normalize_action_error(other), do: other
 
-  defp run_pipeline(event, incoming) do
+  defp run_pipeline(event, incoming, projection) do
     status_mod = Keyword.get(event.opts, :status_module, Status)
     node_router_mod = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
-
-    incoming =
-      status_mod.broadcast(incoming, :validating, "Checking your request…", node_router_mod)
 
     incoming = normalize_selected_agent_attachment_input(incoming, event.assigns)
     prompt_guard_mod = Keyword.get(event.opts, :prompt_guard, PromptGuard)
 
     case prompt_guard_mod.validate(incoming.content) do
       {:error, _reason} ->
+        incoming =
+          status_mod.broadcast(incoming, :validating, "Checking your request…", node_router_mod)
+
         maybe_dispatch_return_hop(event, incoming, guard_error_outgoing(incoming))
 
       {:ok, _} ->
-        dispatch_pipeline(event, incoming)
+        case RequestControl.queue_incoming(
+               event,
+               incoming,
+               projection,
+               conversation_binding(event.assigns),
+               selected_agent_id(event.assigns)
+             ) do
+          :not_active ->
+            incoming =
+              status_mod.broadcast(
+                incoming,
+                :validating,
+                "Checking your request…",
+                node_router_mod
+              )
+
+            dispatch_pipeline(event, incoming)
+
+          {:queued, outgoing} ->
+            %{event | response: outgoing, next_hop: nil}
+
+          {:error, reason} ->
+            %{event | response: {:error, reason}, next_hop: nil}
+        end
     end
   end
 
-  defp validate_admission(_event, %Incoming{provider: nil}), do: :ok
+  defp validate_admission(_event, %Incoming{provider: nil}), do: {:ok, %{kind: :legacy}}
 
   defp validate_admission(event, _incoming) do
     case conversation_binding(event.assigns) do
@@ -397,7 +420,7 @@ defmodule Zaq.Agent.Api do
           )
 
         case router.dispatch(request) do
-          %{response: {:ok, _projection}} -> :ok
+          %{response: {:ok, projection}} -> {:ok, projection}
           %{response: {:error, reason}} -> {:error, reason}
           _ -> {:error, :history_unavailable}
         end
@@ -480,6 +503,13 @@ defmodule Zaq.Agent.Api do
   defp conversation_binding(_assigns), do: nil
 
   # This function is a good candidate to go into the NodeRouter for generalization
+  defp maybe_dispatch_return_hop(
+         %Event{} = event,
+         _incoming,
+         %Outgoing{metadata: %{execution_disposition: "queued"}} = outgoing
+       ),
+       do: %{event | response: outgoing, next_hop: nil}
+
   defp maybe_dispatch_return_hop(%Event{} = event, %Incoming{} = incoming, %Outgoing{} = outgoing) do
     if delivery_through_channels?(outgoing.provider) do
       node_router_mod = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)

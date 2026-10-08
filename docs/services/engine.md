@@ -957,8 +957,9 @@ the literal Person, current grants, same transcript and exact submitted content.
 Root/input Message locks fence this transition against finalization. Only actual
 Jido `input_injected` evidence through `:consume_execution_input` marks a queued
 receipt consumed. Root finalization seals every remaining queued receipt as
-`unconsumed`, without manufacturing a second public answer. Automatic busy-input
-routing and further race coverage remain tracked in B3 (`zaq-emb.30.4`).
+`unconsumed`, without manufacturing a second public answer. Agent automatic
+same-Person busy-input routing reuses this receipt path. Rejection/finalizing
+race coverage remains tracked in B3 (`zaq-emb.30.4`).
 
 - Public API for the full conversation/message/rating/share lifecycle.
 - Access from BO crosses `NodeRouter.dispatch/1` and the Engine role API. Some existing callers still use generic invoke helpers; new calls follow the domain-action dispatch contract above.
