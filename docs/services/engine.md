@@ -945,8 +945,9 @@ upper bounds. Each source retains its existing read limit; returned `cursors`
 stop at the last association read, while `upper_cursors` report the captured ends.
 Paging therefore never skips capped-out associations. The current input is still
 excluded from content but counts as a read association. Reads neither modify
-runtime context nor advance runtime cursors; Agent per-turn integration and
-request-boundary synchronization remain follow-on work.
+runtime context nor advance runtime cursors. Agent uses the fixed request-start
+cursor for per-turn projections; request-boundary synchronization remains
+follow-on work.
 
 New canonical Person admissions also create a pending `ExecutionRecord` in the
 existing source-locked transaction. Finalization validates its literal active

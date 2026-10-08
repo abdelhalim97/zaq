@@ -2,6 +2,8 @@ defmodule Zaq.Agent.HistoryLoader do
   @moduledoc """
   Loads recent conversation history from the DB and converts it to a
   `Jido.AI.Context` struct for injection into a cold-started agent process.
+  Also converts and merges Engine-authorized canonical projections for request-local
+  refresh, without mutating retained runtime context or owning authorization.
 
   This module is the only place that performs DB→Jido.AI.Context conversion.
   It is completely independent of `Zaq.Agent.History`, which serves the
@@ -48,6 +50,26 @@ defmodule Zaq.Agent.HistoryLoader do
         refs: Map.take(message, [:message_id, :transcript_id, :position])
       })
     end)
+  end
+
+  @doc "Merges canonical additions into a request-local context, retaining active tool exchanges."
+  def merge_projection(%AIContext{} = context, messages, opts \\ []) do
+    known = MapSet.new(context.entries, fn entry -> Map.get(entry.refs || %{}, :message_id) end)
+
+    additions =
+      messages
+      |> Enum.reject(&MapSet.member?(known, &1.message_id))
+      |> Enum.uniq_by(& &1.message_id)
+      |> from_projection(opts)
+
+    {history, active} =
+      context.entries
+      |> Enum.reverse()
+      |> Enum.split_while(fn entry ->
+        entry.role == :system or is_binary(Map.get(entry.refs || %{}, :transcript_id))
+      end)
+
+    %{context | entries: Enum.reverse(history ++ Enum.reverse(additions.entries) ++ active)}
   end
 
   @doc """

@@ -77,6 +77,9 @@ defmodule Zaq.Engine.Conversations do
     else
       _ -> {:error, :unauthorized}
     end
+  rescue
+    _error in [Ecto.ConstraintError, Postgrex.Error, DBConnection.ConnectionError] ->
+      {:error, :history_unavailable}
   end
 
   def execution_history(_binding, _actor, _opts), do: {:error, :unauthorized}

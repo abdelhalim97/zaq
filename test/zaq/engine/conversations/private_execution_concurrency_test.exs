@@ -142,6 +142,69 @@ defmodule Zaq.Engine.Conversations.PrivateExecutionConcurrencyTest do
 
   defp prepare_contender(_contender, _fixture), do: :ok
 
+  test "a real unavailable history read returns a safe error and leaves its fixed cursor reusable",
+       fixture do
+    initial =
+      Sandbox.unboxed_run(Repo, fn ->
+        assert {:ok, projection} = Conversations.execution_history(fixture.root, fixture.actor)
+        projection
+      end)
+
+    parent = self()
+    barrier = make_ref()
+
+    writer =
+      Task.async(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.transaction(fn ->
+            Repo.query!("LOCK TABLE transcript_messages IN ACCESS EXCLUSIVE MODE")
+            send(parent, {:history_locked, barrier})
+
+            receive do
+              {:resume, ^barrier} -> :ok
+            after
+              5_000 -> raise "History read barrier was not released"
+            end
+          end)
+        end)
+      end)
+
+    try do
+      assert_receive {:history_locked, ^barrier}, 5_000
+
+      Sandbox.unboxed_run(Repo, fn ->
+        Repo.query!("SET lock_timeout = '100ms'")
+
+        try do
+          assert {:error, :history_unavailable} =
+                   Conversations.execution_history(
+                     fixture.root,
+                     fixture.actor,
+                     after_cursors: initial.cursors
+                   )
+        after
+          Repo.query!("RESET lock_timeout")
+        end
+      end)
+
+      send(writer.pid, {:resume, barrier})
+      assert {:ok, :ok} = Task.await(writer, 5_000)
+
+      Sandbox.unboxed_run(Repo, fn ->
+        assert {:ok, delta} =
+                 Conversations.execution_history(fixture.root, fixture.actor,
+                   after_cursors: initial.cursors
+                 )
+
+        assert delta.messages == []
+        assert delta.cursors == initial.cursors
+      end)
+    after
+      send(writer.pid, {:resume, barrier})
+      Task.shutdown(writer)
+    end
+  end
+
   defp assert_blocked(:finalize, fixture) do
     error =
       assert_raise Postgrex.Error, fn ->
