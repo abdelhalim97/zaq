@@ -23,11 +23,10 @@ defmodule Zaq.Agent.Api do
   alias Zaq.Agent.{
     ErrorMessage,
     Executor,
-    Factory,
     MCP,
     Pipeline,
     PromptGuard,
-    RequestRegistry,
+    RequestControl,
     RuntimeSync,
     ServerManager,
     Status
@@ -98,7 +97,7 @@ defmodule Zaq.Agent.Api do
 
   def handle_event(%Event{} = event, :inspect_request, _context) do
     with {:ok, request_id} <- request_id_request(event.request),
-         {:ok, state} <- authorized_request(event, request_id) do
+         {:ok, state} <- RequestControl.authorize(event, request_id) do
       %{event | response: {:ok, state}}
     else
       {:error, :missing_request_id} ->
@@ -111,21 +110,16 @@ defmodule Zaq.Agent.Api do
 
   def handle_event(%Event{} = event, action, _context)
       when action in [:steer_request, :inject_request] do
-    factory_module = Keyword.get(event.opts, :factory_module, Factory)
-
     with {:ok, request_id} <- request_id_request(event.request),
-         {:ok, content} <- content_request(event.request),
-         {:ok, request_state} <- authorized_request(event, request_id),
-         {:ok, runtime} <- request_control_runtime(request_state),
-         {:ok, control_opts} <- control_input_opts(event, request_state, content, request_id) do
+         {:ok, content} <- content_request(event.request) do
       response =
-        case action do
-          :steer_request ->
-            factory_module.steer(runtime, content, control_opts)
-
-          :inject_request ->
-            factory_module.inject(runtime, content, control_opts)
-        end
+        RequestControl.control(
+          event,
+          request_id,
+          content,
+          action,
+          conversation_binding(event.request)
+        )
 
       %{event | response: response}
     else
@@ -344,22 +338,6 @@ defmodule Zaq.Agent.Api do
     end
   end
 
-  defp request_control_runtime(%{status: status})
-       when status in [:completed, :failed, :cancelled],
-       do: {:error, :terminal_request}
-
-  defp request_control_runtime(%{runtime_pid: pid}) when is_pid(pid) do
-    if Process.alive?(pid), do: {:ok, pid}, else: {:error, :stale_runtime}
-  end
-
-  defp request_control_runtime(%{runtime_pid: _}), do: {:error, :stale_runtime}
-
-  defp request_control_runtime(%{server_id: server_id}) when not is_nil(server_id),
-    do: {:ok, server_id}
-
-  defp request_control_runtime(state) when is_map(state), do: {:error, :missing_server_id}
-  defp request_control_runtime(state), do: {:error, {:ok, state}}
-
   defp request_id_request(request) when is_map(request) do
     case fetch_key(request, :request_id) do
       {:ok, request_id} when is_binary(request_id) and request_id != "" -> {:ok, request_id}
@@ -400,78 +378,6 @@ defmodule Zaq.Agent.Api do
         dispatch_pipeline(event, incoming)
     end
   end
-
-  defp authorized_request(event, request_id) do
-    with {:ok, state} when is_map(state) <- RequestRegistry.get(request_id),
-         {:ok, identity} <- ExecutionActor.identity(event.actor),
-         {:ok, ^identity} <- ExecutionActor.identity(state[:actor]),
-         :ok <- matching_request_scope(event.request, state),
-         :ok <- authorize_person_control(event, state, identity) do
-      {:ok, state}
-    else
-      {:error, reason} when reason in [:not_found, :scope_conflict] -> {:error, reason}
-      _ -> {:error, :unauthorized}
-    end
-  end
-
-  defp control_input_opts(event, %{execution_user_message_id: id}, content, request_id)
-       when is_binary(id) do
-    case conversation_binding(event.request) do
-      nil -> {:error, :admission_required}
-      binding -> queue_control_input(event, id, binding, content, request_id)
-    end
-  end
-
-  defp control_input_opts(_event, _state, _content, request_id),
-    do: {:ok, [expected_request_id: request_id]}
-
-  defp queue_control_input(event, root_id, binding, content, request_id) do
-    router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
-
-    request =
-      Event.new(%{root_user_message_id: root_id, binding: binding, content: content}, :engine,
-        actor: event.actor,
-        opts: [action: :queue_execution_input, confidential: true]
-      )
-
-    case router.dispatch(request) do
-      %{response: {:ok, receipt}} ->
-        {:ok, [expected_request_id: request_id, extra_refs: receipt.refs]}
-
-      %{response: {:error, reason}} ->
-        {:error, reason}
-
-      _ ->
-        {:error, :history_unavailable}
-    end
-  end
-
-  defp matching_request_scope(request, state) do
-    expected = state[:execution_scope]
-
-    case Map.get(request, :execution_scope, Map.get(request, "execution_scope")) do
-      nil -> :ok
-      ^expected -> :ok
-      _ -> {:error, :scope_conflict}
-    end
-  end
-
-  defp authorize_person_control(event, state, {:person, _id}) do
-    router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
-
-    request =
-      Event.new(%{user_message_id: state[:execution_user_message_id]}, :engine,
-        actor: event.actor,
-        opts: [action: :authorize_execution_control, confidential: true]
-      )
-
-    case router.dispatch(request) do
-      %{response: :ok} -> :ok
-      _ -> {:error, :unauthorized}
-    end
-  end
-
-  defp authorize_person_control(_event, _state, _identity), do: :ok
 
   defp validate_admission(_event, %Incoming{provider: nil}), do: :ok
 
