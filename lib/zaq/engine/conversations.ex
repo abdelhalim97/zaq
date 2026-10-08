@@ -185,15 +185,34 @@ defmodule Zaq.Engine.Conversations do
     with {:ok, root_id} <- Ecto.UUID.cast(root_id),
          {:ok, child_id} <- Ecto.UUID.cast(child_id),
          true <- root_id != child_id do
-      Repo.transaction(fn -> operate_locked_inputs(root_id, child_id, operation) end,
-        mode: :savepoint
-      )
+      Repo.transaction(fn -> isolated_input_operation(root_id, child_id, operation) end)
+      |> complete_input_transaction()
     else
       _ -> {:error, :unauthorized}
     end
   rescue
     _error in [Ecto.ConstraintError, Postgrex.Error, DBConnection.ConnectionError] ->
       {:error, :execution_persistence_failed}
+  end
+
+  defp complete_input_transaction({:ok, {:persistence_failed, reason}}), do: {:error, reason}
+  defp complete_input_transaction(result), do: result
+
+  defp isolated_input_operation(root_id, child_id, operation) do
+    # A savepoint must live inside a normal transaction, including for calls on
+    # independent connections which have no caller-owned outer transaction.
+    Repo.query!("SAVEPOINT zaq_execution_input_operation")
+
+    try do
+      result = operate_locked_inputs(root_id, child_id, operation)
+      Repo.query!("RELEASE SAVEPOINT zaq_execution_input_operation")
+      result
+    rescue
+      _error in [Ecto.ConstraintError, Postgrex.Error, DBConnection.ConnectionError] ->
+        Repo.query!("ROLLBACK TO SAVEPOINT zaq_execution_input_operation")
+        Repo.query!("RELEASE SAVEPOINT zaq_execution_input_operation")
+        {:persistence_failed, :execution_persistence_failed}
+    end
   end
 
   defp operate_locked_inputs(root_id, child_id, operation) do

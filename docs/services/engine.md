@@ -974,7 +974,9 @@ ownership while preserving receipt/root/message identities and private payloads.
 Finalization checks root ownership before writing a public answer or failure:
 a valid child capability still returns `:input_not_root` and leaves both root
 and receipt unchanged.
-Receipt operations use a transaction/savepoint boundary. Database constraint and
+Receipt operations open a normal transaction and isolate writes with an inner
+savepoint; this works on both independent connections and caller-owned outer
+transactions. Database constraint and
 connection failures return `:execution_persistence_failed`, without exposing
 changesets or diagnostics, rolling back earlier admissions, or authorizing Jido
 injection after failed queue persistence.
