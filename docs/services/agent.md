@@ -649,8 +649,12 @@ without safe permission mutation support return `:unsupported`.
   that follow-on lifecycle: it accepts only an exact PID and operation ID, rejects
   active runs before dispatch, and verifies Jido's applied-operation receipt and
   resulting context rather than treating a queued command as success. Its caller
-  must serialize admission across the operation; ServerManager lease/cursor
-  integration remains pending in `zaq-emb.16`.
+  must serialize admission across the operation. ServerManager's
+  `begin_history_request/3` and `complete_history_request/4` maintain an exact-PID,
+  process-owned lease and incorporated cursor ledger, releasing queued callers
+  only after native apply confirmation. Abandoned owners or failed application
+  invalidate the runtime instead of advancing cursors. Executor/API wiring across
+  handled Engine outcome persistence remains pending in `zaq-emb.16`.
 - Factory hydrates conversation-backed runtimes only from the explicit Engine-issued
   `conversation_id`; it never parses a runtime server name to recover persistence identity.
 - The legacy loader excludes pending and failed admitted user messages. Canonical
