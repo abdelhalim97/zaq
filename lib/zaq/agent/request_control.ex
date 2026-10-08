@@ -34,10 +34,52 @@ defmodule Zaq.Agent.RequestControl do
     with {:ok, state} <- authorize(event, request_id),
          {:ok, runtime} <- runtime(state),
          {:ok, opts} <- input_opts(event, state, content, request_id, binding) do
-      case action do
-        :steer_request -> factory.steer(runtime, content, opts)
-        :inject_request -> factory.inject(runtime, content, opts)
-      end
+      invoke_control(factory, runtime, content, action, opts)
+      |> retain_rejection(event, state, opts)
+    end
+  end
+
+  defp invoke_control(factory, runtime, content, :steer_request, opts) do
+    factory.steer(runtime, content, opts)
+  catch
+    :exit, _ -> {:error, :stale_runtime}
+  end
+
+  defp invoke_control(factory, runtime, content, :inject_request, opts) do
+    factory.inject(runtime, content, opts)
+  catch
+    :exit, _ -> {:error, :stale_runtime}
+  end
+
+  defp retain_rejection({:error, reason} = result, event, state, opts) do
+    case Keyword.get(opts, :extra_refs) do
+      %{message_id: id} -> persist_rejection(event, state, id, reason, result)
+      _ -> result
+    end
+  end
+
+  defp retain_rejection(result, _event, _state, _opts), do: result
+
+  defp persist_rejection(event, state, input_id, reason, result) do
+    router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
+
+    request =
+      Event.new(
+        %{
+          root_user_message_id: state.execution_user_message_id,
+          user_message_id: input_id,
+          reason: reason
+        },
+        :engine,
+        actor: event.actor,
+        opts: [action: :reject_execution_input, confidential: true]
+      )
+
+    case router.dispatch(request) do
+      %{response: :ok} -> result
+      %{response: {:error, :input_consumed}} -> {:error, :input_consumed}
+      %{response: {:error, failure}} -> {:error, {:input_receipt_failed, failure}}
+      _ -> {:error, {:input_receipt_failed, :unavailable}}
     end
   end
 

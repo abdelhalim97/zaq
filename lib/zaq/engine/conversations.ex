@@ -141,6 +141,26 @@ defmodule Zaq.Engine.Conversations do
     end
   end
 
+  @doc "Retains rejected queued-input evidence without overwriting proven consumption."
+  def reject_execution_input(root_input_id, child_input_id, actor, reason) do
+    case execution_input_transaction(root_input_id, child_input_id, fn root, child ->
+           reject_locked_input(root, child, actor, reason)
+         end) do
+      {:ok, :ok} -> :ok
+      {:error, _} = error -> error
+    end
+  end
+
+  defp reject_locked_input(root, child, actor, reason) do
+    with :ok <- ExecutionLifecycle.authorize(root, actor),
+         :ok <- ExecutionLifecycle.authorize(child, actor),
+         :ok <- ExecutionLifecycle.reject(root, child, reason) do
+      :ok
+    else
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
   defp consume_locked_input(root, child, actor) do
     with :ok <- ExecutionLifecycle.authorize(root, actor),
          :ok <- ExecutionLifecycle.authorize(child, actor),

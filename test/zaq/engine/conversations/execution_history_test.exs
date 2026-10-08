@@ -473,6 +473,66 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert Repo.get!(ExecutionRecord, before.id) == before
   end
 
+  test "runtime rejection seals only the unconsumed receipt and never overwrites consumption",
+       ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    input = incoming(ctx, ctx.alice, "rejected-control", nil, "Correction")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, child} = Conversations.admit_incoming(input)
+
+    assert {:ok, receipt} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
+
+    request =
+      Event.new(
+        %{
+          root_user_message_id: root.user_message_id,
+          user_message_id: child.user_message_id,
+          reason: :stale_runtime
+        },
+        :engine,
+        actor: actor(ctx.bob),
+        opts: [action: :reject_execution_input, confidential: true]
+      )
+
+    assert %{response: {:error, :unauthorized}} = Zaq.NodeRouter.dispatch(request)
+    assert %{response: :ok} = Zaq.NodeRouter.dispatch(%{request | actor: actor(ctx.alice)})
+    record = Repo.get!(ExecutionRecord, receipt.execution_id)
+    assert record.status == "unconsumed"
+    assert record.outcome["reason"] == "stale_runtime"
+    assert record.public_answer_message_id == nil
+
+    assert Repo.get_by!(ExecutionRecord, user_message_id: root.user_message_id).status ==
+             "pending"
+
+    assert %{response: :ok} = Zaq.NodeRouter.dispatch(%{request | actor: actor(ctx.alice)})
+    assert Repo.get!(ExecutionRecord, receipt.execution_id) == record
+
+    consumed_input = incoming(ctx, ctx.alice, "consumption-wins", nil, "Another correction")
+    assert {:ok, _} = HistoryIngress.capture(consumed_input)
+    assert {:ok, consumed} = Conversations.admit_incoming(consumed_input)
+
+    assert {:ok, other} =
+             Conversations.queue_execution_input(root.user_message_id, consumed, actor(ctx.alice))
+
+    assert :ok =
+             Conversations.consume_execution_input(
+               root.user_message_id,
+               consumed.user_message_id,
+               actor(ctx.alice)
+             )
+
+    request = %{
+      request
+      | actor: actor(ctx.alice),
+        request: %{request.request | user_message_id: consumed.user_message_id}
+    }
+
+    assert %{response: {:error, :input_consumed}} = Zaq.NodeRouter.dispatch(request)
+    assert Repo.get!(ExecutionRecord, other.execution_id).status == "consumed"
+  end
+
   defp admitted(ctx, thread \\ nil) do
     input = incoming(ctx, ctx.alice, "question", thread, "Current input")
     assert {:ok, capture} = HistoryIngress.capture(input)
