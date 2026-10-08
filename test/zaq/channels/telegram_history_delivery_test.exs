@@ -121,7 +121,8 @@ defmodule Zaq.Channels.TelegramHistoryDeliveryTest do
                binding.finalization_token,
                %{
                  answer: "Final answer"
-               }
+               },
+               actor: %{person: %{id: person.id}}
              )
 
     outgoing = Outgoing.from_pipeline_result(incoming, %{answer: "Final answer"})
