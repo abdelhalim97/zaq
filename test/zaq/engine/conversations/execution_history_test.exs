@@ -85,6 +85,39 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert {:error, :unauthorized} = Conversations.execution_history(binding, actor(ctx.alice))
   end
 
+  test "admitted legacy inputs retain connector routing without querying a nil canonical source",
+       ctx do
+    incoming =
+      Incoming.new(%{
+        content: "Legacy connector input",
+        provider: :mattermost,
+        channel_id: "legacy-room",
+        message_id: "legacy-input",
+        person: ctx.alice,
+        author_id: "alice",
+        routing_context: %{channel_config_id: ctx.config.id}
+      })
+      |> CommunicationBridge.put_conversation_identity()
+
+    assert {:ok, binding} = Conversations.admit_incoming(incoming)
+    assert Repo.get!(Message, binding.user_message_id).source_provider == nil
+
+    assert Conversations.get_conversation!(binding.conversation_id).channel_config_id ==
+             ctx.config.id
+
+    assert {:ok, %{kind: :legacy}} = Conversations.execution_history(binding, actor(ctx.alice))
+    assert {:error, :unauthorized} = Conversations.execution_history(binding, actor(ctx.bob))
+
+    assert {:error, :unauthorized} =
+             Conversations.execution_history(
+               %{binding | finalization_token: "forged"},
+               actor(ctx.alice)
+             )
+
+    assert {:error, :unauthorized} =
+             Conversations.execution_history(binding, actor(ctx.alice), after_cursors: %{})
+  end
+
   test "fixed association cursors return cumulative A then A+B without current input", ctx do
     grant(ctx)
     {binding, _} = admitted(ctx)
