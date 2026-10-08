@@ -72,7 +72,10 @@ defmodule Zaq.Agent.StreamEvents do
       incoming: incoming,
       node_router: Keyword.get(opts, :node_router, Zaq.NodeRouter),
       status_module: Keyword.get(opts, :status_module, Status),
-      request_id: request_id(incoming),
+      request_id: actual_request_id(Keyword.get(opts, :request), incoming),
+      correlation_id: request_id(incoming),
+      actor: Keyword.get(opts, :actor),
+      execution_scope: Keyword.get(opts, :execution_scope),
       server_id: Keyword.get(opts, :server_id),
       runtime_pid: Keyword.get(opts, :runtime_pid),
       agent: Keyword.get(opts, :agent),
@@ -488,6 +491,11 @@ defmodule Zaq.Agent.StreamEvents do
     RequestRegistry.put(request_id, %{
       status: status,
       server_id: state.server_id,
+      runtime_pid: state.runtime_pid,
+      owner_node: if(is_pid(state.runtime_pid), do: node(state.runtime_pid)),
+      correlation_id: state.correlation_id,
+      actor: state.actor,
+      execution_scope: state.execution_scope,
       agent: sanitize_agent(state.agent),
       current_stage: state.current_stage,
       current_intent: state.current_intent,
@@ -500,6 +508,9 @@ defmodule Zaq.Agent.StreamEvents do
 
     state
   end
+
+  defp actual_request_id(%Jido.AI.Request.Handle{id: id}, _incoming), do: id
+  defp actual_request_id(_request, incoming), do: request_id(incoming)
 
   defp request_id(%Incoming{metadata: metadata, message_id: message_id}) when is_map(metadata) do
     Map.get(metadata, :request_id) || Map.get(metadata, "request_id") || message_id

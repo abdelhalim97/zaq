@@ -9,6 +9,7 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
   alias Zaq.Agent
   alias Zaq.Agent.Answering
   alias Zaq.Agent.Executor
+  alias Zaq.Agent.RequestRegistry
   alias Zaq.Agent.ServerManager
   alias Zaq.Contracts.Record
   alias Zaq.Engine.Connect
@@ -24,6 +25,7 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
     ConnectOAuthAttemptConfig,
     ConnectOAuthAttemptHTTP,
     CredentialMutationJob,
+    IntegrationAgent,
     OpenAIStub
   }
 
@@ -204,6 +206,7 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
     def answering_configured_agent, do: %{id: :answering, name: "answering"}
   end
 
+  @tag :actual_request_identity
   test "runs configured agent end-to-end with only AI edge mocked" do
     handler = fn conn, body ->
       payload = Jason.decode!(body)
@@ -241,10 +244,22 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
       _ = ServerManager.stop_server(configured_agent)
     end)
 
-    incoming = %Incoming{content: "hello", channel_id: "bo-test", provider: :web}
+    correlation_id = "external-#{System.unique_integer([:positive])}"
+    scope = "identity-#{System.unique_integer([:positive])}"
+
+    incoming = %Incoming{
+      content: "hello",
+      channel_id: "bo-test",
+      provider: :web,
+      metadata: %{request_id: correlation_id}
+    }
 
     outgoing =
-      Executor.run(incoming, agent_id: to_string(configured_agent.id), event: execution_event())
+      Executor.run(incoming,
+        agent_id: to_string(configured_agent.id),
+        scope: scope,
+        event: execution_event()
+      )
 
     assert is_binary(outgoing.body)
     assert outgoing.metadata.error == false
@@ -252,6 +267,67 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
     assert outgoing.metadata.configured_agent_name == configured_agent.name
 
     assert_receive {:openai_request, "POST", "/v1/responses", "", _body}, 1_000
+
+    runtime =
+      Jido.AgentServer.whereis(
+        Jido.registry_name(Zaq.Agent.Jido),
+        "#{configured_agent.name}:#{scope}"
+      )
+
+    assert is_pid(runtime)
+    assert {:ok, state} = Jido.AgentServer.state(runtime)
+    [request_id] = Map.keys(state.agent.state.requests)
+    refute request_id == correlation_id
+    assert {:ok, registered} = RequestRegistry.get(request_id)
+    assert registered.runtime_pid == runtime
+    assert registered.correlation_id == correlation_id
+    assert registered.owner_node == node(runtime)
+    assert registered.status == :completed
+    assert {:error, :not_found} = RequestRegistry.get(correlation_id)
+  end
+
+  test "a real busy rejection cannot stop the request already running in Jido" do
+    owner = self()
+
+    handler = fn conn, body ->
+      request = Jason.decode!(body)
+      assert request["model"] == "gpt-4.1-mini"
+      send(owner, {:blocked_llm, self()})
+
+      receive do
+        :release_llm -> {200, streamed_reply(conn.request_path, "Owned answer", "gpt-4.1-mini")}
+      after
+        10_000 -> flunk("the test did not release its external LLM barrier")
+      end
+    end
+
+    {child, endpoint} = OpenAIStub.server(handler, owner)
+    start_supervised!(child)
+    scope = "busy-#{System.unique_integer([:positive])}"
+    agent = IntegrationAgent.create!(endpoint, scope, "Answer briefly.", [])
+    opts = [agent_id: to_string(agent.id), scope: scope, event: execution_event()]
+    incoming = %Incoming{content: "first question", channel_id: "bo-test", provider: :web}
+    first = Task.async(fn -> Executor.run(incoming, opts) end)
+    assert_receive {:blocked_llm, http_worker}, 5_000
+    on_exit(fn -> send(http_worker, :release_llm) end)
+
+    runtime =
+      Jido.AgentServer.whereis(Jido.registry_name(Zaq.Agent.Jido), "#{agent.name}:#{scope}")
+
+    assert is_pid(runtime)
+    second = Executor.run(%{incoming | content: "second question"}, opts)
+    assert second.metadata.error
+    assert Process.alive?(runtime)
+
+    assert Jido.AgentServer.whereis(Jido.registry_name(Zaq.Agent.Jido), "#{agent.name}:#{scope}") ==
+             runtime
+
+    refute_received {:blocked_llm, _}
+    send(http_worker, :release_llm)
+    answer = Task.await(first, 5_000)
+    assert answer.metadata.error == false
+    assert answer.body == "Owned answer"
+    assert Process.alive?(runtime)
   end
 
   test "sends the policy-selected Person or global authentication to the LLM" do

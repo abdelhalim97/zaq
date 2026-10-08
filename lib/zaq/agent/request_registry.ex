@@ -4,12 +4,15 @@ defmodule Zaq.Agent.RequestRegistry do
 
   The registry stores inspectable realtime state keyed by request id. It is used
   by the Agent API to expose request inspection and to route steer/inject signals
-  to the active agent server.
+  to the active agent server. Updates are serialized, preserve request ownership,
+  and cannot reopen a terminal request after a trailing stream event.
   """
 
   use GenServer
 
   @table :zaq_agent_request_registry
+  @ownership_fields [:runtime_pid, :server_id, :owner_node, :actor, :execution_scope]
+  @terminal_statuses [:completed, :failed, :cancelled]
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -29,20 +32,12 @@ defmodule Zaq.Agent.RequestRegistry do
     {:ok, %{table: table}}
   end
 
-  @spec put(String.t(), map()) :: :ok
+  @spec put(String.t(), map()) :: :ok | {:error, :ownership_conflict | :terminal_request}
   def put(request_id, attrs) when is_binary(request_id) and is_map(attrs) do
-    with table when table != :undefined <- table_ref() do
-      current =
-        get(request_id)
-        |> case do
-          {:ok, state} -> state
-          _ -> %{}
-        end
-
-      :ets.insert(table, {request_id, Map.merge(current, attrs)})
+    case table_ref() do
+      :undefined -> :ok
+      _table -> GenServer.call(__MODULE__, {:put, request_id, attrs})
     end
-
-    :ok
   end
 
   def put(_request_id, _attrs), do: :ok
@@ -65,14 +60,49 @@ defmodule Zaq.Agent.RequestRegistry do
 
   @spec delete(String.t()) :: :ok
   def delete(request_id) when is_binary(request_id) do
-    with table when table != :undefined <- table_ref() do
-      :ets.delete(table, request_id)
+    case table_ref() do
+      :undefined -> :ok
+      _table -> GenServer.call(__MODULE__, {:delete, request_id})
     end
-
-    :ok
   end
 
   def delete(_request_id), do: :ok
+
+  @impl true
+  def handle_call({:put, request_id, attrs}, _from, state) do
+    current =
+      case :ets.lookup(state.table, request_id) do
+        [{^request_id, current}] -> current
+        [] -> %{}
+      end
+
+    result =
+      cond do
+        ownership_conflict?(current, attrs) ->
+          {:error, :ownership_conflict}
+
+        current[:status] in @terminal_statuses and
+            Map.get(attrs, :status, current[:status]) != current[:status] ->
+          {:error, :terminal_request}
+
+        true ->
+          :ets.insert(state.table, {request_id, Map.merge(current, attrs)})
+          :ok
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:delete, request_id}, _from, state) do
+    :ets.delete(state.table, request_id)
+    {:reply, :ok, state}
+  end
+
+  defp ownership_conflict?(current, attrs) do
+    Enum.any?(@ownership_fields, fn key ->
+      not is_nil(current[key]) and Map.has_key?(attrs, key) and attrs[key] != current[key]
+    end)
+  end
 
   defp table_ref, do: :ets.whereis(@table)
 end

@@ -541,6 +541,17 @@ without safe permission mutation support return `:unsupported`.
   failed turn. Cleanup is incarnation-fenced: a stale failing request cannot stop a newer
   replacement process registered under the same opaque runtime name.
 - Registers request-local inspection state in `Zaq.Agent.RequestRegistry` for inspect/steer/inject actions.
+- Executor supplies the actual Jido request handle to StreamEvents. Production
+  registry keys use its ID; the incoming correlation ID is retained separately,
+  alongside runtime PID, owning node, actor and execution scope. Legacy direct
+  stream consumers without a handle retain their incoming-ID compatibility path.
+- Registry updates are serialized and cannot replace established ownership fields
+  or reopen a completed, failed or cancelled request after a trailing flush.
+  These checks are runtime consistency fences, not authorization: control entry
+  points still require trusted actor/scope checks.
+- Production steer/inject calls target the recorded runtime PID and actual request
+  ID, not a reusable server name. A dead incarnation or terminal registry entry is
+  rejected before Factory is called; a replacement runtime is never substituted.
 
 ### Provider Spec (`Zaq.Agent.ProviderSpec`)
 - Generic facade for provider normalization, model specs and runtime options

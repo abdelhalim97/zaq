@@ -209,7 +209,7 @@ defmodule Zaq.Agent.Executor do
                node_router(execution_opts)
              ),
            %Incoming{} = incoming <- normalize_status_result(status_result, incoming),
-           {:ok, %{request: _request, events: events}} <-
+           {:ok, %{request: request, events: events}} <-
              factory_module.ask_with_config(runtime_pid, question, configured_agent,
                tool_context: %{
                  incoming: incoming,
@@ -223,6 +223,9 @@ defmodule Zaq.Agent.Executor do
              ),
            {:ok, stream_result} <-
              StreamEvents.consume(events, incoming,
+               request: request,
+               actor: actor,
+               execution_scope: Keyword.get(execution_opts, :scope),
                started_at: started_at,
                server_id: server_ref,
                runtime_pid: runtime_pid,

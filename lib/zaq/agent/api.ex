@@ -109,15 +109,15 @@ defmodule Zaq.Agent.Api do
 
     with {:ok, request_id} <- request_id_request(event.request),
          {:ok, content} <- content_request(event.request),
-         {:ok, %{server_id: server_id}} when not is_nil(server_id) <-
-           RequestRegistry.get(request_id) do
+         {:ok, request_state} <- RequestRegistry.get(request_id),
+         {:ok, runtime} <- request_control_runtime(request_state) do
       response =
         case action do
           :steer_request ->
-            factory_module.steer(server_id, content, expected_request_id: request_id)
+            factory_module.steer(runtime, content, expected_request_id: request_id)
 
           :inject_request ->
-            factory_module.inject(server_id, content, expected_request_id: request_id)
+            factory_module.inject(runtime, content, expected_request_id: request_id)
         end
 
       %{event | response: response}
@@ -336,6 +336,22 @@ defmodule Zaq.Agent.Api do
       true -> :error
     end
   end
+
+  defp request_control_runtime(%{status: status})
+       when status in [:completed, :failed, :cancelled],
+       do: {:error, :terminal_request}
+
+  defp request_control_runtime(%{runtime_pid: pid}) when is_pid(pid) do
+    if Process.alive?(pid), do: {:ok, pid}, else: {:error, :stale_runtime}
+  end
+
+  defp request_control_runtime(%{runtime_pid: _}), do: {:error, :stale_runtime}
+
+  defp request_control_runtime(%{server_id: server_id}) when not is_nil(server_id),
+    do: {:ok, server_id}
+
+  defp request_control_runtime(state) when is_map(state), do: {:error, :missing_server_id}
+  defp request_control_runtime(state), do: {:error, {:ok, state}}
 
   defp request_id_request(request) when is_map(request) do
     case fetch_key(request, :request_id) do
