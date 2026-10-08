@@ -279,7 +279,8 @@ defmodule Zaq.Agent.Pipeline do
         history: history,
         telemetry_dimensions: telemetry_dimensions(opts),
         node_router: node_router(opts),
-        event: Keyword.get(opts, :event)
+        event: Keyword.get(opts, :event),
+        history_session: Keyword.get(opts, :history_session)
       )
 
     {:ok, outgoing}

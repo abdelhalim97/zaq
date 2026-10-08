@@ -192,6 +192,22 @@ defmodule Zaq.Agent.ServerManager do
         @lifecycle_call_timeout
       )
 
+  @doc "Binds an owned lease to an internal API completion session, never an outgoing payload."
+  def bind_history_request(server_id, token, details),
+    do: GenServer.call(__MODULE__, {:bind_history_request, server_id, token, details})
+
+  @doc "Returns only this caller's leases belonging to its internal completion session."
+  def history_requests(session), do: GenServer.call(__MODULE__, {:history_requests, session})
+
+  @doc "Disposes an owned lease and its exact runtime after an unhandled or failed outcome."
+  def abort_history_request(server_id, token),
+    do:
+      GenServer.call(
+        __MODULE__,
+        {:abort_history_request, server_id, token},
+        @lifecycle_call_timeout
+      )
+
   @impl true
   def init(_opts) do
     stop_surviving_servers()
@@ -266,6 +282,54 @@ defmodule Zaq.Agent.ServerManager do
       end
     else
       {:error, _} = error -> {:reply, error, state}
+    end
+  end
+
+  def handle_call({:bind_history_request, server_id, token, details}, {owner, _}, state) do
+    case HistoryLifecycle.owned_entry(state.history, server_id, token, owner) do
+      {:ok, entry} ->
+        case Map.get(entry.lease, :details) do
+          nil ->
+            entry = %{entry | lease: Map.put(entry.lease, :details, details)}
+            {:reply, :ok, %{state | history: Map.put(state.history, server_id, entry)}}
+
+          ^details ->
+            {:reply, :ok, state}
+
+          _ ->
+            {:reply, {:error, :history_binding_conflict}, state}
+        end
+
+      {:error, _} = error ->
+        {:reply, error, state}
+    end
+  end
+
+  def handle_call({:history_requests, session}, {owner, _}, state) do
+    requests =
+      Enum.flat_map(state.history, fn
+        {id, %{lease: %{owner: ^owner, details: %{session: ^session}} = lease}} ->
+          [%{server_id: id, lease: lease}]
+
+        _ ->
+          []
+      end)
+
+    {:reply, requests, state}
+  end
+
+  def handle_call({:abort_history_request, server_id, token}, {owner, _}, state) do
+    case HistoryLifecycle.owned_entry(state.history, server_id, token, owner) do
+      {:ok, entry} ->
+        if safe_whereis(server_id) == entry.pid do
+          _ = stop_server_if_running(server_id)
+          {:reply, :ok, untrack_server(state, server_id)}
+        else
+          {:reply, :ok, %{state | history: HistoryLifecycle.drop(state.history, server_id)}}
+        end
+
+      {:error, _} = error ->
+        {:reply, error, state}
     end
   end
 

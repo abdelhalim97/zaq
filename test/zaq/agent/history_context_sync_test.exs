@@ -6,7 +6,7 @@ defmodule Zaq.Agent.HistoryContextSyncTest do
 
   alias Jido.AI.Context, as: AIContext
   alias Zaq.Accounts.People
-  alias Zaq.Agent.{Factory, ServerManager}
+  alias Zaq.Agent.{Factory, HistorySync, ServerManager}
   alias Zaq.TestSupport.{MultiAgentOpenAIStub, OpenAIStub}
 
   setup tags do
@@ -93,6 +93,49 @@ defmodule Zaq.Agent.HistoryContextSyncTest do
              )
 
     assert strategy(ctx.pid).context == replacement
+  end
+
+  test "API completion sessions are process-owned, immutable, and disposed after exceptions",
+       ctx do
+    monitor = Process.monitor(ctx.pid)
+
+    assert_raise RuntimeError, "unhandled outcome", fn ->
+      HistorySync.with_session(fn session ->
+        assert {:ok, lease} = ServerManager.begin_history_request(ctx.scope, ctx.pid, ctx.actor)
+        details = %{session: session}
+        assert :ok = ServerManager.bind_history_request(ctx.scope, lease.token, details)
+        assert :ok = ServerManager.bind_history_request(ctx.scope, lease.token, details)
+
+        assert {:error, :history_binding_conflict} =
+                 ServerManager.bind_history_request(
+                   ctx.scope,
+                   lease.token,
+                   %{session: make_ref()}
+                 )
+
+        assert [%{server_id: scope}] = ServerManager.history_requests(session)
+        assert scope == ctx.scope
+        assert [] = Task.async(fn -> ServerManager.history_requests(session) end) |> Task.await()
+        raise "unhandled outcome"
+      end)
+    end
+
+    assert_receive {:DOWN, ^monitor, :process, _, _}, 5_000
+    assert :sys.get_state(ServerManager).history[ctx.scope] == nil
+  end
+
+  test "a failed persisted outcome disposes the runtime without advancing its cursor", ctx do
+    monitor = Process.monitor(ctx.pid)
+
+    HistorySync.with_session(fn session ->
+      assert {:ok, lease} = ServerManager.begin_history_request(ctx.scope, ctx.pid, ctx.actor)
+      assert :ok = ServerManager.bind_history_request(ctx.scope, lease.token, %{session: session})
+      assert :ok = HistorySync.complete(session, %{}, %{metadata: %{error: true}})
+      assert ServerManager.history_requests(session) == []
+    end)
+
+    assert_receive {:DOWN, ^monitor, :process, _, _}, 5_000
+    assert :sys.get_state(ServerManager).history[ctx.scope] == nil
   end
 
   test "context operations require an exact PID and nonempty operation identity", ctx do

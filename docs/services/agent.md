@@ -636,25 +636,37 @@ without safe permission mutation support return `:unsupported`.
 - `from_projection/2` converts only authorized canonical messages to attributed
   Jido entries with UUID/placement references. It does not query Engine storage.
   Executor supplies this context on cold start and selects a transcript/Person
-  scope; request-boundary warm-context synchronization remains follow-on work.
-- Executor also forwards that admission and its fixed initial cursor map in trusted
+  scope. Warm runtimes retain the incorporated association cursor ledger, not the
+  fresh admission projection's later captured end.
+- Executor also forwards that admission and its fixed incorporated cursor map in trusted
   per-request runtime context. Before each internal model call, the existing
   RequestTransformer reads cumulative Engine-authorized deltas through confidential
   dispatch. HistoryLoader merges UUID-referenced additions into a request-local
   projection, excluding retained/consumed steering inputs and preserving active
   tool exchanges, then existing context-window enforcement applies. This does not
-  modify retained Jido state or advance runtime cursors. Warm request-boundary
-  context/cursor synchronization remains separately tracked.
+  modify retained Jido state or advance runtime cursors.
 - `Factory.apply_history_context/3` provides the native idle-apply mechanic for
-  that follow-on lifecycle: it accepts only an exact PID and operation ID, rejects
+  request-boundary synchronization: it accepts only an exact PID and operation ID, rejects
   active runs before dispatch, and verifies Jido's applied-operation receipt and
   resulting context rather than treating a queued command as success. Its caller
   must serialize admission across the operation. ServerManager's
   `begin_history_request/3` and `complete_history_request/4` maintain an exact-PID,
   process-owned lease and incorporated cursor ledger, releasing queued callers
   only after native apply confirmation. Abandoned owners or failed application
-  invalidate the runtime instead of advancing cursors. Executor/API wiring across
-  handled Engine outcome persistence remains pending in `zaq-emb.16`.
+  invalidate the runtime instead of advancing cursors. `HistorySync` coordinates
+  an explicit, caller-owned API completion session around Executor/Pipeline and
+  Engine outcome persistence; session references and leases never enter outgoing
+  metadata. After successful persistence, it rereads authorized additions, binds
+  the native final answer to its persisted UUID, merges without duplicating inputs
+  or tool pairs, and confirms idle application before releasing admission. Capped
+  pages publish only their read cursors, never unseen captured ends. Failed runs,
+  unhandled outcomes, and synchronization failures dispose the runtime. Successful
+  persistence still permits delivery if subsequent synchronization fails. Direct
+  canonical Executor calls without an API persistence owner dispose rather than
+  retain an uncommitted warm exchange. Real Jido tests cover lease fencing,
+  stale incarnations and failed application; the provider integration suite covers
+  warm reuse, post-completion additions, revocation and admission paused through
+  an actual Engine finalization transaction.
 - Factory hydrates conversation-backed runtimes only from the explicit Engine-issued
   `conversation_id`; it never parses a runtime server name to recover persistence identity.
 - The legacy loader excludes pending and failed admitted user messages. Canonical
