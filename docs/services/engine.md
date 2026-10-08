@@ -957,7 +957,12 @@ the literal Person, current grants, same transcript and exact submitted content.
 Root/input Message locks fence this transition against finalization. Only actual
 Jido `input_injected` evidence through `:consume_execution_input` marks a queued
 receipt consumed. Root finalization seals every remaining queued receipt as
-`unconsumed`, without manufacturing a second public answer. Agent automatic
+`unconsumed`, without manufacturing a second public answer.
+Inputs that lose the finalization race also commit a private `unconsumed` child
+with `reason: "terminal_request"` before returning the rejection; this evidence
+is not rolled back with an unsuccessful queue result. Capability, actor, content
+and same-transcript checks still run before recording that disposition.
+Agent automatic
 same-Person busy-input routing reuses this receipt path. Rejection/finalizing
 race coverage remains tracked in B3 (`zaq-emb.30.4`).
 
