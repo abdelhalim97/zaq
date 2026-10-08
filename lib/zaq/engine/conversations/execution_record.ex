@@ -28,11 +28,14 @@ defmodule Zaq.Engine.Conversations.ExecutionRecord do
     belongs_to :person, Zaq.Accounts.Person, type: :integer
     belongs_to :user_message, Message
     belongs_to :public_answer_message, Message
+    belongs_to :root_execution, __MODULE__
 
     timestamps(type: :utc_datetime_usec)
   end
 
-  @statuses ~w(pending completed failed)
+  @root_statuses ~w(pending completed failed)
+  @receipt_statuses ~w(queued consumed unconsumed)
+  @statuses @root_statuses ++ @receipt_statuses
   @hash_pattern ~r/\A[A-Za-z0-9+\/]{43}=\z/
 
   @doc "Validates private execution ownership, capability hash, and public-answer linkage."
@@ -43,6 +46,7 @@ defmodule Zaq.Engine.Conversations.ExecutionRecord do
       :person_id,
       :user_message_id,
       :public_answer_message_id,
+      :root_execution_id,
       :status,
       :finalization_token_hash,
       :trace_entries,
@@ -55,11 +59,14 @@ defmodule Zaq.Engine.Conversations.ExecutionRecord do
     |> validate_inclusion(:status, @statuses)
     |> validate_format(:finalization_token_hash, @hash_pattern)
     |> validate_answer_status()
+    |> validate_root_status()
     |> unique_constraint(:public_answer_message_id, name: :execution_records_public_answer_index)
     |> unique_constraint(:finalization_token_hash)
     |> foreign_key_constraint(:person_id)
     |> foreign_key_constraint(:user_message_id)
     |> foreign_key_constraint(:public_answer_message_id)
+    |> foreign_key_constraint(:root_execution_id)
+    |> check_constraint(:root_execution_id, name: :execution_records_root_status_check)
     |> check_constraint(:status, name: :execution_records_status_check)
     |> check_constraint(:public_answer_message_id, name: :execution_records_answer_status_check)
     |> check_constraint(:public_answer_message_id, name: :execution_records_distinct_answer_check)
@@ -73,13 +80,33 @@ defmodule Zaq.Engine.Conversations.ExecutionRecord do
       {"completed", nil} ->
         add_error(changeset, :public_answer_message_id, "is required for completed execution")
 
-      {status, id} when status in ["pending", "failed"] and not is_nil(id) ->
+      {status, id} when status != "completed" and not is_nil(id) ->
         add_error(changeset, :public_answer_message_id, "requires completed execution")
 
       {_status, ^user_message_id} when not is_nil(user_message_id) ->
         add_error(changeset, :public_answer_message_id, "must differ from the input message")
 
       _ ->
+        changeset
+    end
+  end
+
+  defp validate_root_status(changeset) do
+    root = get_field(changeset, :root_execution_id)
+    id = get_field(changeset, :id)
+    status = get_field(changeset, :status)
+
+    cond do
+      not is_nil(root) and root == id ->
+        add_error(changeset, :root_execution_id, "must differ from the child execution")
+
+      is_nil(root) and status in @receipt_statuses ->
+        add_error(changeset, :root_execution_id, "is required for input receipts")
+
+      not is_nil(root) and status in @root_statuses ->
+        add_error(changeset, :status, "requires a root execution")
+
+      true ->
         changeset
     end
   end

@@ -40,6 +40,38 @@ defmodule Zaq.Engine.Conversations.ExecutionRecordTest do
     )
   end
 
+  test "child input receipts never own a second public answer" do
+    owner = person()
+    root_input = message("user", "Root")
+    child_input = message("user", "Steering")
+    answer = message("assistant", "Answer")
+
+    root =
+      %ExecutionRecord{}
+      |> ExecutionRecord.changeset(execution_attrs(owner, root_input, %{}))
+      |> Repo.insert!()
+
+    for status <- ["queued", "consumed", "unconsumed"] do
+      attrs = execution_attrs(owner, child_input, %{root_execution_id: root.id, status: status})
+
+      assert {:ok, child} =
+               %ExecutionRecord{} |> ExecutionRecord.changeset(attrs) |> Repo.insert()
+
+      assert child.root_execution_id == root.id
+      assert child.public_answer_message_id == nil
+      refute ExecutionRecord.changeset(child, %{public_answer_message_id: answer.id}).valid?
+    end
+
+    refute ExecutionRecord.changeset(root, %{status: "consumed"}).valid?
+    refute ExecutionRecord.changeset(root, %{root_execution_id: root.id, status: "queued"}).valid?
+
+    refute ExecutionRecord.changeset(root, %{
+             root_execution_id: Ecto.UUID.generate(),
+             status: "completed",
+             public_answer_message_id: answer.id
+           }).valid?
+  end
+
   test "a Person-bound private execution references canonical content without copying its trace" do
     owner = person()
     input = message("user", "Where is the document?")
