@@ -937,6 +937,16 @@ root is not synthesized or fetched from a provider. Private legacy admissions
 return a legacy marker only when no canonical placement exists; ambiguous replicas
 fail closed rather than selecting one arbitrarily.
 
+New canonical Person admissions also create a pending `ExecutionRecord` in the
+existing source-locked transaction. Finalization validates its literal active
+Person actor (Engine dispatch forwards `event.actor`) and atomically stores the
+terminal private trace/tool results, usage and outcome alongside the stable public
+answer UUID. New public Message rows do not duplicate private traces or token
+counters. Legacy admissions keep their existing Message storage and artifact
+references; no historical repair is performed. The existing token aggregator
+uses completed execution counters in preference to Message counters, with a
+per-counter legacy fallback; retries still recompute totals once per answer.
+
 - Public API for the full conversation/message/rating/share lifecycle.
 - Access from BO crosses `NodeRouter.dispatch/1` and the Engine role API. Some existing callers still use generic invoke helpers; new calls follow the domain-action dispatch contract above.
 - Dispatches `Zaq.Hooks` `:feedback_provided` event after a rating is saved.

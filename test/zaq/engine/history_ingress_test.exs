@@ -84,7 +84,8 @@ defmodule Zaq.Engine.HistoryIngressTest do
                %{
                  answer: "answer",
                  error: false
-               }
+               },
+               actor: %{person: %{id: person.id}}
              )
 
     delivery = %{

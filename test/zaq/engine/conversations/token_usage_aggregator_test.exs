@@ -6,14 +6,74 @@ defmodule Zaq.Engine.Conversations.TokenUsageAggregatorTest do
   @moduletag capture_log: true
 
   alias Ecto.Adapters.SQL.Sandbox
+  alias Zaq.Accounts.Person
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.Conversation
+  alias Zaq.Engine.Conversations.ExecutionRecord
   alias Zaq.Engine.Conversations.Message
   alias Zaq.Engine.Conversations.TokenUsageAggregator
   alias Zaq.Repo
 
   import Ecto.Query
   import ExUnit.CaptureLog
+
+  test "completed execution usage replaces message counters without counting failed records" do
+    conv = create_conv_with_assistant_msg("gpt-4", 100, 50)
+    answer = Repo.get_by!(Message, conversation_id: conv.id, role: "assistant")
+    person = Repo.insert!(%Person{full_name: "Accounting owner"})
+    assert {:ok, input} = Conversations.add_message(conv, %{role: "user", content: "Question"})
+
+    assert {:ok, _} =
+             %ExecutionRecord{}
+             |> ExecutionRecord.changeset(%{
+               person_id: person.id,
+               user_message_id: input.id,
+               public_answer_message_id: answer.id,
+               status: "completed",
+               finalization_token_hash: :crypto.hash(:sha256, "usage") |> Base.encode64(),
+               usage: %{"prompt_tokens" => 7, "completion_tokens" => 3}
+             })
+             |> Repo.insert()
+
+    assert {:ok, _} =
+             Conversations.add_message(conv, %{
+               role: "assistant",
+               content: "Legacy",
+               model: "gpt-4",
+               prompt_tokens: 20,
+               completion_tokens: 10
+             })
+
+    assert {:ok, failed_input} =
+             Conversations.add_message(conv, %{role: "user", content: "Failed"})
+
+    %ExecutionRecord{}
+    |> ExecutionRecord.changeset(%{
+      person_id: person.id,
+      user_message_id: failed_input.id,
+      status: "failed",
+      finalization_token_hash: :crypto.hash(:sha256, "failed-usage") |> Base.encode64(),
+      usage: %{"prompt_tokens" => 999, "completion_tokens" => 999}
+    })
+    |> Repo.insert!()
+
+    assert :ok =
+             perform_job(TokenUsageAggregator, %{"conversation_id" => conv.id, "model" => "gpt-4"})
+
+    usage =
+      Conversations.get_conversation!(conv.id).metadata["token_usage"][
+        Date.to_iso8601(Date.utc_today())
+      ]["gpt-4"]
+
+    assert usage == %{"prompt_tokens" => 27, "completion_tokens" => 13, "total_tokens" => 40}
+
+    assert :ok =
+             perform_job(TokenUsageAggregator, %{"conversation_id" => conv.id, "model" => "gpt-4"})
+
+    assert Conversations.get_conversation!(conv.id).metadata["token_usage"][
+             Date.to_iso8601(Date.utc_today())
+           ]["gpt-4"] == usage
+  end
 
   defp create_conv_with_assistant_msg(model, prompt_tokens, completion_tokens) do
     {:ok, conv} =
