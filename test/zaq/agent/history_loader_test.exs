@@ -62,6 +62,66 @@ defmodule Zaq.Agent.HistoryLoaderTest do
     refute inspect(context) =~ "PRIVATE_TRACE"
   end
 
+  test "request-local cumulative merges preserve system, active tool pairs and steered identity" do
+    transcript_id = Ecto.UUID.generate()
+    historical = projection_message(transcript_id, "Old", 1)
+    a = projection_message(transcript_id, "A", 2)
+    b = projection_message(transcript_id, "B", 3)
+    steering = projection_message(transcript_id, "Correction", 4)
+
+    context =
+      HistoryLoader.from_projection([historical])
+      |> Map.put(:system_prompt, "System")
+      |> AIContext.append_user("Question")
+      |> AIContext.append_assistant("", [%{id: "call", name: "add", arguments: %{value: 2}}])
+      |> AIContext.append_tool_result("call", "add", "Result")
+      |> AIContext.append_user("Correction", refs: %{message_id: steering.message_id})
+
+    first = HistoryLoader.merge_projection(context, [a, steering])
+    second = HistoryLoader.merge_projection(context, [a, b, steering])
+    [old | exchange] = Enum.reverse(context.entries)
+    [^old, a_entry | ^exchange] = Enum.reverse(first.entries)
+    [^old, ^a_entry, b_entry | ^exchange] = Enum.reverse(second.entries)
+    assert a_entry.content == "Author (source): A"
+    assert b_entry.content == "Author (source): B"
+    assert second.system_prompt == context.system_prompt
+    assert HistoryLoader.merge_projection(second, [a, b, steering]) == second
+
+    assert Enum.map(context.entries, & &1.content) == [
+             "Correction",
+             "Result",
+             "",
+             "Question",
+             "Author (source): Old"
+           ]
+  end
+
+  property "projection merges are UUID-idempotent and do not transfer tool authority" do
+    check all(content <- string(:alphanumeric, min_length: 1), max_runs: 20) do
+      message = projection_message(Ecto.UUID.generate(), content, 1)
+      context = AIContext.new(system_prompt: "System") |> AIContext.append_user("Question")
+      projected = HistoryLoader.merge_projection(context, [message, message])
+      assert HistoryLoader.merge_projection(projected, [message]) == projected
+      assert length(projected.entries) == 2
+      assert List.first(projected.entries) == List.first(context.entries)
+      assert projected.system_prompt == "System"
+      assert Enum.all?(projected.entries, &is_nil(&1.tool_calls))
+    end
+  end
+
+  defp projection_message(transcript_id, content, position),
+    do: %{
+      message_id: Ecto.UUID.generate(),
+      transcript_id: transcript_id,
+      position: position,
+      role: "external",
+      content: content,
+      author_name: "Author",
+      author_id: "source",
+      provider_sent_at: ~U[2026-10-08 00:00:00Z],
+      attachments: []
+    }
+
   defp insert_person do
     Repo.insert!(%Person{
       full_name: "Test Person #{System.unique_integer([:positive])}",

@@ -637,6 +637,14 @@ without safe permission mutation support return `:unsupported`.
   Jido entries with UUID/placement references. It does not query Engine storage.
   Executor supplies this context on cold start and selects a transcript/Person
   scope; request-boundary warm-context synchronization remains follow-on work.
+- Executor also forwards that admission and its fixed initial cursor map in trusted
+  per-request runtime context. Before each internal model call, the existing
+  RequestTransformer reads cumulative Engine-authorized deltas through confidential
+  dispatch. HistoryLoader merges UUID-referenced additions into a request-local
+  projection, excluding retained/consumed steering inputs and preserving active
+  tool exchanges, then existing context-window enforcement applies. This does not
+  modify retained Jido state or advance runtime cursors. Warm request-boundary
+  context/cursor synchronization remains separately tracked.
 - Factory hydrates conversation-backed runtimes only from the explicit Engine-issued
   `conversation_id`; it never parses a runtime server name to recover persistence identity.
 - The legacy loader excludes pending and failed admitted user messages. Canonical

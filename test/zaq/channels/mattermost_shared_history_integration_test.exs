@@ -107,6 +107,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         description: "",
         job: "Answer briefly.",
         model: "gpt-4.1-mini",
+        model_max_context_tokens: 20_000,
         credential_id: credential.id,
         strategy: "react",
         enabled_tool_keys: if(tags[:authorized_execution], do: ["arithmetic.add"], else: []),
@@ -310,6 +311,13 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
       assert Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id).status ==
                "queued"
 
+      assert {{:ok, _}, _} =
+               MattermostHistoryFixture.post(ctx.config, "human", false, %{
+                 "id" => "passive-turn-delta",
+                 "user_id" => "bob",
+                 "message" => "Passive refresh A"
+               })
+
       send(worker, :release_history_llm)
       input = Jason.encode!(request["input"])
 
@@ -333,6 +341,14 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
       assert_receive {:history_llm, continuation}, 5_000
       refute Jason.encode!(continuation["input"]) =~ "FORBIDDEN_"
       assert Jason.encode!(continuation["input"]) =~ steering.content
+      assert length(Regex.scan(~r/Passive refresh A/, Jason.encode!(continuation["input"]))) == 1
+
+      assert length(
+               Regex.scan(
+                 ~r/Retain the arithmetic tool result/,
+                 Jason.encode!(continuation["input"])
+               )
+             ) == 1
 
       assert_receive {:history_post, %{"channel_id" => "shared-room", "root_id" => "root-human"}},
                      5_000
@@ -885,8 +901,23 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
           {{200, response}, {:continuation, request["input"]}}
 
         {:continuation, initial} ->
-          assert Enum.take(request["input"], length(initial)) == initial
-          [call, output, correction] = Enum.drop(request["input"], length(initial))
+          history_length = length(initial) - 1
+          assert Enum.take(request["input"], history_length) == Enum.take(initial, history_length)
+
+          [rejected, failed_persistence, passive, current] =
+            request["input"] |> Enum.drop(history_length) |> Enum.take(4)
+
+          assert MultiAgentOpenAIStub.latest_user_message(%{"input" => [rejected]}) ==
+                   "alice: @zaq Rejected correction"
+
+          assert MultiAgentOpenAIStub.latest_user_message(%{"input" => [failed_persistence]}) ==
+                   "alice: @zaq persistence-failed correction"
+
+          assert MultiAgentOpenAIStub.latest_user_message(%{"input" => [passive]}) ==
+                   "bob (bob): Passive refresh A"
+
+          assert current == List.last(initial)
+          [call, output, correction] = Enum.drop(request["input"], history_length + 4)
           assert call["type"] == "function_call"
           assert call["call_id"] == call_id
           assert call["name"] == "add"

@@ -223,6 +223,7 @@ defmodule Zaq.Agent.Executor do
                  source_filter: Keyword.get(execution_opts, :source_filter),
                  skip_permissions: Keyword.get(execution_opts, :skip_permissions, false),
                  actor: actor,
+                 execution_history: Keyword.get(execution_opts, :execution_history),
                  node_router: Keyword.get(execution_opts, :node_router, Zaq.NodeRouter)
                }
              ),
@@ -511,6 +512,11 @@ defmodule Zaq.Agent.Executor do
            opts
            |> Keyword.put(:context, context)
            |> Keyword.put(:scope, scope)
+           |> Keyword.put(:execution_history, %{
+             binding: request,
+             cursors: projection.cursors,
+             scope: scope
+           })
            |> Keyword.put(:canonical_execution, true)}
 
         %{response: {:error, reason}} ->

@@ -10,20 +10,55 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
 
   @behaviour Jido.AI.Reasoning.ReAct.RequestTransformer
 
+  alias Jido.AI.Context, as: AIContext
   alias Jido.AI.Reasoning.ReAct.Config
   alias Zaq.Agent.ContextWindow.RequestEstimator
+  alias Zaq.Agent.HistoryLoader
+  alias Zaq.Event
 
   @default_safety_margin 0.05
 
   @impl true
-  def transform_request(request, _state, %Config{} = config, runtime_context) do
+  def transform_request(request, state, %Config{} = config, runtime_context) do
     window = Map.get(runtime_context || %{}, :context_window, %{})
 
-    with {:ok, budget} <- input_budget(window, config),
+    with {:ok, request} <- refresh_history(request, state, runtime_context || %{}),
+         {:ok, budget} <- input_budget(window, config),
          {:ok, messages} <- fit_messages(request, config, window, budget) do
       {:ok, %{messages: messages}}
     end
   end
+
+  defp refresh_history(
+         request,
+         state,
+         %{execution_history: %{binding: binding, cursors: cursors, scope: scope}} =
+           runtime_context
+       ) do
+    event =
+      Event.new(Map.put(binding, :after_cursors, cursors), :engine,
+        actor: runtime_context[:actor],
+        opts: [action: :execution_history, confidential: true]
+      )
+
+    router = Map.get(runtime_context, :node_router, Zaq.NodeRouter)
+
+    case router.dispatch(event) do
+      %{response: {:ok, %{kind: :canonical, messages: messages}}} ->
+        context =
+          HistoryLoader.merge_projection(state.context, messages, opaque_alias_scope: scope)
+
+        {:ok, %{request | messages: AIContext.to_messages(context)}}
+
+      %{response: {:error, reason}} ->
+        {:error, reason}
+
+      _ ->
+        {:error, :history_unavailable}
+    end
+  end
+
+  defp refresh_history(request, _state, _runtime_context), do: {:ok, request}
 
   defp input_budget(window, %Config{} = config) do
     max_context_tokens = positive_int(Map.get(window, :max_context_tokens))
