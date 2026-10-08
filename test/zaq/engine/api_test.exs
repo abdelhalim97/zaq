@@ -20,7 +20,7 @@ defmodule Zaq.Engine.ApiTest do
   end
 
   defmodule StubConversations do
-    def finalize_incoming(user_message_id, finalization_token, result) do
+    def finalize_incoming(user_message_id, finalization_token, result, _opts) do
       send(self(), {:finalize_called, user_message_id, finalization_token, result})
       {:ok, %{conversation_id: "conversation-1", assistant_message_id: "assistant-1"}}
     end

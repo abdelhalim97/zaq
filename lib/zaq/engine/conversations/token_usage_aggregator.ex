@@ -2,7 +2,9 @@ defmodule Zaq.Engine.Conversations.TokenUsageAggregator do
   @moduledoc """
   Oban worker that aggregates daily token usage per conversation and model.
 
-  Triggered after each assistant message is stored. Accumulates
+  Triggered after each assistant message is stored. Completed root executions are
+  the canonical usage source; absent counters fall back to legacy Message fields.
+  Never adds both sources or private child-input receipts. Accumulates
   `prompt_tokens` + `completion_tokens` totals into
   `conversation.metadata["token_usage"][date][model]`.
   """
@@ -20,7 +22,7 @@ defmodule Zaq.Engine.Conversations.TokenUsageAggregator do
 
   import Ecto.Query
 
-  alias Zaq.Engine.Conversations.{Conversation, Message}
+  alias Zaq.Engine.Conversations.{Conversation, ExecutionRecord, Message}
   alias Zaq.Repo
 
   @impl Oban.Worker
@@ -51,6 +53,8 @@ defmodule Zaq.Engine.Conversations.TokenUsageAggregator do
 
     totals =
       from(m in Message,
+        left_join: execution in ExecutionRecord,
+        on: execution.public_answer_message_id == m.id and execution.status == "completed",
         where:
           m.conversation_id == ^conversation_id and
             m.role == "assistant" and
@@ -58,8 +62,22 @@ defmodule Zaq.Engine.Conversations.TokenUsageAggregator do
             m.inserted_at >= ^day_start and
             m.inserted_at < ^day_end,
         select: %{
-          prompt: sum(m.prompt_tokens),
-          completion: sum(m.completion_tokens)
+          prompt:
+            sum(
+              fragment(
+                "COALESCE((?->>'prompt_tokens')::integer, ?)",
+                execution.usage,
+                m.prompt_tokens
+              )
+            ),
+          completion:
+            sum(
+              fragment(
+                "COALESCE((?->>'completion_tokens')::integer, ?)",
+                execution.usage,
+                m.completion_tokens
+              )
+            )
         }
       )
       |> Repo.one()

@@ -5,7 +5,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
   alias Zaq.Agent.Api, as: AgentApi
   alias Zaq.Channels.CommunicationBridge
   alias Zaq.Engine.{ChannelConfig, Conversations, HistoryIngress}
-  alias Zaq.Engine.Conversations.Transcript
+  alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript}
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Event
   alias Zaq.Permissions
@@ -209,6 +209,89 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
              AgentApi.handle_event(event, :run_pipeline, nil)
 
     refute_received {:status_update, _, _, _}
+  end
+
+  test "canonical admission creates one private root and finalization preserves public UUIDs",
+       ctx do
+    {binding, _} = admitted(ctx)
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
+    assert execution.person_id == ctx.alice.id
+    assert execution.status == "pending"
+    refute execution.finalization_token_hash == binding.finalization_token
+
+    result = %{
+      answer: "Public answer",
+      model: "test-model",
+      prompt_tokens: 7,
+      completion_tokens: 3,
+      total_tokens: 10,
+      trace: [%{"type" => "tool_call", "name" => "arithmetic.add", "result" => "PRIVATE_RESULT"}]
+    }
+
+    assert {:ok, finalized} =
+             Conversations.finalize_incoming(
+               binding.user_message_id,
+               binding.finalization_token,
+               result,
+               actor: actor(ctx.alice)
+             )
+
+    assert {:ok, ^finalized} =
+             Conversations.finalize_incoming(
+               binding.user_message_id,
+               binding.finalization_token,
+               result,
+               actor: actor(ctx.alice)
+             )
+
+    execution = Repo.get!(ExecutionRecord, execution.id)
+    assert execution.status == "completed"
+    assert execution.public_answer_message_id == finalized.assistant_message_id
+    assert execution.usage["prompt_tokens"] == 7
+    assert execution.trace_entries == result.trace
+    assert execution.tool_results == result.trace
+    answer = Repo.get!(Message, finalized.assistant_message_id)
+    input = Repo.get!(Message, binding.user_message_id)
+    assert answer.trace == []
+    assert input.trace == []
+    refute inspect(answer.metadata) =~ "PRIVATE_RESULT"
+    assert answer.prompt_tokens == nil
+    assert Repo.aggregate(ExecutionRecord, :count) == 1
+  end
+
+  test "foreign actor cannot finalize a private execution even with its capability", ctx do
+    {binding, _} = admitted(ctx)
+
+    assert {:error, :unauthorized} =
+             Conversations.finalize_incoming(
+               binding.user_message_id,
+               binding.finalization_token,
+               %{answer: "Denied"},
+               actor: actor(ctx.bob)
+             )
+
+    assert Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id).status ==
+             "pending"
+
+    assert Repo.aggregate(Message, :count) == 1
+  end
+
+  test "failed canonical execution retains private diagnostics without a public answer", ctx do
+    {binding, _} = admitted(ctx)
+
+    assert {:ok, %{assistant_message_id: nil}} =
+             Conversations.finalize_incoming(
+               binding.user_message_id,
+               binding.finalization_token,
+               %{error: true, error_type: :timeout, trace: [%{"content" => "PRIVATE_FAILURE"}]},
+               actor: actor(ctx.alice)
+             )
+
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
+    assert execution.status == "failed"
+    assert execution.outcome["error_type"] == "timeout"
+    assert execution.trace_entries == [%{"content" => "PRIVATE_FAILURE"}]
+    assert Repo.get!(Message, binding.user_message_id).trace == []
   end
 
   defp admitted(ctx, thread \\ nil) do

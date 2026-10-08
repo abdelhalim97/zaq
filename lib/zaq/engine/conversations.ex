@@ -12,6 +12,7 @@ defmodule Zaq.Engine.Conversations do
     Conversation,
     ConversationShare,
     ExecutionHistory,
+    ExecutionLifecycle,
     ExecutionRecord,
     Message,
     MessageRating,
@@ -449,7 +450,9 @@ defmodule Zaq.Engine.Conversations do
          {:ok, conv} <- maybe_store_author_id(conv, msg.author_id),
          {:ok, conv} <- maybe_assign_person(conv, Incoming.person_id(msg)),
          {:ok, {user_message, admitted?, finalization_token}} <-
-           get_or_insert_admitted_message(conv, msg, source) do
+           get_or_insert_admitted_message(conv, msg, source),
+         {:ok, _execution} <-
+           ExecutionLifecycle.admit(conv, user_message, finalization_token, source) do
       {:ok,
        %{
          conversation_id: conv.id,
@@ -807,10 +810,12 @@ defmodule Zaq.Engine.Conversations do
         Repo.rollback(:user_message_not_found)
 
       %Message{} = user_message ->
-        if valid_finalization_token?(user_message, finalization_token) do
+        with true <- valid_finalization_token?(user_message, finalization_token),
+             :ok <- ExecutionLifecycle.authorize(user_message, Keyword.get(opts, :actor)) do
           finalize_locked_message(user_message, result, artifacts, opts)
         else
-          Repo.rollback(:invalid_finalization_token)
+          false -> Repo.rollback(:invalid_finalization_token)
+          {:error, reason} -> Repo.rollback(reason)
         end
     end
   end
@@ -855,6 +860,7 @@ defmodule Zaq.Engine.Conversations do
          assistant_attrs <-
            result
            |> assistant_message_attrs(assistant_body, assistant_sources, artifacts)
+           |> private_answer_attrs(user_message)
            |> update_in(
              [:metadata],
              &Map.put(&1 || %{}, "in_reply_to_message_id", user_message.id)
@@ -864,7 +870,15 @@ defmodule Zaq.Engine.Conversations do
              message_changeset(%Conversation{id: user_message.conversation_id}, assistant_attrs)
            ),
          {:ok, _artifacts} <-
-           insert_trace_artifacts(Repo, assistant_message, artifacts, artifact_max_bytes(opts)) do
+           insert_trace_artifacts(Repo, assistant_message, artifacts, artifact_max_bytes(opts)),
+         {:ok, _execution} <-
+           persist_private_execution(
+             user_message,
+             assistant_message.id,
+             "completed",
+             result,
+             artifacts
+           ) do
       %{
         conversation_id: user_message.conversation_id,
         user_message_id: user_message.id,
@@ -881,7 +895,9 @@ defmodule Zaq.Engine.Conversations do
 
     with {:ok, user_message} <- update_execution_message(user_message, result, "failed", trace),
          {:ok, _artifacts} <-
-           insert_trace_artifacts(Repo, user_message, artifacts, artifact_max_bytes(opts)) do
+           insert_trace_artifacts(Repo, user_message, artifacts, artifact_max_bytes(opts)),
+         {:ok, _execution} <-
+           persist_private_execution(user_message, nil, "failed", result, artifacts) do
       %{
         conversation_id: user_message.conversation_id,
         user_message_id: user_message.id,
@@ -896,11 +912,45 @@ defmodule Zaq.Engine.Conversations do
     metadata =
       (user_message.metadata || %{})
       |> Map.put("execution_status", status)
-      |> Map.put("execution", execution_metadata(result))
+
+    {metadata, trace} =
+      if ExecutionLifecycle.private?(user_message),
+        do: {metadata, []},
+        else: {Map.put(metadata, "execution", execution_metadata(result)), trace}
 
     user_message
     |> Message.changeset(%{metadata: metadata, trace: trace})
     |> Repo.update()
+  end
+
+  defp private_answer_attrs(attrs, input) do
+    if ExecutionLifecycle.private?(input) do
+      attrs
+      |> Map.merge(%{trace: [], prompt_tokens: nil, completion_tokens: nil, total_tokens: nil})
+      |> Map.update!(:metadata, &Map.drop(&1, ["measurements"]))
+    else
+      attrs
+    end
+  end
+
+  defp persist_private_execution(input, answer_id, status, result, artifacts) do
+    usage =
+      ~w(model prompt_tokens completion_tokens total_tokens)a
+      |> Enum.reduce(%{}, fn key, usage ->
+        case map_get(result, Atom.to_string(key)) do
+          nil -> usage
+          value -> Map.put(usage, Atom.to_string(key), value)
+        end
+      end)
+
+    ExecutionLifecycle.finish(
+      input,
+      answer_id,
+      status,
+      assistant_trace(result, artifacts),
+      usage,
+      execution_metadata(result)
+    )
   end
 
   defp execution_metadata(result) do

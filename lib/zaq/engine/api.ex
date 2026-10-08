@@ -252,7 +252,10 @@ defmodule Zaq.Engine.Api do
            when is_binary(user_message_id) and is_binary(finalization_token) and is_map(outcome) <-
              event.request do
         conversations_module = Keyword.get(event.opts, :conversations_module, Conversations)
-        conversations_module.finalize_incoming(user_message_id, finalization_token, outcome)
+
+        conversations_module.finalize_incoming(user_message_id, finalization_token, outcome,
+          actor: event.actor
+        )
       else
         {:error, reason} -> {:error, reason}
         other -> {:error, {:invalid_request, other}}
