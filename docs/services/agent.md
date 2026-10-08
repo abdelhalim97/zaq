@@ -187,6 +187,9 @@ Each module broadcasts its own stage — orchestrators broadcast nothing:
   `StreamEvents` records consumption only on the actual `input_injected` event;
   queued acknowledgement is never treated as an answer. Receipt persistence
   failure remains an execution error, not a successful consumption claim.
+  Runtime refusal (including PID death after queueing) records a rejected receipt
+  through Engine before returning failure; consumption winning that race remains
+  authoritative and is never overwritten by rejection handling.
 - A provider-ingressed explicit input from the active root's Person uses that
   same control path before creating new status messages. Lookup matches canonical
   transcript/Person scope and immutable configured-agent identity. Busy admission

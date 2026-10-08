@@ -237,7 +237,8 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         "history:#{Repo.get_by!(Transcript, external_thread_id: "root-human").id}:person:#{ctx.person.id}"
 
       actor = %{person: %{id: ctx.person.id}}
-      assert {:ok, {request_id, _state}} = RequestRegistry.find_active(scope, actor)
+      assert {:ok, {request_id, state}} = RequestRegistry.find_active(scope, actor)
+      assert_rejected_control_receipt(ctx, state, actor)
 
       steering =
         Incoming.new(%{
@@ -548,6 +549,44 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   test "provider root lookup rejects a post from a different room", ctx do
     assert {:error, :unavailable} =
              MattermostAdmin.fetch_room_message(ctx.config, "another-room", "root-human")
+  end
+
+  defp assert_rejected_control_receipt(ctx, state, actor) do
+    # A stale registry handle must be refused by the real active Jido runtime.
+    # Exercise the queue -> runtime rejection -> receipt persistence path without
+    # substituting Factory, RequestControl, NodeRouter or the execution store.
+    stale_id = "stale-control-#{System.unique_integer([:positive])}"
+    assert :ok = RequestRegistry.put(stale_id, state)
+
+    input =
+      Incoming.new(%{
+        content: "@zaq Rejected correction",
+        channel_id: "shared-room",
+        author_id: "alice",
+        message_id: "rejected-correction",
+        thread_id: "root-human",
+        provider: :mattermost,
+        person: ctx.person,
+        routing_context: %{channel_config_id: ctx.config.id, conversation_type: :room}
+      })
+      |> CommunicationBridge.put_conversation_identity()
+
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, binding} = Conversations.admit_incoming(input)
+
+    event =
+      Zaq.Event.new(
+        %{request_id: stale_id, content: input.content, conversation_binding: binding},
+        :agent,
+        actor: actor
+      )
+
+    assert %{response: {:error, _}} = Zaq.Agent.Api.handle_event(event, :steer_request, nil)
+    receipt = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
+    assert receipt.status == "unconsumed"
+    assert receipt.outcome["reason"] == "runtime_rejected"
+    assert receipt.public_answer_message_id == nil
+    assert :ok = RequestRegistry.delete(stale_id)
   end
 
   defp consumption_llm_handler(owner) do

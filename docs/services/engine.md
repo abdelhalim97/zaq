@@ -962,6 +962,10 @@ Inputs that lose the finalization race also commit a private `unconsumed` child
 with `reason: "terminal_request"` before returning the rejection; this evidence
 is not rolled back with an unsuccessful queue result. Capability, actor, content
 and same-transcript checks still run before recording that disposition.
+Confidential `:reject_execution_input` seals a queued receipt when the actual
+runtime refuses its control. Proven `consumed` receipts cannot regress; existing
+`unconsumed` evidence is idempotent. Stored rejection reasons are bounded safe
+categories, not arbitrary Jido diagnostics or payloads.
 Agent automatic
 same-Person busy-input routing reuses this receipt path. Rejection/finalizing
 race coverage remains tracked in B3 (`zaq-emb.30.4`).

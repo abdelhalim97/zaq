@@ -14,6 +14,57 @@ defmodule Zaq.Engine.Conversations.ExecutionRecordTest do
     person
   end
 
+  property "receipt rejection is monotone, idempotent and excludes arbitrary runtime diagnostics" do
+    check all(
+            status <- member_of(~w(queued consumed unconsumed)),
+            diagnostic <- string(:alphanumeric, min_length: 1, max_length: 40),
+            max_runs: 12
+          ) do
+      owner = person()
+      root_input = message("user", "Root")
+      child_input = message("user", "Correction")
+
+      root =
+        %ExecutionRecord{}
+        |> ExecutionRecord.changeset(execution_attrs(owner, root_input, %{}))
+        |> Repo.insert!()
+
+      child =
+        %ExecutionRecord{}
+        |> ExecutionRecord.changeset(
+          execution_attrs(owner, child_input, %{root_execution_id: root.id, status: status})
+        )
+        |> Repo.insert!()
+
+      actor = %{person: %{id: owner.id}}
+      expected = if status == "consumed", do: {:error, :input_consumed}, else: :ok
+
+      assert Conversations.reject_execution_input(root_input.id, child_input.id, actor, %{
+               private: diagnostic
+             }) == expected
+
+      after_rejection = Repo.get!(ExecutionRecord, child.id)
+
+      assert after_rejection.status ==
+               if(status == "consumed", do: "consumed", else: "unconsumed")
+
+      assert after_rejection.public_answer_message_id == nil
+      assert after_rejection.trace_entries == child.trace_entries
+      assert after_rejection.usage == child.usage
+      if status == "queued", do: assert(after_rejection.outcome["reason"] == "runtime_rejected")
+
+      assert Conversations.reject_execution_input(
+               root_input.id,
+               child_input.id,
+               actor,
+               diagnostic
+             ) == expected
+
+      assert Repo.get!(ExecutionRecord, child.id) == after_rejection
+      assert Repo.get!(ExecutionRecord, root.id) == root
+    end
+  end
+
   defp message(role, content) do
     %Message{}
     |> Message.canonical_changeset(%{role: role, content: content})

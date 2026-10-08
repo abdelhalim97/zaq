@@ -124,6 +124,41 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
   defp pending_root(%ExecutionRecord{}), do: {:error, :terminal_request}
   defp pending_root(_), do: {:error, :unauthorized}
 
+  @doc "Seals a rejected queued child, preserving consumption and terminal receipt evidence."
+  def reject(root_input, child_input, reason) do
+    root = Repo.get_by(ExecutionRecord, user_message_id: root_input.id)
+    child = Repo.get_by(ExecutionRecord, user_message_id: child_input.id)
+
+    with %ExecutionRecord{root_execution_id: nil, id: root_id} <- root,
+         %ExecutionRecord{root_execution_id: ^root_id} <- child do
+      reject_child(child, reason)
+    else
+      _ -> {:error, :input_conflict}
+    end
+  end
+
+  defp reject_child(%ExecutionRecord{status: "consumed"}, _reason), do: {:error, :input_consumed}
+  defp reject_child(%ExecutionRecord{status: "unconsumed"}, _reason), do: :ok
+
+  defp reject_child(%ExecutionRecord{status: "queued"} = child, reason) do
+    safe_reason =
+      if reason in [:stale_runtime, :terminal_request, :scope_conflict],
+        do: Atom.to_string(reason),
+        else: "runtime_rejected"
+
+    case child
+         |> ExecutionRecord.changeset(%{
+           status: "unconsumed",
+           outcome: Map.put(child.outcome, "reason", safe_reason)
+         })
+         |> Repo.update() do
+      {:ok, _} -> :ok
+      {:error, _} = error -> error
+    end
+  end
+
+  defp reject_child(_child, _reason), do: {:error, :input_conflict}
+
   @doc "Stores one terminal root disposition; public-answer uniqueness remains schema-enforced."
   def finish(input, answer_id, status, trace, usage, outcome) do
     case Repo.get_by(ExecutionRecord, user_message_id: input.id) do

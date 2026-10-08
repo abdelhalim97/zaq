@@ -231,7 +231,7 @@ defmodule Zaq.Engine.Api do
   end
 
   def handle_event(%Event{} = event, action, _context)
-      when action in [:queue_execution_input, :consume_execution_input] do
+      when action in [:queue_execution_input, :consume_execution_input, :reject_execution_input] do
     response =
       if Keyword.get(event.opts, :confidential) == true and is_map(event.request) do
         execution_input_event(action, event.request, event.actor)
@@ -1064,6 +1064,15 @@ defmodule Zaq.Engine.Api do
         request[:binding],
         actor,
         content: request[:content]
+      )
+
+  defp execution_input_event(:reject_execution_input, request, actor),
+    do:
+      Conversations.reject_execution_input(
+        request[:root_user_message_id],
+        request[:user_message_id],
+        actor,
+        request[:reason]
       )
 
   defp execution_input_event(:consume_execution_input, request, actor),
