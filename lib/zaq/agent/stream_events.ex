@@ -505,7 +505,8 @@ defmodule Zaq.Agent.StreamEvents do
       model: model(state),
       agent: sanitize_agent(state.agent),
       incoming: state.incoming,
-      runtime_pid: state.runtime_pid
+      runtime_pid: state.runtime_pid,
+      execution_scope: state.execution_scope
     }
   end
 

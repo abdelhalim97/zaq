@@ -33,6 +33,7 @@ defmodule Zaq.Channels.PersonCredentialIngressIntegrationTest do
 
   setup do
     Phoenix.PubSub.subscribe(Zaq.PubSub, "node_router:events")
+    observe_completed_execution()
     :ok = Zaq.System.set_global_base_url("https://zaq.example.test/zaq/")
 
     previous_environment =
@@ -211,8 +212,11 @@ defmodule Zaq.Channels.PersonCredentialIngressIntegrationTest do
     assert outgoing.metadata.error_recovery == :personal_credentials
 
     authorizations = drain_messages(:llm_authorization)
+    refute Map.has_key?(outgoing.metadata, :execution_scope)
+    refute Map.has_key?(outgoing.metadata, :runtime_pid)
     assert authorizations != []
     assert Enum.uniq(authorizations) == [["Bearer rejected-person-key"]]
+    assert agent_server_pids(fixture.agent) == []
   end
 
   test "Person grant replacement and revocation fence only that Mattermost Person runtime" do
@@ -682,6 +686,13 @@ defmodule Zaq.Channels.PersonCredentialIngressIntegrationTest do
 
   defp assert_persisted_answer(person_id, content, configured_agent_id) do
     %Outgoing{metadata: metadata} = await_delivery_event()
+    # The outgoing event is published before Channels association bookkeeping.
+    # Await the actual execution owner rather than racing its shared sandbox
+    # connection with presentation queries or assuming HTTP output is commit.
+    assert_receive {:credential_execution_completed, owner}, 5_000
+    monitor = Process.monitor(owner)
+    assert_receive {:DOWN, ^monitor, :process, ^owner, reason}, 5_000
+    assert reason in [:normal, :noproc]
     conversation_id = metadata[:conversation_id] || metadata["conversation_id"]
     assistant_message_id = metadata[:assistant_message_id] || metadata["assistant_message_id"]
 
@@ -697,6 +708,36 @@ defmodule Zaq.Channels.PersonCredentialIngressIntegrationTest do
       |> Enum.find(&(&1.id == assistant_message_id))
 
     assert assistant_message.content == content
+  end
+
+  defp observe_completed_execution do
+    owner = self()
+    handler = {__MODULE__, owner}
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:zaq, :repo, :query],
+        fn _, _, metadata, _ -> observe_execution_commit(metadata, owner, handler) end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+  end
+
+  defp observe_execution_commit(metadata, owner, handler) do
+    cond do
+      self() != owner and metadata[:source] == "execution_records" and
+        String.starts_with?(metadata.query, "UPDATE") and
+          "completed" in (metadata[:cast_params] || []) ->
+        Process.put(handler, true)
+
+      metadata.query == "commit" ->
+        if Process.delete(handler), do: send(owner, {:credential_execution_completed, self()})
+
+      true ->
+        :ok
+    end
   end
 
   defp await_delivery_event do

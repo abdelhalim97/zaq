@@ -346,6 +346,8 @@ defmodule Zaq.Agent.Executor do
          opts,
          server_manager_module
        ) do
+    opts = runtime_error_opts(opts, partial)
+
     if suppress_stream_error?(incoming, partial) do
       Logger.warning(
         "Stream ended with error after content was delivered (suppressing error bubble): #{inspect(reason)}"
@@ -429,6 +431,8 @@ defmodule Zaq.Agent.Executor do
          server_manager_module,
          partial
        ) do
+    opts = runtime_error_opts(opts, partial)
+
     reason =
       enrich_provider_authentication_error(
         reason,
@@ -470,6 +474,11 @@ defmodule Zaq.Agent.Executor do
 
   defp owner_type(%{owner_type: owner_type}), do: owner_type
   defp owner_type(_dependency), do: nil
+
+  defp runtime_error_opts(opts, %{execution_scope: scope}) when is_binary(scope),
+    do: Keyword.put(opts, :scope, scope)
+
+  defp runtime_error_opts(opts, _partial), do: opts
 
   defp record_execution_error(dims, reason) do
     :ok =

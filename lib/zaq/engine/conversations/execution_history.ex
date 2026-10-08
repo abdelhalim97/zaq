@@ -18,7 +18,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
   @parent_limit 50
 
   @doc "Projects verified admission history; use Conversations.execution_history/2 at boundaries."
-  def project(%{source_provider: nil} = input, %{channel_config_id: nil}, _person) do
+  def project(%{source_provider: nil} = input, _conversation, _person) do
     canonical? =
       Repo.exists?(
         from p in TranscriptMessage,
