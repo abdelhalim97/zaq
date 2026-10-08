@@ -14,6 +14,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
   alias Zaq.Event
   alias Zaq.Permissions
   alias Zaq.Permissions.ChannelHistoryResource
+  alias Zaq.QueryRecorder
 
   setup do
     config =
@@ -90,13 +91,28 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert {:ok, initial} = Conversations.execution_history(binding, actor(ctx.alice))
     opts = [after_cursors: initial.cursors]
     assert {:ok, _} = HistoryIngress.capture(incoming(ctx, ctx.bob, "delta-a", nil, "A"))
-    assert {:ok, first} = Conversations.execution_history(binding, actor(ctx.alice), opts)
+
+    {{:ok, first}, first_queries} =
+      QueryRecorder.capture(fn ->
+        Conversations.execution_history(binding, actor(ctx.alice), opts)
+      end)
+
     assert Enum.map(first.messages, & &1.content) == ["A"]
     assert {:ok, _} = HistoryIngress.capture(incoming(ctx, ctx.bob, "delta-b", nil, "B"))
-    assert {:ok, second} = Conversations.execution_history(binding, actor(ctx.alice), opts)
+
+    {{:ok, second}, second_queries} =
+      QueryRecorder.capture(fn ->
+        Conversations.execution_history(binding, actor(ctx.alice), opts)
+      end)
+
     assert Enum.map(second.messages, & &1.content) == ["A", "B"]
     assert first.cursors[initial.transcript_id] < second.cursors[initial.transcript_id]
     assert second.cursors == second.upper_cursors
+    assert length(first_queries) == length(second_queries)
+
+    for queries <- [first_queries, second_queries] do
+      assert Enum.count(queries, &(&1[:source] == "transcript_messages")) == 1
+    end
 
     assert {:ok, empty} =
              Conversations.execution_history(binding, actor(ctx.alice),
