@@ -351,6 +351,74 @@ defmodule Zaq.Agent.StreamEventsTest do
     assert_receive {:broadcast, :tool_call, "Finished search", :tool_call}
   end
 
+  property "repeated and late tool starts preserve correlated arguments and completed evidence" do
+    check all(amount <- integer(0..100), duplicate_count <- integer(1..4), max_runs: 40) do
+      args = %{value: 2, amount: amount}
+
+      started =
+        event(:tool_started, 10, %{tool_name: "add", arguments: args},
+          tool_call_id: "stable-tool"
+        )
+
+      blank = event(:tool_started, 11, %{tool_name: "add"}, tool_call_id: "stable-tool")
+
+      completed =
+        event(
+          :tool_completed,
+          20,
+          %{tool_name: "add", result: %{result: 2 + amount}, duration_ms: 10},
+          tool_call_id: "stable-tool"
+        )
+
+      sequences = [
+        [started | List.duplicate(blank, duplicate_count)] ++ [completed],
+        [completed | List.duplicate(blank, duplicate_count)] ++ [started],
+        [started, completed, blank, completed]
+      ]
+
+      for sequence <- sequences do
+        assert {:ok, result} =
+                 StreamEvents.consume(
+                   sequence ++ [event(:request_completed, 30, %{result: "done"})],
+                   incoming(),
+                   status_module: FakeStatus
+                 )
+
+        assert [trace] = Enum.filter(result.trace, &(&1["type"] == "tool_call"))
+        assert trace["arguments"] == %{"value" => 2, "amount" => amount}
+        assert trace["status"] == "completed"
+        assert trace["response"] == %{"result" => 2 + amount}
+        assert result.measurements["tool_call_count"] == 1
+      end
+    end
+  end
+
+  test "a blank repeated tool start never replaces the real arguments with a nil string" do
+    events = [
+      event(:tool_started, 10, %{tool_name: "add", arguments: %{value: 2, amount: 3}},
+        tool_call_id: "add-once"
+      ),
+      event(:tool_started, 11, %{tool_name: "add"}, tool_call_id: "add-once"),
+      event(:tool_completed, 20, %{tool_name: "add", result: %{result: 5}},
+        tool_call_id: "add-once"
+      ),
+      event(:tool_started, 21, %{tool_name: "add"}, tool_call_id: "add-once"),
+      event(:request_completed, 30, %{result: "5"})
+    ]
+
+    assert {:ok, result} = StreamEvents.consume(events, incoming(), status_module: FakeStatus)
+
+    assert [
+             %{
+               "arguments" => %{"value" => 2, "amount" => 3},
+               "response" => %{"result" => 5},
+               "status" => "completed"
+             }
+           ] = result.trace
+
+    assert result.measurements["tool_call_count"] == 1
+  end
+
   test "externalizes materialized media from canonical tool results without adding bytes to trace" do
     bytes = <<0, 1, 2, 3>>
 
