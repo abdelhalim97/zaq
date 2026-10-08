@@ -428,6 +428,15 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
       prompt_tokens: 7,
       completion_tokens: 3,
       total_tokens: 10,
+      measurements: %{
+        "latency_ms" => 23,
+        "turn_count" => 2,
+        "llm_call_count" => 2,
+        "tool_call_count" => 1,
+        "input_tokens" => 7,
+        "output_tokens" => 3,
+        "total_tokens" => 10
+      },
       trace: [%{"type" => "tool_call", "name" => "arithmetic.add", "result" => "PRIVATE_RESULT"}]
     }
 
@@ -453,12 +462,22 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert execution.usage["prompt_tokens"] == 7
     assert execution.trace_entries == result.trace
     assert execution.tool_results == result.trace
+
+    assert execution.outcome["measurements"] == %{
+             "latency_ms" => 23,
+             "turn_count" => 2,
+             "llm_call_count" => 2,
+             "tool_call_count" => 1
+           }
+
     answer = Repo.get!(Message, finalized.assistant_message_id)
     input = Repo.get!(Message, binding.user_message_id)
     assert answer.trace == []
     assert input.trace == []
     refute inspect(answer.metadata) =~ "PRIVATE_RESULT"
     assert answer.prompt_tokens == nil
+    refute Map.has_key?(answer.metadata, "measurements")
+    refute Map.has_key?(input.metadata, "measurements")
     assert Repo.aggregate(ExecutionRecord, :count) == 1
   end
 
@@ -486,7 +505,18 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
              Conversations.finalize_incoming(
                binding.user_message_id,
                binding.finalization_token,
-               %{error: true, error_type: :timeout, trace: [%{"content" => "PRIVATE_FAILURE"}]},
+               %{
+                 error: true,
+                 error_type: :timeout,
+                 trace: [%{"content" => "PRIVATE_FAILURE"}],
+                 measurements: %{
+                   latency_ms: 0,
+                   turn_count: 0,
+                   llm_call_count: 0,
+                   tool_call_count: 0,
+                   prompt_tokens: 0
+                 }
+               },
                actor: actor(ctx.alice)
              )
 
@@ -494,6 +524,14 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert execution.status == "failed"
     assert execution.outcome["error_type"] == "timeout"
     assert execution.trace_entries == [%{"content" => "PRIVATE_FAILURE"}]
+
+    assert execution.outcome["measurements"] == %{
+             "latency_ms" => 0,
+             "turn_count" => 0,
+             "llm_call_count" => 0,
+             "tool_call_count" => 0
+           }
+
     assert Repo.get!(Message, binding.user_message_id).trace == []
   end
 

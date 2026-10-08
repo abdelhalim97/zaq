@@ -84,6 +84,34 @@ defmodule Zaq.Agent.StreamEventsTest do
     assert result.measurements["total_tokens"] == 4
   end
 
+  property "tool-only model turns are measured once even without content deltas" do
+    check all(calls <- integer(1..8), duplicates <- integer(1..3), max_runs: 40) do
+      events =
+        Enum.flat_map(1..calls, fn iteration ->
+          id = "call-#{iteration}"
+
+          started =
+            event(:llm_started, iteration * 10, %{model: "test-model"},
+              iteration: iteration,
+              llm_call_id: id
+            )
+
+          completed =
+            event(:llm_completed, iteration * 10 + 1, %{usage: %{}},
+              iteration: iteration,
+              llm_call_id: id
+            )
+
+          List.duplicate(started, duplicates) ++ [completed]
+        end) ++ [event(:request_completed, 100, %{result: "Done"})]
+
+      assert {:ok, result} = StreamEvents.consume(events, incoming(), status_module: FakeStatus)
+      assert result.measurements["turn_count"] == calls
+      assert result.measurements["llm_call_count"] == calls
+      assert result.measurements["tool_call_count"] == 0
+    end
+  end
+
   test "keeps per-call usage attributed to the model that produced it" do
     events = [
       event(:llm_started, 10, %{model: "openai:gpt-4o-mini"}, llm_call_id: "call-1"),
@@ -836,7 +864,7 @@ defmodule Zaq.Agent.StreamEventsTest do
       at_ms: at_ms,
       run_id: "run-1",
       request_id: "req-1",
-      iteration: 0,
+      iteration: Keyword.get(attrs, :iteration, 0),
       kind: kind,
       llm_call_id: Keyword.get(attrs, :llm_call_id, "llm-1"),
       tool_call_id: Keyword.get(attrs, :tool_call_id),

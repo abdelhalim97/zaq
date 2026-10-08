@@ -1195,8 +1195,20 @@ defmodule Zaq.Engine.Conversations do
       status,
       assistant_trace(result, artifacts),
       usage,
-      execution_metadata(result)
+      private_execution_metadata(result)
     )
+  end
+
+  defp private_execution_metadata(result) do
+    outcome = execution_metadata(result)
+
+    case map_get(result, "measurements") do
+      measurements when is_map(measurements) ->
+        Map.put(outcome, "measurements", Measurements.metadata_measurements(measurements))
+
+      _ ->
+        outcome
+    end
   end
 
   defp execution_metadata(result) do

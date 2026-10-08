@@ -583,19 +583,30 @@ defmodule Zaq.Agent.StreamEvents do
       "total_tokens" => usage_value(state.usage, [:total_tokens]),
       "input_tokens" => usage_value(state.usage, [:input_tokens, :prompt_tokens]),
       "output_tokens" => usage_value(state.usage, [:output_tokens, :completion_tokens]),
-      "turn_count" =>
-        state.turns |> Map.keys() |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> length(),
-      "llm_call_count" =>
-        state.turns
-        |> Map.keys()
-        |> Enum.map(&elem(&1, 1))
-        |> Enum.reject(&is_nil/1)
-        |> Enum.uniq()
-        |> length(),
+      "turn_count" => measured_turn_count(state),
+      "llm_call_count" => measured_llm_call_count(state),
       "tool_call_count" => map_size(state.tool_calls)
     }
     |> reject_nil_values()
     |> json_safe()
+  end
+
+  defp measured_turn_count(state) do
+    content_turns = state.turns |> Map.keys() |> Enum.map(&elem(&1, 0))
+    call_turns = state.llm_calls |> Map.values() |> Enum.map(&to_string(&1[:iteration] || 0))
+    (content_turns ++ call_turns) |> Enum.uniq() |> length()
+  end
+
+  defp measured_llm_call_count(%{llm_calls: calls}) when map_size(calls) > 0,
+    do: map_size(calls)
+
+  defp measured_llm_call_count(state) do
+    state.turns
+    |> Map.keys()
+    |> Enum.map(&elem(&1, 1))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> length()
   end
 
   defp model(state) do
@@ -617,6 +628,7 @@ defmodule Zaq.Agent.StreamEvents do
       |> Map.put(:llm_call_id, field(event, :llm_call_id))
       |> Map.put(:request_id, field(event, :request_id) || state.request_id)
       |> Map.put(:run_id, field(event, :run_id))
+      |> Map.put(:iteration, field(event, :iteration) || existing[:iteration])
       |> maybe_put(:model, data_get(data, :model) || Map.get(existing, :model))
       |> reject_nil_values()
 
@@ -642,7 +654,8 @@ defmodule Zaq.Agent.StreamEvents do
     |> Enum.map(&Map.fetch!(state.llm_calls, &1))
   end
 
-  defp public_llm_calls(state), do: Enum.map(llm_calls(state), &Map.delete(&1, :usage))
+  defp public_llm_calls(state),
+    do: Enum.map(llm_calls(state), &Map.drop(&1, [:usage, :iteration]))
 
   defp aggregate_llm_call_usage(state) do
     state
