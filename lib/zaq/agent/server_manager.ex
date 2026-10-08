@@ -38,7 +38,16 @@ defmodule Zaq.Agent.ServerManager do
   require Logger
 
   alias Jido.AI.Context, as: AIContext
-  alias Zaq.Agent.{ConfiguredAgent, Factory, OpaqueAliases, ProviderSpec, RuntimeSync}
+
+  alias Zaq.Agent.{
+    ConfiguredAgent,
+    Factory,
+    HistoryLifecycle,
+    OpaqueAliases,
+    ProviderSpec,
+    RuntimeSync
+  }
+
   alias Zaq.Identity.ExecutionActor
 
   @dynamic_supervisor Zaq.Agent.AgentServerSupervisor
@@ -52,7 +61,8 @@ defmodule Zaq.Agent.ServerManager do
           server_to_agent: %{optional(String.t()) => integer()},
           credential_dependencies: %{optional(String.t()) => map()},
           draining: %{optional(String.t()) => reference()},
-          monitors: %{optional(String.t()) => reference()}
+          monitors: %{optional(String.t()) => reference()},
+          history: %{optional(String.t()) => map()}
         }
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -169,6 +179,19 @@ defmodule Zaq.Agent.ServerManager do
     GenServer.call(__MODULE__, {:credential_dependency, server_id}, @lifecycle_call_timeout)
   end
 
+  @doc "Claims exclusive history admission on an exact actor-bound runtime incarnation."
+  def begin_history_request(server_id, pid, actor) when is_binary(server_id) and is_pid(pid),
+    do: GenServer.call(__MODULE__, {:begin_history_request, server_id, pid, actor}, :infinity)
+
+  @doc "Publishes incorporated cursors only after the lease's idle context operation is confirmed."
+  def complete_history_request(server_id, token, %AIContext{} = context, cursors),
+    do:
+      GenServer.call(
+        __MODULE__,
+        {:complete_history_request, server_id, token, context, cursors},
+        @lifecycle_call_timeout
+      )
+
   @impl true
   def init(_opts) do
     stop_surviving_servers()
@@ -180,7 +203,8 @@ defmodule Zaq.Agent.ServerManager do
        server_to_agent: %{},
        credential_dependencies: %{},
        draining: %{},
-       monitors: %{}
+       monitors: %{},
+       history: %{}
      }}
   end
 
@@ -208,6 +232,7 @@ defmodule Zaq.Agent.ServerManager do
       ) do
     result =
       with {:ok, actor} <- ExecutionActor.validate(Keyword.get(opts, :actor)),
+           :ok <- HistoryLifecycle.validate_initial(Keyword.get(opts, :history_cursors)),
            {:ok, history_binding} <- validate_history_binding(Keyword.get(opts, :history_binding)),
            :ok <- validate_binding(safe_whereis(server_id), actor, history_binding) do
         next_state = clear_stale_drain(state, server_id)
@@ -229,6 +254,32 @@ defmodule Zaq.Agent.ServerManager do
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:begin_history_request, server_id, pid, actor}, from, state) do
+    with :ok <- history_runtime_current(state, server_id, pid),
+         :ok <- validate_history_actor(pid, actor) do
+      case HistoryLifecycle.begin_request(state.history, server_id, pid, from) do
+        {:reply, response, history} -> {:reply, response, %{state | history: history}}
+        {:wait, history} -> {:noreply, %{state | history: history}}
+      end
+    else
+      {:error, _} = error -> {:reply, error, state}
+    end
+  end
+
+  def handle_call(
+        {:complete_history_request, server_id, token, context, cursors},
+        {owner, _},
+        state
+      ) do
+    case HistoryLifecycle.owned_entry(state.history, server_id, token, owner) do
+      {:ok, entry} ->
+        complete_history_lease(state, server_id, entry, token, context, cursors, owner)
+
+      {:error, _} = error ->
+        {:reply, error, state}
     end
   end
 
@@ -343,6 +394,7 @@ defmodule Zaq.Agent.ServerManager do
           |> track_server(configured_agent.id, server_id, credential_dependency)
           |> monitor_server(server_id)
           |> schedule_authentication_expiry(server_id, credential_dependency)
+          |> initialize_history_cursor(server_id, opts)
 
         {:ok, server_id, next_state}
 
@@ -374,12 +426,12 @@ defmodule Zaq.Agent.ServerManager do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    case Enum.find(state.monitors, fn {_sid, r} -> r == ref end) do
+    case HistoryLifecycle.owner_scope(Map.get(state, :history, %{}), ref) do
       nil ->
-        {:noreply, state}
+        handle_runtime_down(ref, state)
 
-      {server_id, _ref} ->
-        OpaqueAliases.clear_scope(server_id)
+      server_id ->
+        _ = stop_server_if_running(server_id)
         {:noreply, untrack_server(state, server_id)}
     end
   end
@@ -393,6 +445,17 @@ defmodule Zaq.Agent.ServerManager do
 
       _ ->
         {:noreply, state}
+    end
+  end
+
+  defp handle_runtime_down(ref, state) do
+    case Enum.find(state.monitors, fn {_sid, r} -> r == ref end) do
+      nil ->
+        {:noreply, state}
+
+      {server_id, _ref} ->
+        OpaqueAliases.clear_scope(server_id)
+        {:noreply, untrack_server(state, server_id)}
     end
   end
 
@@ -874,6 +937,9 @@ defmodule Zaq.Agent.ServerManager do
   end
 
   defp untrack_server(state, server_id) do
+    state =
+      Map.put(state, :history, HistoryLifecycle.drop(Map.get(state, :history, %{}), server_id))
+
     state = demonitor_server(state, server_id)
     agent_id = Map.get(state.server_to_agent, server_id)
 
@@ -904,6 +970,61 @@ defmodule Zaq.Agent.ServerManager do
           end
 
         %{state | agent_servers: agent_servers}
+    end
+  end
+
+  defp initialize_history_cursor(state, server_id, opts) do
+    Map.put(
+      state,
+      :history,
+      HistoryLifecycle.initialize(
+        Map.get(state, :history, %{}),
+        server_id,
+        safe_whereis(server_id),
+        Keyword.get(opts, :history_cursors)
+      )
+    )
+  end
+
+  defp validate_history_actor(pid, actor) do
+    with {:ok, actor} <- ExecutionActor.validate(actor),
+         {:ok, identity} <- ExecutionActor.identity(actor),
+         {:ok, %{raw_state: %{execution_actor: bound}}} <- Jido.AgentServer.status(pid),
+         {:ok, ^identity} <- ExecutionActor.identity(bound) do
+      :ok
+    else
+      _ -> {:error, :execution_actor_mismatch}
+    end
+  catch
+    :exit, _ -> {:error, :stale_runtime}
+  end
+
+  defp complete_history_lease(state, server_id, entry, token, context, cursors, owner) do
+    case history_runtime_current(state, server_id, entry.pid) do
+      :ok ->
+        case HistoryLifecycle.complete(state.history, server_id, token, context, cursors, owner) do
+          {:ok, history} ->
+            {:reply, :ok, %{state | history: history}}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+
+          {:invalidate, reason} ->
+            _ = stop_server_if_running(server_id)
+            {:reply, {:error, reason}, untrack_server(state, server_id)}
+        end
+
+      {:error, reason} ->
+        {:reply, {:error, reason},
+         %{state | history: HistoryLifecycle.drop(state.history, server_id)}}
+    end
+  end
+
+  defp history_runtime_current(state, server_id, pid) do
+    cond do
+      draining?(state, server_id) -> {:error, :server_draining}
+      safe_whereis(server_id) == pid -> :ok
+      true -> {:error, :stale_runtime}
     end
   end
 

@@ -1049,7 +1049,8 @@ defmodule Zaq.Agent.ServerManagerTest do
              server_to_agent: %{},
              credential_dependencies: %{},
              draining: %{},
-             monitors: %{}
+             monitors: %{},
+             history: %{}
            }
   end
 
@@ -1302,7 +1303,8 @@ defmodule Zaq.Agent.ServerManagerTest do
              server_to_agent: %{},
              credential_dependencies: %{},
              draining: %{},
-             monitors: %{}
+             monitors: %{},
+             history: %{}
            }
   end
 
@@ -1410,7 +1412,8 @@ defmodule Zaq.Agent.ServerManagerTest do
              server_to_agent: %{},
              credential_dependencies: %{},
              draining: %{},
-             monitors: %{}
+             monitors: %{},
+             history: %{}
            }
   end
 
@@ -1441,7 +1444,8 @@ defmodule Zaq.Agent.ServerManagerTest do
              server_to_agent: %{},
              credential_dependencies: %{},
              draining: %{},
-             monitors: %{}
+             monitors: %{},
+             history: %{}
            }
   end
 
@@ -1541,7 +1545,8 @@ defmodule Zaq.Agent.ServerManagerTest do
              server_to_agent: %{},
              credential_dependencies: %{},
              draining: %{},
-             monitors: %{}
+             monitors: %{},
+             history: %{}
            }
   end
 
@@ -1566,7 +1571,8 @@ defmodule Zaq.Agent.ServerManagerTest do
                server_to_agent: %{},
                credential_dependencies: %{},
                draining: %{},
-               monitors: %{}
+               monitors: %{},
+               history: %{}
              }
     end
   end
@@ -2548,7 +2554,8 @@ defmodule Zaq.Agent.ServerManagerTest do
       server_to_agent: %{},
       credential_dependencies: %{},
       draining: %{},
-      monitors: %{}
+      monitors: %{},
+      history: %{}
     }
   end
 
