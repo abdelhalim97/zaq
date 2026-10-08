@@ -230,6 +230,17 @@ defmodule Zaq.Engine.Api do
     %{event | response: response}
   end
 
+  def handle_event(%Event{} = event, :execution_history, _context) do
+    response =
+      if Keyword.get(event.opts, :confidential) == true do
+        Conversations.execution_history(event.request, event.actor)
+      else
+        {:error, :confidential_event_required}
+      end
+
+    %{event | response: response}
+  end
+
   def handle_event(%Event{} = event, :finalize_incoming, _context) do
     response =
       with {:ok, _actor} <- ExecutionActor.validate(event.actor),

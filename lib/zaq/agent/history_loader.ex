@@ -18,6 +18,38 @@ defmodule Zaq.Agent.HistoryLoader do
 
   @max_db_fetch 500
 
+  @doc "Converts an Engine-authorized canonical projection without querying storage or permissions."
+  @spec from_projection([map()], keyword()) :: AIContext.t()
+  def from_projection(messages, opts \\ []) do
+    Enum.reduce(messages, AIContext.new(), fn message, context ->
+      role = if message.role == "assistant", do: :assistant, else: :user
+      author = Enum.reject([message[:author_name], message[:author_id]], &is_nil/1)
+
+      label =
+        case author do
+          [name, id] -> "#{name} (#{id})"
+          [value] -> value
+          [] -> "Unknown author"
+        end
+
+      content =
+        history_content(
+          %{
+            content: "#{label}: #{message.content}",
+            metadata: %{attachments: message.attachments}
+          },
+          opts
+        )
+
+      AIContext.append(context, %AIContext.Entry{
+        role: role,
+        content: content,
+        timestamp: message.provider_sent_at,
+        refs: Map.take(message, [:message_id, :transcript_id, :position])
+      })
+    end)
+  end
+
   @doc """
   Selects and loads the appropriate history context from a spawn opts map.
 
