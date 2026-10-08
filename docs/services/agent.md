@@ -563,6 +563,9 @@ without safe permission mutation support return `:unsupported`.
   evidence, including tool-only calls without text deltas. Repeated lifecycle
   events are deduplicated by call identity; legacy delta-only consumers retain
   their fallback counts.
+- Correlated tool starts/completions preserve known arguments across repeated or
+  late starts and retain completed status/results. Completed trace rows are
+  updated by tool-call identity, rather than duplicated by replayed events.
 - Executor preserves accumulated trace, tool/LLM calls, artifacts, measurements, model and
   agent metadata when the stream returns a handled failure, so Engine can persist the
   available evidence without incremental database writes.

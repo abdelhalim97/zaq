@@ -224,15 +224,31 @@ defmodule Zaq.Agent.StreamEvents do
       "turn_id" => to_string(field(event, :iteration) || 0),
       "content" => field(event, :tool_name) || data_get(data, :tool_name) || "tool",
       "name" => field(event, :tool_name) || data_get(data, :tool_name),
-      "arguments" => json_safe(data_get(data, :arguments)),
+      "arguments" => data_get(data, :arguments),
       "started_at" => timestamp(event),
       "started_at_ms" => field(event, :at_ms),
       "status" => "started"
     }
 
+    tool_call = normalize_tool_arguments(tool_call)
+
+    existing = Map.get(state.tool_calls, tool_call_id, %{})
+    # Duplicate/late starts may carry less evidence than an earlier event. They
+    # must not erase arguments or downgrade an already completed native call.
+    tool_call = Map.merge(tool_call, existing)
     state = %{state | tool_calls: Map.put(state.tool_calls, tool_call_id, tool_call)}
-    broadcast_tool(state, tool_call, :started) |> register(:tool_running)
+
+    if existing["status"] == "completed" do
+      %{state | trace: put_tool_trace(state.trace, tool_call)}
+    else
+      broadcast_tool(state, tool_call, :started) |> register(:tool_running)
+    end
   end
+
+  defp normalize_tool_arguments(%{"arguments" => nil} = call), do: Map.delete(call, "arguments")
+
+  defp normalize_tool_arguments(%{"arguments" => arguments} = call),
+    do: Map.put(call, "arguments", json_safe(arguments))
 
   defp handle_tool_completed(event, state) do
     data = data(event)
@@ -265,11 +281,18 @@ defmodule Zaq.Agent.StreamEvents do
     state = %{
       state
       | tool_calls: Map.put(state.tool_calls, tool_call_id, tool_call),
-        trace: [tool_call | state.trace],
+        trace: put_tool_trace(state.trace, tool_call),
         trace_artifacts: state.trace_artifacts ++ trace_artifacts
     }
 
     broadcast_tool(state, tool_call, :completed) |> register(:tool_completed)
+  end
+
+  defp put_tool_trace(trace, tool_call) do
+    same_call? = fn entry -> entry["type"] == "tool_call" and entry["id"] == tool_call["id"] end
+
+    updated = Enum.map(trace, fn entry -> if same_call?.(entry), do: tool_call, else: entry end)
+    if Enum.any?(trace, same_call?), do: updated, else: [tool_call | trace]
   end
 
   defp externalize_trace_artifacts(
