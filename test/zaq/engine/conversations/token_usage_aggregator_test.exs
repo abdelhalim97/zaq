@@ -131,6 +131,67 @@ defmodule Zaq.Engine.Conversations.TokenUsageAggregatorTest do
     end
   end
 
+  property "private root counters override individually while receipts never add usage" do
+    check all(
+            legacy_prompt <- integer(0..1_000),
+            legacy_completion <- integer(0..1_000),
+            private_prompt <- one_of([constant(nil), integer(0..1_000)]),
+            private_completion <- one_of([constant(nil), integer(0..1_000)]),
+            receipt_status <- member_of(~w(queued consumed unconsumed)),
+            max_runs: 12
+          ) do
+      conv = create_conv_with_assistant_msg("gpt-4", legacy_prompt, legacy_completion)
+      answer = Repo.get_by!(Message, conversation_id: conv.id, role: "assistant")
+      owner = Repo.insert!(%Person{full_name: "Usage owner"})
+      assert {:ok, input} = Conversations.add_message(conv, %{role: "user", content: "Root"})
+
+      usage =
+        %{"prompt_tokens" => private_prompt, "completion_tokens" => private_completion}
+        |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+        |> Map.new()
+
+      root =
+        %ExecutionRecord{}
+        |> ExecutionRecord.changeset(%{
+          person_id: owner.id,
+          user_message_id: input.id,
+          public_answer_message_id: answer.id,
+          status: "completed",
+          finalization_token_hash: :crypto.hash(:sha256, Ecto.UUID.generate()) |> Base.encode64(),
+          usage: usage
+        })
+        |> Repo.insert!()
+
+      assert {:ok, child} = Conversations.add_message(conv, %{role: "user", content: "Child"})
+
+      %ExecutionRecord{}
+      |> ExecutionRecord.changeset(%{
+        person_id: owner.id,
+        user_message_id: child.id,
+        root_execution_id: root.id,
+        status: receipt_status,
+        finalization_token_hash: :crypto.hash(:sha256, Ecto.UUID.generate()) |> Base.encode64(),
+        usage: %{"prompt_tokens" => 9_999, "completion_tokens" => 9_999}
+      })
+      |> Repo.insert!()
+
+      args = %{"conversation_id" => conv.id, "model" => "gpt-4"}
+      assert :ok = perform_job(TokenUsageAggregator, args)
+      metadata = Conversations.get_conversation!(conv.id).metadata
+
+      assert metadata["token_usage"][Date.to_iso8601(Date.utc_today())]["gpt-4"] ==
+               %{
+                 "prompt_tokens" => private_prompt || legacy_prompt,
+                 "completion_tokens" => private_completion || legacy_completion,
+                 "total_tokens" =>
+                   (private_prompt || legacy_prompt) + (private_completion || legacy_completion)
+               }
+
+      assert :ok = perform_job(TokenUsageAggregator, args)
+      assert Conversations.get_conversation!(conv.id).metadata == metadata
+    end
+  end
+
   test "accounting locks conversation metadata until the model totals are saved" do
     conv = create_conv_with_assistant_msg("gpt-4", 100, 50)
 
