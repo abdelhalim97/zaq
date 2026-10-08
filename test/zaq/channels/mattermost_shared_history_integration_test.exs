@@ -166,151 +166,175 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     %{config: config, person: person, agent: agent}
   end
 
-  @tag :authorized_execution
-  @tag :input_consumption
-  test "authorized thread history reaches the real tool-calling agent without private data",
-       ctx do
-    {:ok, bob} = People.create_person(%{full_name: "Bob"})
+  for steering_mode <- [:explicit_control, :provider_mention] do
+    @steering_mode steering_mode
+    @tag :authorized_execution
+    @tag :input_consumption
+    test "authorized thread history and #{@steering_mode} reach the real tool-calling agent without private data",
+         ctx do
+      {:ok, bob} = People.create_person(%{full_name: "Bob"})
 
-    {:ok, _} =
-      People.add_channel(%{
+      {:ok, _} =
+        People.add_channel(%{
+          person_id: bob.id,
+          platform: "mattermost",
+          channel_identifier: "bob",
+          channel_config_id: ctx.config.id
+        })
+
+      assert {{:ok, _}, _} =
+               MattermostHistoryFixture.post(ctx.config, nil, false, %{
+                 "id" => "root-human",
+                 "user_id" => "bob",
+                 "message" => "Authorized project root"
+               })
+
+      parent =
+        Repo.one!(
+          from t in Transcript,
+            where: t.external_channel_id == "shared-room" and is_nil(t.parent_id)
+        )
+
+      assert {:ok, _} =
+               Zaq.Permissions.grant(
+                 {parent.permission_resource_type, parent.permission_resource_id},
+                 %{person_id: ctx.person.id, access_rights: ["read"]}
+               )
+
+      root = Repo.get_by!(Message, external_message_id: "root-human")
+
+      %ExecutionRecord{}
+      |> ExecutionRecord.changeset(%{
         person_id: bob.id,
-        platform: "mattermost",
-        channel_identifier: "bob",
-        channel_config_id: ctx.config.id
+        user_message_id: root.id,
+        finalization_token_hash: :crypto.hash(:sha256, "private-execution") |> Base.encode64(),
+        trace_entries: [%{"content" => "FORBIDDEN_PRIVATE_TRACE"}],
+        tool_results: [%{"content" => "FORBIDDEN_PRIVATE_TOOL"}]
       })
+      |> Repo.insert!()
 
-    assert {{:ok, _}, _} =
-             MattermostHistoryFixture.post(ctx.config, nil, false, %{
-               "id" => "root-human",
-               "user_id" => "bob",
-               "message" => "Authorized project root"
-             })
+      assert {{:ok, _}, _} =
+               MattermostHistoryFixture.post(ctx.config, "human", false, %{
+                 "id" => "passive-thread",
+                 "user_id" => "bob",
+                 "message" => "Authorized thread evidence"
+               })
 
-    parent =
-      Repo.one!(
-        from t in Transcript,
-          where: t.external_channel_id == "shared-room" and is_nil(t.parent_id)
-      )
+      assert {{:ok, _}, _} =
+               MattermostHistoryFixture.post(ctx.config, nil, false, %{
+                 "id" => "forbidden-room",
+                 "user_id" => "bob",
+                 "channel_id" => "private-room",
+                 "message" => "FORBIDDEN_OTHER_ROOM"
+               })
 
-    assert {:ok, _} =
-             Zaq.Permissions.grant(
-               {parent.permission_resource_type, parent.permission_resource_id},
-               %{person_id: ctx.person.id, access_rights: ["read"]}
-             )
+      assert {{:ok, _}, post} = MattermostHistoryFixture.post(ctx.config, "human", true)
+      assert_receive {:history_llm, request}, 5_000
+      assert_receive {:history_llm_barrier, worker}, 5_000
+      on_exit(fn -> send(worker, :release_history_llm) end)
 
-    root = Repo.get_by!(Message, external_message_id: "root-human")
+      scope =
+        "history:#{Repo.get_by!(Transcript, external_thread_id: "root-human").id}:person:#{ctx.person.id}"
 
-    %ExecutionRecord{}
-    |> ExecutionRecord.changeset(%{
-      person_id: bob.id,
-      user_message_id: root.id,
-      finalization_token_hash: :crypto.hash(:sha256, "private-execution") |> Base.encode64(),
-      trace_entries: [%{"content" => "FORBIDDEN_PRIVATE_TRACE"}],
-      tool_results: [%{"content" => "FORBIDDEN_PRIVATE_TOOL"}]
-    })
-    |> Repo.insert!()
+      actor = %{person: %{id: ctx.person.id}}
+      assert {:ok, {request_id, _state}} = RequestRegistry.find_active(scope, actor)
 
-    assert {{:ok, _}, _} =
-             MattermostHistoryFixture.post(ctx.config, "human", false, %{
-               "id" => "passive-thread",
-               "user_id" => "bob",
-               "message" => "Authorized thread evidence"
-             })
+      steering =
+        Incoming.new(%{
+          content: "@zaq Retain the arithmetic tool result",
+          channel_id: "shared-room",
+          author_id: "alice",
+          author_name: "Alice",
+          message_id: "steering-input",
+          thread_id: "root-human",
+          provider: :mattermost,
+          person: ctx.person,
+          routing_context: %{channel_config_id: ctx.config.id, conversation_type: :room}
+        })
+        |> CommunicationBridge.put_conversation_identity()
 
-    assert {{:ok, _}, _} =
-             MattermostHistoryFixture.post(ctx.config, nil, false, %{
-               "id" => "forbidden-room",
-               "user_id" => "bob",
-               "channel_id" => "private-room",
-               "message" => "FORBIDDEN_OTHER_ROOM"
-             })
+      binding =
+        case @steering_mode do
+          :explicit_control ->
+            assert {:ok, _} = HistoryIngress.capture(steering)
+            assert {:ok, binding} = Conversations.admit_incoming(steering)
 
-    assert {{:ok, _}, post} = MattermostHistoryFixture.post(ctx.config, "human", true)
-    assert_receive {:history_llm, request}, 5_000
-    assert_receive {:history_llm_barrier, worker}, 5_000
-    on_exit(fn -> send(worker, :release_history_llm) end)
+            control =
+              Zaq.Event.new(
+                %{
+                  request_id: request_id,
+                  content: steering.content,
+                  conversation_binding: binding
+                },
+                :agent,
+                actor: actor
+              )
 
-    scope =
-      "history:#{Repo.get_by!(Transcript, external_thread_id: "root-human").id}:person:#{ctx.person.id}"
+            assert %{response: {:ok, _}} =
+                     Zaq.Agent.Api.handle_event(control, :steer_request, nil)
 
-    actor = %{person: %{id: ctx.person.id}}
-    assert {:ok, {request_id, _state}} = RequestRegistry.find_active(scope, actor)
+            binding
 
-    steering =
-      Incoming.new(%{
-        content: "Retain the arithmetic tool result",
-        channel_id: "shared-room",
-        author_id: "alice",
-        author_name: "Alice",
-        message_id: "steering-input",
-        thread_id: "root-human",
-        provider: :mattermost,
-        person: ctx.person,
-        routing_context: %{channel_config_id: ctx.config.id, conversation_type: :room}
-      })
-      |> CommunicationBridge.put_conversation_identity()
+          :provider_mention ->
+            assert {{:ok, _}, _} =
+                     MattermostHistoryFixture.post(ctx.config, "human", true, %{
+                       "id" => "steering-input",
+                       "message" => steering.content
+                     })
 
-    assert {:ok, _} = HistoryIngress.capture(steering)
-    assert {:ok, binding} = Conversations.admit_incoming(steering)
+            assert_receive :history_input_queued, 5_000
+            %{user_message_id: Repo.get_by!(Message, external_message_id: "steering-input").id}
+        end
 
-    control =
-      Zaq.Event.new(
-        %{request_id: request_id, content: steering.content, conversation_binding: binding},
-        :agent,
-        actor: actor
-      )
+      assert Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id).status ==
+               "queued"
 
-    assert %{response: {:ok, _}} = Zaq.Agent.Api.handle_event(control, :steer_request, nil)
+      send(worker, :release_history_llm)
+      input = Jason.encode!(request["input"])
+      assert input =~ "Authorized project root"
+      assert input =~ "Authorized thread evidence"
+      assert input =~ "#{root.author_name} (#{root.author_id})"
+      assert length(Regex.scan(~r/Authorized project root/, input)) == 1
+      assert length(Regex.scan(~r/history question/, input)) == 1
+      refute input =~ "FORBIDDEN_"
 
-    assert Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id).status ==
-             "queued"
+      assert_receive {:llm_tool_call, "add", %{"value" => 2, "amount" => 3}}, 5_000
+      assert_receive {:llm_tool_result, "add", result}, 5_000
+      assert result == %{"ok" => true, "result" => %{"result" => 5.0}}
+      assert_receive {:history_llm, continuation}, 5_000
+      refute Jason.encode!(continuation["input"]) =~ "FORBIDDEN_"
+      assert Jason.encode!(continuation["input"]) =~ steering.content
 
-    send(worker, :release_history_llm)
-    input = Jason.encode!(request["input"])
-    assert input =~ "Authorized project root"
-    assert input =~ "Authorized thread evidence"
-    assert input =~ "#{root.author_name} (#{root.author_id})"
-    assert length(Regex.scan(~r/Authorized project root/, input)) == 1
-    assert length(Regex.scan(~r/history question/, input)) == 1
-    refute input =~ "FORBIDDEN_"
+      assert_receive {:history_post, %{"channel_id" => "shared-room", "root_id" => "root-human"}},
+                     5_000
 
-    assert_receive {:llm_tool_call, "add", %{"value" => 2, "amount" => 3}}, 5_000
-    assert_receive {:llm_tool_result, "add", result}, 5_000
-    assert result == %{"ok" => true, "result" => %{"result" => 5.0}}
-    assert_receive {:history_llm, continuation}, 5_000
-    refute Jason.encode!(continuation["input"]) =~ "FORBIDDEN_"
-    assert Jason.encode!(continuation["input"]) =~ steering.content
+      child = Repo.get_by!(Transcript, external_thread_id: "root-human")
+      answer = await_answer(child.id)
+      outgoing = await_delivery_event()
+      assert answer.content == "History answer"
+      assert outgoing.metadata[:assistant_message_id] == answer.id
+      assert outgoing.routing_context.channel_config_id == ctx.config.id
+      assert Conversations.get_conversation!(answer.conversation_id).person_id == ctx.person.id
+      input_message = Repo.get_by!(Message, external_message_id: post["id"])
+      execution = Repo.get_by!(ExecutionRecord, user_message_id: input_message.id)
+      assert execution.person_id == ctx.person.id
+      assert execution.status == "completed"
+      assert execution.public_answer_message_id == answer.id
+      receipt = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
+      assert receipt.status == "consumed"
+      assert receipt.root_execution_id == execution.id
+      assert receipt.public_answer_message_id == nil
 
-    assert_receive {:history_post, %{"channel_id" => "shared-room", "root_id" => "root-human"}},
-                   5_000
-
-    child = Repo.get_by!(Transcript, external_thread_id: "root-human")
-    answer = await_answer(child.id)
-    outgoing = await_delivery_event()
-    assert answer.content == "History answer"
-    assert outgoing.metadata[:assistant_message_id] == answer.id
-    assert outgoing.routing_context.channel_config_id == ctx.config.id
-    assert Conversations.get_conversation!(answer.conversation_id).person_id == ctx.person.id
-    input_message = Repo.get_by!(Message, external_message_id: post["id"])
-    execution = Repo.get_by!(ExecutionRecord, user_message_id: input_message.id)
-    assert execution.person_id == ctx.person.id
-    assert execution.status == "completed"
-    assert execution.public_answer_message_id == answer.id
-    receipt = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
-    assert receipt.status == "consumed"
-    assert receipt.root_execution_id == execution.id
-    assert receipt.public_answer_message_id == nil
-
-    ids = Repo.all(from m in Message, select: m.id, order_by: m.id)
-    count = Repo.aggregate(TranscriptMessage, :count)
-    assert {{:ok, _}, ^post} = MattermostHistoryFixture.post(ctx.config, "human", true)
-    assert Repo.all(from m in Message, select: m.id, order_by: m.id) == ids
-    assert Repo.aggregate(TranscriptMessage, :count) == count
-    refute_receive {:history_llm, _}, 200
-    refute_received {:history_post, _}
-    refute_received {:llm_stub_error, _}
-    refute_received {:unexpected_history_http, _}
+      ids = Repo.all(from m in Message, select: m.id, order_by: m.id)
+      count = Repo.aggregate(TranscriptMessage, :count)
+      assert {{:ok, _}, ^post} = MattermostHistoryFixture.post(ctx.config, "human", true)
+      assert Repo.all(from m in Message, select: m.id, order_by: m.id) == ids
+      assert Repo.aggregate(TranscriptMessage, :count) == count
+      refute_receive {:history_llm, _}, 200
+      refute_received {:history_post, _}
+      refute_received {:llm_stub_error, _}
+      refute_received {:unexpected_history_http, _}
+    end
   end
 
   for {name, root_author, mention?, answers?} <- MattermostHistoryFixture.scenarios() do
@@ -557,7 +581,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
           assert output["call_id"] == call_id
 
           assert MultiAgentOpenAIStub.latest_user_message(%{"input" => [correction]}) ==
-                   "Retain the arithmetic tool result"
+                   "@zaq Retain the arithmetic tool result"
 
           [result] = MultiAgentOpenAIStub.tool_results(request)
           send(owner, {:llm_tool_result, "add", result.output})
@@ -593,19 +617,33 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   defp observe_history_query(metadata, owner, handler) do
     if self() != owner do
       cond do
-        metadata[:source] == "transcript_messages" and
-          String.starts_with?(metadata.query, "INSERT") and
-            "provider_confirmed" in (metadata[:cast_params] || []) ->
+        queued_record_query?(metadata) ->
+          Process.put({handler, :receipt}, true)
+
+        confirmed_placement_query?(metadata) ->
           Process.put(handler, true)
 
         metadata.query == "commit" and Process.delete(handler) ->
           send(owner, {:history_placement_committed, self()})
+
+        metadata.query == "commit" and Process.delete({handler, :receipt}) ->
+          send(owner, :history_input_queued)
 
         true ->
           :ok
       end
     end
   end
+
+  defp queued_record_query?(metadata),
+    do:
+      metadata[:source] == "execution_records" and String.starts_with?(metadata.query, "UPDATE") and
+        "queued" in (metadata[:cast_params] || [])
+
+  defp confirmed_placement_query?(metadata),
+    do:
+      metadata[:source] == "transcript_messages" and String.starts_with?(metadata.query, "INSERT") and
+        "provider_confirmed" in (metadata[:cast_params] || [])
 
   defp await_answer(transcript_id) do
     assert_receive {:history_placement_committed, writer}, 5_000
