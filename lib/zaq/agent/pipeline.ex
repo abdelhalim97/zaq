@@ -313,6 +313,8 @@ defmodule Zaq.Agent.Pipeline do
       completion_tokens: outgoing.metadata[:completion_tokens],
       total_tokens: outgoing.metadata[:total_tokens],
       tool_calls: Map.get(outgoing.metadata, :tool_calls, []),
+      execution_disposition: Map.get(outgoing.metadata, :execution_disposition),
+      root_request_id: Map.get(outgoing.metadata, :root_request_id),
       error: Map.get(outgoing.metadata, :error, false)
     })
   end

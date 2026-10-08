@@ -7,6 +7,7 @@ defmodule Zaq.Engine.ChannelHistoryMembershipTest do
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.ChannelHistoryMembership
   alias Zaq.Engine.{Conversations, HistoryIngress}
+  alias Zaq.Engine.Conversations.Transcript
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Event
   alias Zaq.Permissions
@@ -340,6 +341,70 @@ defmodule Zaq.Engine.ChannelHistoryMembershipTest do
 
     assert {:ok, [_]} =
              Conversations.list_canonical_messages(ctx.bob, ctx.placement.transcript_id)
+  end
+
+  test "committed removal generations survive later snapshots without cancelling surviving members",
+       ctx do
+    Process.put(
+      :membership_response,
+      {:ok,
+       %{
+         complete: true,
+         identity_platform: "mattermost",
+         member_ids: ["alice", "bob"],
+         revision: 1
+       }}
+    )
+
+    assert {:ok, %{members: 2}} =
+             ChannelHistoryMembership.refresh(ctx.placement.transcript_id, router: SnapshotRouter)
+
+    Process.put(
+      :membership_response,
+      {:ok, %{complete: true, identity_platform: "mattermost", member_ids: ["bob"], revision: 2}}
+    )
+
+    assert {:ok, %{members: 1}} =
+             ChannelHistoryMembership.refresh(ctx.placement.transcript_id, router: SnapshotRouter)
+
+    jobs =
+      Repo.all(from j in Oban.Job, where: j.worker == "Zaq.Engine.HistoryRuntimeRemovalWorker")
+
+    assert [job] = jobs
+    assert job.args["person_ids"] == [ctx.alice.id]
+    assert job.args["generation"] == 1
+
+    Process.put(
+      :membership_response,
+      {:ok,
+       %{
+         complete: true,
+         identity_platform: "mattermost",
+         member_ids: ["alice", "bob"],
+         revision: 3
+       }}
+    )
+
+    assert {:ok, %{members: 2}} =
+             ChannelHistoryMembership.refresh(ctx.placement.transcript_id, router: SnapshotRouter)
+
+    root = Repo.get!(Transcript, ctx.placement.transcript_id)
+    assert root.membership_state["removal_generation"] == 1
+
+    assert Repo.aggregate(
+             from(j in Oban.Job, where: j.worker == "Zaq.Engine.HistoryRuntimeRemovalWorker"),
+             :count
+           ) == 1
+
+    Process.put(
+      :membership_response,
+      {:ok, %{complete: false, identity_platform: "mattermost", member_ids: [], revision: 4}}
+    )
+
+    assert {:error, _} =
+             ChannelHistoryMembership.refresh(ctx.placement.transcript_id, router: SnapshotRouter)
+
+    assert Repo.get!(Transcript, root.id).membership_state == root.membership_state
   end
 
   test "reordered membership events and snapshots cannot restore removed access", ctx do

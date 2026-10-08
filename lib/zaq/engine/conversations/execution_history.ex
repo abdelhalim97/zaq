@@ -44,7 +44,8 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
          kind: :canonical,
          transcript_id: transcript.id,
          cursors: Map.put(cursors, transcript.id, transcript.next_position),
-         messages: messages
+         messages: messages,
+         removal_generations: removal_generations(transcript)
        }}
     else
       nil -> {:error, :unauthorized}
@@ -53,6 +54,17 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
   end
 
   def project(_input, _conversation, _person), do: {:error, :unauthorized}
+
+  defp removal_generations(transcript) do
+    sources =
+      if transcript.parent_id,
+        do: [Repo.get!(Transcript, transcript.parent_id), transcript],
+        else: [transcript]
+
+    Map.new(sources, fn source ->
+      {source.id, source.membership_state["removal_generation"] || 0}
+    end)
+  end
 
   @doc "Reads bounded cumulative association additions without advancing a runtime cursor."
   def delta(%{source_provider: nil}, _conversation, _person, _cursors),

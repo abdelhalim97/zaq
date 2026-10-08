@@ -13,6 +13,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   alias Zaq.Channels.MattermostAdmin
   alias Zaq.Engine.Api
   alias Zaq.Engine.ChannelConfig
+  alias Zaq.Engine.ChannelHistoryMembership
   alias Zaq.Engine.Conversations
 
   alias Zaq.Engine.Conversations.{
@@ -24,6 +25,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   }
 
   alias Zaq.Engine.HistoryIngress
+  alias Zaq.Engine.HistoryRuntimeRemovalWorker
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Engine.Messages.Outgoing
@@ -76,7 +78,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         request = Jason.decode!(body)
         send(owner, {:history_llm, request})
 
-        if tags[:boundary_revocation] || tags[:boundary_persistence] ||
+        if tags[:membership_removal] || tags[:boundary_revocation] || tags[:boundary_persistence] ||
              history_barrier?(tags, request, body) do
           barrier_timeout = if tags[:queue_overflow], do: 60_000, else: 10_000
           send(owner, {:history_llm_barrier, self()})
@@ -765,6 +767,106 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert Repo.aggregate(from(m in Message, where: m.role == "user"), :count) == 3
   end
 
+  @tag :membership_removal
+  @tag :authorized_execution
+  test "provider removal stops native execution and local output while manual access permits a fresh run",
+       ctx do
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", false, %{
+               "id" => "removal-seed",
+               "message" => "Membership seed"
+             })
+
+    event = %{
+      provider: "mattermost",
+      channel_config_id: ctx.config.id,
+      channel_id: "shared-room",
+      identity_platform: "mattermost",
+      member_id: "alice",
+      operation: :add,
+      revision: 1
+    }
+
+    assert {:ok, %{status: :applied}} = ChannelHistoryMembership.apply_event(event)
+    resource = ChannelHistoryResource.for("mattermost", ctx.config.id, "shared-room")
+
+    assert {:ok, _} =
+             Zaq.Permissions.grant(
+               resource,
+               %{person_id: ctx.person.id, access_rights: ["read"]}
+             )
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "removal-root",
+               "message" => "@zaq Finish only while a member"
+             })
+
+    assert_receive {:history_llm, _}, 5_000
+    assert_receive {:history_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_history_llm) end)
+    input = Repo.get_by!(Message, external_message_id: "removal-root")
+    placement = Repo.get_by!(TranscriptMessage, message_id: input.id)
+    transcript = Repo.get!(Transcript, placement.transcript_id)
+    membership_source = transcript.parent_id || transcript.id
+    scope = "history:#{placement.transcript_id}:person:#{ctx.person.id}"
+    server_id = "#{ctx.agent.name}:#{scope}"
+    ledger = :sys.get_state(ServerManager).history[server_id]
+    runtime_monitor = Process.monitor(ledger.pid)
+    owner_monitor = Process.monitor(ledger.lease.owner)
+
+    {:ok, {request_id, _}} =
+      RequestRegistry.find_active(scope, %{person: %{id: ctx.person.id}}, ledger.pid)
+
+    removal = %{event | operation: :remove, revision: 2}
+    assert {:ok, %{status: :applied}} = ChannelHistoryMembership.apply_event(removal)
+    acknowledged_at = DateTime.utc_now()
+    assert_receive {:DOWN, ^runtime_monitor, :process, _, _}, 5_000
+    send(worker, :release_history_llm)
+    assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 5_000
+    assert {:ok, request} = RequestRegistry.get(request_id)
+    assert request.history_removed
+    assert request.status == :cancelled
+    assert Repo.get_by!(ExecutionRecord, user_message_id: input.id).status == "failed"
+    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 0
+
+    for output_event <- collect_output_events() do
+      refute output_event.opts[:action] == :deliver_outgoing
+      assert DateTime.compare(output_event.next_hop.timestamp, acknowledged_at) != :gt
+    end
+
+    assert Enum.map(Zaq.Permissions.list_direct(resource), & &1.source_key) == ["manual"]
+    assert :sys.get_state(ServerManager).history[server_id] == nil
+    assert Repo.get!(Transcript, membership_source).membership_state["removal_generation"] == 1
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "removal-restart",
+               "message" => "@zaq Restart through surviving manual access"
+             })
+
+    assert_receive {:history_llm, _}, 5_000
+    assert_receive {:history_llm_barrier, next_worker}, 5_000
+    on_exit(fn -> send(next_worker, :release_history_llm) end)
+    next = :sys.get_state(ServerManager).history[server_id]
+    refute next.pid == ledger.pid
+    assert next.generations[membership_source] == 1
+
+    assert [removal_job] =
+             Repo.all(
+               from j in Oban.Job, where: j.worker == "Zaq.Engine.HistoryRuntimeRemovalWorker"
+             )
+
+    assert :ok = HistoryRuntimeRemovalWorker.perform(removal_job)
+    assert Process.alive?(next.pid)
+    assert {:ok, %{status: :stale}} = ChannelHistoryMembership.apply_event(removal)
+    assert Process.alive?(next.pid)
+    delivery_monitor = Process.monitor(next.lease.owner)
+    send(next_worker, :release_history_llm)
+    assert await_delivery_event().body == "History answer"
+    assert_receive {:DOWN, ^delivery_monitor, :process, _, _}, 5_000
+  end
+
   @tag :boundary_persistence
   @tag :authorized_execution
   test "next admission stays fenced after native terminalization through real outcome persistence",
@@ -1140,7 +1242,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
   defp history_llm_handler(tags, owner) do
     cond do
-      tags[:boundary_revocation] || tags[:boundary_persistence] ->
+      terminal_boundary?(tags) ->
         fn _conn, body ->
           request = Jason.decode!(body)
           {200, MultiAgentOpenAIStub.text_sse("History answer", request["model"])}
@@ -1216,6 +1318,9 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 0
     assert Repo.get!(Message, input.id).content == "@zaq history question"
   end
+
+  defp terminal_boundary?(tags),
+    do: Enum.any?([:membership_removal, :boundary_revocation, :boundary_persistence], &tags[&1])
 
   defp history_barrier?(%{per_turn_refresh: true}, request, _body),
     do: length(MultiAgentOpenAIStub.tool_results(request)) < 2
@@ -1394,6 +1499,15 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         if opts[:action] == :deliver_outgoing, do: outgoing, else: await_delivery_event()
     after
       5_000 -> flunk("no real Engine delivery event was observed")
+    end
+  end
+
+  defp collect_output_events do
+    receive do
+      {:node_router_event, %Zaq.Event{request: %Outgoing{}} = event} ->
+        [event | collect_output_events()]
+    after
+      0 -> []
     end
   end
 

@@ -6,7 +6,8 @@ defmodule Zaq.Agent.HistoryContextSyncTest do
 
   alias Jido.AI.Context, as: AIContext
   alias Zaq.Accounts.People
-  alias Zaq.Agent.{Factory, HistorySync, ServerManager}
+  alias Zaq.Agent.{Api, Factory, HistorySync, RequestRegistry, ServerManager}
+  alias Zaq.Engine.{HistoryRuntimeRemoval, HistoryRuntimeRemovalWorker}
   alias Zaq.TestSupport.{MultiAgentOpenAIStub, OpenAIStub}
 
   setup tags do
@@ -95,6 +96,195 @@ defmodule Zaq.Agent.HistoryContextSyncTest do
     assert strategy(ctx.pid).context == replacement
   end
 
+  test "removal selects a stable Person and inherited history sources, not names", ctx do
+    [root] = Map.keys(ctx.cursors)
+    {:ok, person} = People.create_person(%{full_name: "Unaffected history owner"})
+    other_actor = %{person: %{id: person.id}}
+    thread = "thread-incarnation:#{Ecto.UUID.generate()}"
+    other = "same-source-other-person:#{Ecto.UUID.generate()}"
+    unrelated = "other-source-same-person:#{Ecto.UUID.generate()}"
+
+    for {scope, actor, cursors} <- [
+          {thread, ctx.actor, Map.put(ctx.cursors, Ecto.UUID.generate(), 3)},
+          {other, other_actor, ctx.cursors},
+          {unrelated, ctx.actor, %{Ecto.UUID.generate() => 4}}
+        ] do
+      assert {:ok, _} =
+               ServerManager.ensure_server(ctx.agent, scope, ctx.seed,
+                 actor: actor,
+                 history_cursors: cursors
+               )
+
+      on_exit(fn -> ServerManager.stop_server(ctx.agent, scope) end)
+    end
+
+    event_id = Ecto.UUID.generate()
+    assert {:ok, 2} = ServerManager.stop_history_runtimes(root, [ctx.actor.person.id], event_id)
+    refute Process.alive?(ctx.pid)
+    state = :sys.get_state(ServerManager)
+    assert state.history[ctx.scope] == nil
+    assert state.history[thread] == nil
+    assert Process.alive?(state.history[other].pid)
+    assert Process.alive?(state.history[unrelated].pid)
+    # A duplicate delivery cannot stop a freshly authorized replacement.
+    assert {:ok, replacement} =
+             ServerManager.ensure_server(ctx.agent, ctx.scope, ctx.seed,
+               actor: ctx.actor,
+               history_cursors: ctx.cursors
+             )
+
+    assert {:ok, 0} = ServerManager.stop_history_runtimes(root, [ctx.actor.person.id], event_id)
+    assert Process.alive?(GenServer.whereis(replacement))
+
+    assert {:error, :removal_conflict} =
+             ServerManager.stop_history_runtimes(root, [person.id], event_id)
+
+    assert Process.alive?(state.history[other].pid)
+  end
+
+  test "removal notifications require an explicit internal Engine identity and bounded payload",
+       ctx do
+    [root] = Map.keys(ctx.cursors)
+
+    payload = %{
+      transcript_id: root,
+      person_ids: [ctx.actor.person.id],
+      event_id: Ecto.UUID.generate(),
+      generation: 1
+    }
+
+    for actor <- [nil, ctx.actor, %{kind: :system, subject: "unrelated-system"}] do
+      event =
+        Zaq.Event.new(payload, :agent,
+          actor: actor,
+          opts: [action: :history_membership_removed, confidential: true]
+        )
+
+      assert %{response: {:error, :unauthorized}} =
+               Api.handle_event(event, :history_membership_removed, nil)
+    end
+
+    for ids <- [nil, [], [nil], [0], ["1"]] do
+      assert {:error, :invalid_history_removal} =
+               ServerManager.stop_history_runtimes(root, ids, Ecto.UUID.generate())
+    end
+
+    assert Process.alive?(ctx.pid)
+  end
+
+  test "transaction rollback never delivers staged removal, and retry cannot stop a replacement",
+       ctx do
+    [root] = Map.keys(ctx.cursors)
+
+    assert {:error, :rollback_removal} =
+             Repo.transaction(fn ->
+               [payload] = HistoryRuntimeRemoval.stage(root, [ctx.actor.person.id])
+
+               assert {:ok, %{members: 0}} =
+                        HistoryRuntimeRemoval.committed(
+                          {:ok, %{members: 0, runtime_removals: [payload]}}
+                        )
+
+               assert Process.alive?(ctx.pid)
+               Repo.rollback(:rollback_removal)
+             end)
+
+    assert Process.alive?(ctx.pid)
+
+    assert Repo.aggregate(
+             from(j in Oban.Job, where: j.worker == "Zaq.Engine.HistoryRuntimeRemovalWorker"),
+             :count
+           ) == 0
+
+    assert {:ok, [payload]} =
+             Repo.transaction(fn ->
+               HistoryRuntimeRemoval.stage(root, [ctx.actor.person.id])
+             end)
+
+    assert :ok = HistoryRuntimeRemoval.dispatch(payload)
+    refute Process.alive?(ctx.pid)
+
+    assert {:ok, replacement} =
+             ServerManager.ensure_server(ctx.agent, ctx.scope, ctx.seed,
+               actor: ctx.actor,
+               history_cursors: ctx.cursors
+             )
+
+    job =
+      Repo.one!(from j in Oban.Job, where: j.worker == "Zaq.Engine.HistoryRuntimeRemovalWorker")
+
+    assert :ok = HistoryRuntimeRemovalWorker.perform(job)
+    assert Process.alive?(GenServer.whereis(replacement))
+  end
+
+  test "removal releases waiting admissions as cancellations rather than ordinary execution errors",
+       ctx do
+    [root] = Map.keys(ctx.cursors)
+    assert {:ok, _lease} = ServerManager.begin_history_request(ctx.scope, ctx.pid, ctx.actor)
+    manager = Process.whereis(ServerManager)
+    :erlang.trace(manager, true, [:receive, {:tracer, self()}])
+    on_exit(fn -> :erlang.trace(manager, false, [:receive]) end)
+
+    waiter =
+      Task.async(fn -> ServerManager.begin_history_request(ctx.scope, ctx.pid, ctx.actor) end)
+
+    assert_receive {:trace, ^manager, :receive,
+                    {:"$gen_call", {waiter_pid, _}, {:begin_history_request, _, _, _}}},
+                   5_000
+
+    assert waiter_pid == waiter.pid
+    assert length(:sys.get_state(manager).history[ctx.scope].waiters) == 1
+
+    assert {:ok, 1} =
+             ServerManager.stop_history_runtimes(
+               root,
+               [ctx.actor.person.id],
+               Ecto.UUID.generate()
+             )
+
+    assert {:error, :history_membership_removed} = Task.await(waiter, 5_000)
+  end
+
+  @tag :busy
+  test "removal fences the exact active request before stopping its native worker", ctx do
+    [root] = Map.keys(ctx.cursors)
+
+    assert {:ok, %{request: request}} =
+             Factory.ask_with_config(ctx.server, "Question", ctx.agent,
+               tool_context: %{actor: ctx.actor}
+             )
+
+    assert_receive {:sync_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_sync_llm) end)
+
+    assert :ok =
+             RequestRegistry.put(request.id, %{
+               status: :running,
+               actor: ctx.actor,
+               execution_scope: ctx.scope,
+               runtime_pid: ctx.pid,
+               server_id: ctx.server
+             })
+
+    monitor = Process.monitor(ctx.pid)
+
+    assert {:ok, 1} =
+             ServerManager.stop_history_runtimes(
+               root,
+               [ctx.actor.person.id],
+               Ecto.UUID.generate()
+             )
+
+    assert_receive {:DOWN, ^monitor, :process, _, _}, 5_000
+    assert {:ok, registry} = RequestRegistry.get(request.id)
+    assert registry.status == :cancelled
+    assert registry.history_removed == true
+    assert {:error, :terminal_request} = RequestRegistry.put(request.id, %{status: :streaming})
+    assert {:error, :not_found} = RequestRegistry.find_active(ctx.scope, ctx.actor, ctx.pid)
+    send(worker, :release_sync_llm)
+    assert {:error, _} = Factory.await(request, timeout: 5_000)
+  end
+
   test "API completion sessions are process-owned, immutable, and disposed after exceptions",
        ctx do
     monitor = Process.monitor(ctx.pid)
@@ -136,6 +326,51 @@ defmodule Zaq.Agent.HistoryContextSyncTest do
 
     assert_receive {:DOWN, ^monitor, :process, _, _}, 5_000
     assert :sys.get_state(ServerManager).history[ctx.scope] == nil
+  end
+
+  test "a delayed first removal cannot stop a runtime admitted after its committed generation",
+       ctx do
+    [root] = Map.keys(ctx.cursors)
+    assert :ok = ServerManager.stop_server(ctx.agent, ctx.scope)
+
+    assert {:ok, replacement} =
+             ServerManager.ensure_server(ctx.agent, ctx.scope, ctx.seed,
+               actor: ctx.actor,
+               history_cursors: ctx.cursors,
+               history_removal_generations: %{root => 2}
+             )
+
+    # Neither event was previously seen by this Manager; idempotency receipts
+    # alone cannot protect a post-removal incarnation after delayed delivery.
+    pid = GenServer.whereis(replacement)
+
+    assert {:ok, 0} =
+             ServerManager.stop_history_runtimes(
+               root,
+               [ctx.actor.person.id],
+               Ecto.UUID.generate(),
+               1
+             )
+
+    assert {:ok, 0} =
+             ServerManager.stop_history_runtimes(
+               root,
+               [ctx.actor.person.id],
+               Ecto.UUID.generate(),
+               2
+             )
+
+    assert Process.alive?(pid)
+
+    assert {:ok, 1} =
+             ServerManager.stop_history_runtimes(
+               root,
+               [ctx.actor.person.id],
+               Ecto.UUID.generate(),
+               3
+             )
+
+    refute Process.alive?(pid)
   end
 
   test "context operations require an exact PID and nonempty operation identity", ctx do
