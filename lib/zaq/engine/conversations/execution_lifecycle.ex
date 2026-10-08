@@ -34,6 +34,22 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
     end
   end
 
+  @doc "Authorizes a public-answer root, never a private steering receipt."
+  def authorize_finalization(input, actor) do
+    case Repo.get_by(ExecutionRecord, user_message_id: input.id) do
+      nil ->
+        :ok
+
+      execution ->
+        with :ok <- authorize_owner(execution, actor) do
+          public_root(execution)
+        end
+    end
+  end
+
+  defp public_root(%ExecutionRecord{root_execution_id: nil}), do: :ok
+  defp public_root(_execution), do: {:error, :input_not_root}
+
   defp authorize_owner(execution, actor) do
     with {:ok, %{person: %{id: id}}} <- ExecutionActor.validate(actor),
          true <- id == execution.person_id,
