@@ -947,6 +947,13 @@ references; no historical repair is performed. The existing token aggregator
 uses completed execution counters in preference to Message counters, with a
 per-counter legacy fallback; retries still recompute totals once per answer.
 
+`ExecutionRecord.root_execution_id` distinguishes private per-input receipts from
+public-answer roots. Only roots use `pending`/`completed`/`failed`; children use
+`queued`/`consumed`/`unconsumed` and cannot link a public answer. The additive
+`20261008000000_add_execution_input_receipts` migration preserves populated roots
+and refuses rollback when receipt evidence would be lost. Runtime receipt wiring
+is tracked in B3 (`zaq-emb.30.4`); schema support alone is not consumption proof.
+
 - Public API for the full conversation/message/rating/share lifecycle.
 - Access from BO crosses `NodeRouter.dispatch/1` and the Engine role API. Some existing callers still use generic invoke helpers; new calls follow the domain-action dispatch contract above.
 - Dispatches `Zaq.Hooks` `:feedback_provided` event after a rating is saved.
