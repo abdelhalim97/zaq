@@ -974,6 +974,10 @@ ownership while preserving receipt/root/message identities and private payloads.
 Finalization checks root ownership before writing a public answer or failure:
 a valid child capability still returns `:input_not_root` and leaves both root
 and receipt unchanged.
+Receipt operations use a transaction/savepoint boundary. Database constraint and
+connection failures return `:execution_persistence_failed`, without exposing
+changesets or diagnostics, rolling back earlier admissions, or authorizing Jido
+injection after failed queue persistence.
 Agent automatic
 same-Person busy-input routing reuses this receipt path. Rejection/finalizing
 race coverage remains tracked in B3 (`zaq-emb.30.4`).

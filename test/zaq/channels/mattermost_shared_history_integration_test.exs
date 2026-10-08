@@ -3,6 +3,8 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
   import Zaq.SystemConfigFixtures
 
+  alias Ecto.Adapters.SQL
+
   alias Zaq.Accounts.People
   alias Zaq.Agent.RequestRegistry
   alias Zaq.Agent.ServerManager
@@ -231,6 +233,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
       actor = %{person: %{id: ctx.person.id}}
       assert {:ok, {request_id, state}} = RequestRegistry.find_active(scope, actor)
       assert_rejected_control_receipt(ctx, state, actor)
+      assert_failed_receipt_persistence(ctx, request_id, actor)
 
       steering =
         Incoming.new(%{
@@ -717,6 +720,51 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
       true ->
         nil
+    end
+  end
+
+  defp assert_failed_receipt_persistence(ctx, request_id, actor) do
+    input =
+      Incoming.new(%{
+        content: "@zaq persistence-failed correction",
+        channel_id: "shared-room",
+        author_id: "alice",
+        message_id: "persistence-failed-input",
+        thread_id: "root-human",
+        provider: :mattermost,
+        person: ctx.person,
+        routing_context: %{channel_config_id: ctx.config.id, conversation_type: :room}
+      })
+      |> CommunicationBridge.put_conversation_identity()
+
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, binding} = Conversations.admit_incoming(input)
+    before = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
+    # A real, UUID-scoped database failure. This file is serial and the blocked
+    # external LLM owns no transaction; no runtime/persistence mocks are involved.
+    SQL.query!(Repo, """
+    ALTER TABLE execution_records ADD CONSTRAINT receipt_failure_boundary_test
+    CHECK (id <> '#{before.id}'::uuid OR status <> 'queued')
+    """)
+
+    try do
+      event =
+        Zaq.Event.new(
+          %{request_id: request_id, content: input.content, conversation_binding: binding},
+          :agent,
+          actor: actor
+        )
+
+      assert %{response: {:error, :execution_persistence_failed}} =
+               Zaq.Agent.Api.handle_event(event, :steer_request, nil)
+
+      assert Repo.get!(ExecutionRecord, before.id) == before
+      assert Repo.get!(Message, binding.user_message_id).content == input.content
+    after
+      SQL.query!(
+        Repo,
+        "ALTER TABLE execution_records DROP CONSTRAINT receipt_failure_boundary_test"
+      )
     end
   end
 
