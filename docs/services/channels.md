@@ -187,6 +187,15 @@ The Engine records canonical message and target references atomically with ID-on
 association jobs; `HistoryIngress` owns immediate processing and recovery. This path
 never resends and is shared with PR B's delivery lifecycle.
 Pending receipts, failed sends and persisted generation alone are not confirmations.
+Delayed terminal delivery keeps those boundaries separate: ordered intermediary
+upserts complete before terminal delivery, but even a completed canonical answer
+is not associated with the channel until the real send/edit receipt is confirmed.
+A gateway or client receive timeout leaves generation intact without claiming
+delivery; a late server response after the sender exits cannot confirm it.
+Association recovery uses `HistoryDeliveryWorker` only after recorded confirmation
+and never resends transport. The real Mattermost/Jido integration suite exercises
+delayed success, gateway failure and the native HTTP receive deadline with a full
+Arabic answer; synchronous status regressions cover blocked partial/final ordering.
 Pipeline replies carry the incoming routing context separately from metadata;
 delivery selects the matching connector credentials. A provider-only reply is
 allowed only when the provider has one unambiguous active connector.

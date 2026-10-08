@@ -72,6 +72,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     end)
 
     llm_handler = history_llm_handler(tags, owner)
+    delivery_counter = :atomics.new(1, [])
 
     handler = fn conn, body ->
       if llm_handler && conn.request_path == "/v1/responses" do
@@ -92,7 +93,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
         llm_handler.(conn, body)
       else
-        MattermostHistoryFixture.http(conn, body, owner)
+        delivery_http(tags, conn, body, owner, delivery_counter)
       end
     end
 
@@ -1242,6 +1243,12 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
   defp history_llm_handler(tags, owner) do
     cond do
+      tags[:delayed_terminal] ->
+        fn _conn, body ->
+          request = Jason.decode!(body)
+          {200, MultiAgentOpenAIStub.text_sse(delayed_terminal_answer(), request["model"])}
+        end
+
       terminal_boundary?(tags) ->
         fn _conn, body ->
           request = Jason.decode!(body)
@@ -1277,6 +1284,135 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
       true ->
         nil
+    end
+  end
+
+  defp delayed_terminal_answer, do: "هذا هو الجواب الكامل، وليس تحديثاً جزئياً."
+
+  defp delivery_http(tags, conn, body, owner, counter) do
+    payload = if body == "", do: %{}, else: Jason.decode!(body)
+
+    terminal? =
+      conn.method in ["PUT", "POST"] and
+        String.starts_with?(conn.request_path, "/api/v4/posts") and
+        payload["message"] == delayed_terminal_answer()
+
+    final? = tags[:delayed_terminal] && terminal? && :atomics.add_get(counter, 1, 1) > 1
+
+    if final? do
+      send(owner, {:terminal_transport_barrier, self(), payload})
+
+      receive do
+        :release_terminal_transport -> :ok
+      after
+        120_000 -> flunk("terminal transport barrier was not released")
+      end
+
+      if tags[:transport_timeout],
+        do: {504, %{"message" => "Gateway Timeout"}},
+        else: MattermostHistoryFixture.http(conn, body, owner)
+    else
+      MattermostHistoryFixture.http(conn, body, owner)
+    end
+  end
+
+  @tag :delayed_terminal
+  @tag :transport_receive_timeout
+  @tag timeout: 120_000
+  test "a real asynchronous terminal HTTP receive timeout retains generation without a false confirmation",
+       ctx do
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "terminal-receive-timeout",
+               "message" => "@zaq Answer completely"
+             })
+
+    assert_receive {:history_execution_completed, owner}, 5_000
+    owner_monitor = Process.monitor(owner)
+    assert_receive {:terminal_transport_barrier, transport, payload}, 5_000
+    on_exit(fn -> send(transport, :release_terminal_transport) end)
+    assert payload["message"] == delayed_terminal_answer()
+    input = Repo.get_by!(Message, external_message_id: "terminal-receive-timeout")
+    record = Repo.get_by!(ExecutionRecord, user_message_id: input.id)
+    assert record.status == "completed"
+    answer = Repo.get!(Message, record.public_answer_message_id)
+    refute Repo.exists?(from p in TranscriptMessage, where: p.message_id == ^answer.id)
+    # Do not release the external response: exercise the real Req deadline and
+    # native adapter error, not a hand-built timeout receipt or persisted flag.
+    assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 100_000
+    assert Repo.get!(ExecutionRecord, record.id).status == "completed"
+    assert Repo.get!(Message, answer.id).content == delayed_terminal_answer()
+    assert {:error, :missing_confirmation} = HistoryIngress.associate_confirmation(answer.id)
+    refute Repo.exists?(from p in TranscriptMessage, where: p.message_id == ^answer.id)
+    refute Repo.exists?(from j in Oban.Job, where: j.worker == "Zaq.Engine.HistoryDeliveryWorker")
+    # Release any late HTTP/retry handlers only after the caller has timed out.
+    # Their eventual server-side success cannot become a transport confirmation.
+    send(transport, :release_terminal_transport)
+    release_terminal_handlers()
+    assert {:error, :missing_confirmation} = HistoryIngress.associate_confirmation(answer.id)
+  end
+
+  defp release_terminal_handlers do
+    receive do
+      {:terminal_transport_barrier, transport, _} ->
+        send(transport, :release_terminal_transport)
+        release_terminal_handlers()
+    after
+      0 -> :ok
+    end
+  end
+
+  for timeout? <- [false, true] do
+    @tag :delayed_terminal
+    @tag transport_timeout: timeout?
+    test "asynchronous generation awaits delayed terminal #{if timeout?, do: "gateway timeout", else: "confirmation"}",
+         ctx do
+      assert {{:ok, _}, _} =
+               MattermostHistoryFixture.post(ctx.config, "human", true, %{
+                 "id" => "delayed-terminal-input",
+                 "message" => "@zaq Answer completely"
+               })
+
+      assert_receive {:history_execution_completed, owner}, 5_000
+      owner_monitor = Process.monitor(owner)
+      assert_receive {:terminal_transport_barrier, transport, payload}, 5_000
+      on_exit(fn -> send(transport, :release_terminal_transport) end)
+      assert payload["message"] == delayed_terminal_answer()
+      input = Repo.get_by!(Message, external_message_id: "delayed-terminal-input")
+      record = Repo.get_by!(ExecutionRecord, user_message_id: input.id)
+      assert record.status == "completed"
+      assert record.public_answer_message_id
+      answer = Repo.get!(Message, record.public_answer_message_id)
+      assert answer.content == delayed_terminal_answer()
+      refute Repo.exists?(from p in TranscriptMessage, where: p.message_id == ^answer.id)
+      refute_receive {:DOWN, ^owner_monitor, :process, _, _}, 0
+      send(transport, :release_terminal_transport)
+      assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 10_000
+      assert Repo.get!(ExecutionRecord, record.id).status == "completed"
+      assert Repo.get!(Message, answer.id).content == delayed_terminal_answer()
+
+      if ctx.transport_timeout do
+        refute Repo.exists?(from p in TranscriptMessage, where: p.message_id == ^answer.id)
+        assert {:error, :missing_confirmation} = HistoryIngress.associate_confirmation(answer.id)
+
+        refute Repo.exists?(
+                 from j in Oban.Job, where: j.worker == "Zaq.Engine.HistoryDeliveryWorker"
+               )
+      else
+        assert Repo.exists?(
+                 from p in TranscriptMessage,
+                   where: p.message_id == ^answer.id and p.provenance == "provider_confirmed"
+               )
+
+        assert {:ok, _} = HistoryIngress.associate_confirmation(answer.id)
+
+        assert Repo.aggregate(
+                 from(p in TranscriptMessage, where: p.message_id == ^answer.id),
+                 :count
+               ) == 1
+      end
+
+      refute_received {:terminal_transport_barrier, _, _}
     end
   end
 
@@ -1532,6 +1668,9 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         failed_execution_query?(metadata) ->
           Process.put({handler, :failed_execution}, true)
 
+        completed_execution_query?(metadata) ->
+          Process.put({handler, :completed_execution}, true)
+
         queued_record_query?(metadata) ->
           Process.put({handler, :receipt}, true)
 
@@ -1551,7 +1690,8 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     flags = [
       {handler, {:history_placement_committed, self()}},
       {{handler, :receipt}, :history_input_queued},
-      {{handler, :failed_execution}, {:history_execution_failed, self()}}
+      {{handler, :failed_execution}, {:history_execution_failed, self()}},
+      {{handler, :completed_execution}, {:history_execution_completed, self()}}
     ]
 
     Enum.each(flags, fn {key, message} ->
@@ -1563,6 +1703,11 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     do:
       metadata[:source] == "execution_records" and String.starts_with?(metadata.query, "UPDATE") and
         "failed" in (metadata[:cast_params] || [])
+
+  defp completed_execution_query?(metadata),
+    do:
+      metadata[:source] == "execution_records" and String.starts_with?(metadata.query, "UPDATE") and
+        "completed" in (metadata[:cast_params] || [])
 
   defp queued_record_query?(metadata),
     do:
