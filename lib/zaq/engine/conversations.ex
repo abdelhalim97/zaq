@@ -297,7 +297,7 @@ defmodule Zaq.Engine.Conversations do
   @doc "Validates private execution ownership without changing its messages or capability."
   @spec change_execution_owner(ExecutionRecord.t(), pos_integer()) :: Ecto.Changeset.t()
   def change_execution_owner(%ExecutionRecord{} = execution, person_id),
-    do: ExecutionRecord.changeset(execution, %{person_id: person_id})
+    do: ExecutionRecord.owner_changeset(execution, person_id)
 
   @doc "Updates private execution ownership without changing its messages or capability."
   @spec update_execution_owner(ExecutionRecord.t(), pos_integer()) ::

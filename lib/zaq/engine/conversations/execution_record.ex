@@ -60,6 +60,7 @@ defmodule Zaq.Engine.Conversations.ExecutionRecord do
     |> validate_format(:finalization_token_hash, @hash_pattern)
     |> validate_answer_status()
     |> validate_root_status()
+    |> validate_immutable_identity()
     |> unique_constraint(:public_answer_message_id, name: :execution_records_public_answer_index)
     |> unique_constraint(:finalization_token_hash)
     |> foreign_key_constraint(:person_id)
@@ -72,6 +73,47 @@ defmodule Zaq.Engine.Conversations.ExecutionRecord do
     |> check_constraint(:public_answer_message_id, name: :execution_records_distinct_answer_check)
     |> check_constraint(:finalization_token_hash, name: :execution_records_capability_hash_check)
   end
+
+  @doc "Changes only the owner during an explicitly authorized People merge."
+  def owner_changeset(record, person_id) do
+    record
+    |> cast(%{person_id: person_id}, [:person_id])
+    |> validate_required([:person_id])
+    |> validate_number(:person_id, greater_than: 0)
+    |> foreign_key_constraint(:person_id)
+  end
+
+  defp validate_immutable_identity(%{data: %{__meta__: %{state: :loaded}}} = changeset) do
+    changeset
+    |> immutable_fields([:person_id, :user_message_id, :finalization_token_hash])
+    |> immutable_root()
+    |> immutable_answer()
+    |> immutable_terminal_status()
+  end
+
+  defp validate_immutable_identity(changeset), do: changeset
+
+  defp immutable_fields(changeset, fields) do
+    Enum.reduce(fields, changeset, fn field, changeset ->
+      if Map.has_key?(changeset.changes, field),
+        do: add_error(changeset, field, "cannot rebind execution identity"),
+        else: changeset
+    end)
+  end
+
+  defp immutable_root(%{data: %{status: "pending", root_execution_id: nil}} = changeset),
+    do: changeset
+
+  defp immutable_root(changeset), do: immutable_fields(changeset, [:root_execution_id])
+
+  defp immutable_answer(%{data: %{public_answer_message_id: nil}} = changeset), do: changeset
+  defp immutable_answer(changeset), do: immutable_fields(changeset, [:public_answer_message_id])
+
+  defp immutable_terminal_status(%{data: %{status: status}} = changeset)
+       when status in ["completed", "failed", "consumed", "unconsumed"],
+       do: immutable_fields(changeset, [:status])
+
+  defp immutable_terminal_status(changeset), do: changeset
 
   defp validate_answer_status(changeset) do
     user_message_id = get_field(changeset, :user_message_id)

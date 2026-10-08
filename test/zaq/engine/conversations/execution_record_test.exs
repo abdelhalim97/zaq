@@ -9,6 +9,47 @@ defmodule Zaq.Engine.Conversations.ExecutionRecordTest do
   alias Zaq.Permissions
   alias Zaq.Permissions.ChannelHistoryResource
 
+  test "loaded receipt identity cannot be rebound by ordinary execution changesets" do
+    owner = person()
+    other_owner = person()
+    root_input = message("user", "Root")
+    other_root_input = message("user", "Other root")
+    child_input = message("user", "Child")
+
+    root =
+      %ExecutionRecord{}
+      |> ExecutionRecord.changeset(execution_attrs(owner, root_input, %{}))
+      |> Repo.insert!()
+
+    other_root =
+      %ExecutionRecord{}
+      |> ExecutionRecord.changeset(execution_attrs(owner, other_root_input, %{}))
+      |> Repo.insert!()
+
+    child =
+      %ExecutionRecord{}
+      |> ExecutionRecord.changeset(
+        execution_attrs(owner, child_input, %{root_execution_id: root.id, status: "queued"})
+      )
+      |> Repo.insert!()
+
+    for attrs <- [
+          %{person_id: other_owner.id},
+          %{user_message_id: other_root_input.id},
+          %{finalization_token_hash: capability("replacement")},
+          %{root_execution_id: other_root.id},
+          %{root_execution_id: nil, status: "pending"}
+        ] do
+      refute ExecutionRecord.changeset(child, attrs).valid?
+    end
+
+    assert Conversations.change_execution_owner(child, other_owner.id).valid?
+    assert Repo.get!(ExecutionRecord, child.id) == child
+    consumed = child |> ExecutionRecord.changeset(%{status: "consumed"}) |> Repo.update!()
+    refute ExecutionRecord.changeset(consumed, %{status: "queued"}).valid?
+    refute ExecutionRecord.changeset(consumed, %{status: "unconsumed"}).valid?
+  end
+
   defp person do
     {:ok, person} = People.create_person(%{"full_name" => "Execution Owner"})
     person
