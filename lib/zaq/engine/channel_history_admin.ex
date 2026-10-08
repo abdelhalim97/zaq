@@ -3,6 +3,9 @@ defmodule Zaq.Engine.ChannelHistoryAdmin do
   Bounded canonical channel-history inspection for an already authenticated BO
   super-admin. `Engine.Api` verifies the current user and confidential event;
   this module never accepts a caller-supplied Person grant as authorization.
+
+  Message information projects an exact completed private answer root only after
+  placement and execution-owner checks; ordinary history rows remain public.
   """
 
   import Ecto.Query
@@ -14,6 +17,8 @@ defmodule Zaq.Engine.ChannelHistoryAdmin do
   alias Zaq.Engine.Conversations
 
   alias Zaq.Engine.Conversations.{
+    Conversation,
+    ExecutionRecord,
     Message,
     MessageRating,
     Transcript,
@@ -154,18 +159,7 @@ defmodule Zaq.Engine.ChannelHistoryAdmin do
 
   def dispatch(%{op: :message_info, id: id, message_id: message_id}) do
     with {:ok, message} <- transcript_message(id, message_id) do
-      {:ok,
-       Map.take(message, [
-         :id,
-         :model,
-         :metadata,
-         :trace,
-         :prompt_tokens,
-         :completion_tokens,
-         :total_tokens,
-         :latency_ms,
-         :confidence_score
-       ])}
+      message_information(message)
     end
   end
 
@@ -187,6 +181,65 @@ defmodule Zaq.Engine.ChannelHistoryAdmin do
   end
 
   def dispatch(_), do: {:error, :invalid_request}
+
+  defp message_information(message) do
+    public =
+      Map.take(message, [
+        :id,
+        :model,
+        :metadata,
+        :trace,
+        :prompt_tokens,
+        :completion_tokens,
+        :total_tokens,
+        :latency_ms,
+        :confidence_score
+      ])
+
+    query =
+      from e in ExecutionRecord,
+        where: e.public_answer_message_id == ^message.id and is_nil(e.root_execution_id),
+        limit: 2
+
+    case Repo.all(query) do
+      [] ->
+        {:ok, public}
+
+      [%ExecutionRecord{status: "completed"} = execution] ->
+        if valid_execution_owner?(execution, message),
+          do: {:ok, project_private_information(public, execution)},
+          else: {:error, :not_found}
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  defp valid_execution_owner?(execution, message) do
+    Repo.exists?(
+      from input in Message,
+        join: conversation in Conversation,
+        on: conversation.id == input.conversation_id,
+        where:
+          input.id == ^execution.user_message_id and input.role == "user" and
+            input.conversation_id == ^message.conversation_id and
+            conversation.person_id == ^execution.person_id
+    )
+  end
+
+  defp project_private_information(public, execution) do
+    metadata = (public.metadata || %{}) |> Map.drop(["measurements", "tool_calls"])
+    metadata = Map.merge(metadata, Map.take(execution.outcome, ["agent", "measurements"]))
+
+    Map.merge(public, %{
+      model: execution.usage["model"] || execution.outcome["model"] || public.model,
+      metadata: metadata,
+      trace: execution.trace_entries,
+      prompt_tokens: execution.usage["prompt_tokens"],
+      completion_tokens: execution.usage["completion_tokens"],
+      total_tokens: execution.usage["total_tokens"]
+    })
+  end
 
   defp list_parent_context(nil), do: {:ok, nil}
 

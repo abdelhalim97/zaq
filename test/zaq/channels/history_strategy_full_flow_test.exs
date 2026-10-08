@@ -721,11 +721,11 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
       assert has_element?(view, "[phx-click='close_message_info']")
       html = render(view)
       assert html =~ "gpt-4.1-mini"
-      assert_modal_surface(view, surface)
+      assert_modal_surface(view, surface, result)
     end
   end
 
-  defp assert_modal_surface(view, :measurements) do
+  defp assert_modal_surface(view, :measurements, result) do
     displayed = modal_measurements(render(view))
 
     for {key, value} <- %{
@@ -741,12 +741,26 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
 
     assert {latency, ""} = Integer.parse(displayed["latency_ms"] || "missing")
     assert latency >= 0
+    assert latency == result.execution.outcome["measurements"]["latency_ms"]
   end
 
-  defp assert_modal_surface(view, :traces) do
+  defp assert_modal_surface(view, :traces, result) do
     assert has_element?(view, "[data-testid^='trace-row-']")
-    view |> element("[data-testid^='trace-row-']", "add") |> render_click()
+    view |> element("[data-testid^='trace-row-']", "Tool Call · Add") |> render_click()
     assert has_element?(view, "[data-testid^='trace-details-']")
+
+    trace =
+      render(view)
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("[data-testid^='trace-details-'] pre")
+      |> LazyHTML.text()
+      |> Jason.decode!()
+
+    assert trace["name"] == "add"
+    assert trace["arguments"] == %{"value" => 2, "amount" => 3}
+    assert trace["status"] == "completed"
+    [persisted] = result.execution.tool_results
+    assert trace["response"] == persisted["response"]
   end
 
   defp modal_measurements(html) do
