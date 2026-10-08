@@ -209,11 +209,16 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
             where: t.external_channel_id == "shared-room" and is_nil(t.parent_id)
         )
 
-      assert {:ok, _} =
-               Zaq.Permissions.grant(
-                 {parent.permission_resource_type, parent.permission_resource_id},
-                 %{person_id: ctx.person.id, access_rights: ["read"]}
-               )
+      # Explicit BO control is tested with independently managed manual access.
+      # Provider ingress must establish legitimate access itself; a manual grant
+      # here previously hid the production mention authorization regression.
+      if @steering_mode == :explicit_control do
+        assert {:ok, _} =
+                 Zaq.Permissions.grant(
+                   {parent.permission_resource_type, parent.permission_resource_id},
+                   %{person_id: ctx.person.id, access_rights: ["read"]}
+                 )
+      end
 
       root =
         Repo.get_by!(Message,
