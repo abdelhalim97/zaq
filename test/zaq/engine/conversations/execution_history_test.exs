@@ -591,6 +591,35 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert Repo.get!(Message, root.user_message_id).trace == []
   end
 
+  test "a receipt cannot finalize a public answer or failed root on behalf of its root", ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    input = incoming(ctx, ctx.alice, "child-finalization", nil, "Correction")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, binding} = Conversations.admit_incoming(input)
+
+    assert {:ok, receipt} =
+             Conversations.queue_execution_input(root.user_message_id, binding, actor(ctx.alice))
+
+    before = Repo.get!(ExecutionRecord, receipt.execution_id)
+
+    for result <- [%{answer: "Illegitimate second answer"}, %{error: true, error_type: :timeout}] do
+      assert {:error, :input_not_root} =
+               Conversations.finalize_incoming(
+                 binding.user_message_id,
+                 binding.finalization_token,
+                 result,
+                 actor: actor(ctx.alice)
+               )
+
+      assert Repo.get!(ExecutionRecord, before.id) == before
+      assert Repo.aggregate(Message, :count) == 2
+    end
+
+    assert Repo.get_by!(ExecutionRecord, user_message_id: root.user_message_id).status ==
+             "pending"
+  end
+
   defp admitted(ctx, thread \\ nil) do
     input = incoming(ctx, ctx.alice, "question", thread, "Current input")
     assert {:ok, capture} = HistoryIngress.capture(input)

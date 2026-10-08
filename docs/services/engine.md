@@ -971,6 +971,9 @@ receipt root and public-answer linkage cannot be rebound through ordinary
 execution changesets. Terminal statuses cannot reopen or regress. Authorized
 People merges use the existing owner-change boundary, which changes only Person
 ownership while preserving receipt/root/message identities and private payloads.
+Finalization checks root ownership before writing a public answer or failure:
+a valid child capability still returns `:input_not_root` and leaves both root
+and receipt unchanged.
 Agent automatic
 same-Person busy-input routing reuses this receipt path. Rejection/finalizing
 race coverage remains tracked in B3 (`zaq-emb.30.4`).

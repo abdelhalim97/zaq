@@ -947,7 +947,8 @@ defmodule Zaq.Engine.Conversations do
 
       %Message{} = user_message ->
         with true <- valid_finalization_token?(user_message, finalization_token),
-             :ok <- ExecutionLifecycle.authorize(user_message, Keyword.get(opts, :actor)) do
+             :ok <-
+               ExecutionLifecycle.authorize_finalization(user_message, Keyword.get(opts, :actor)) do
           finalize_locked_message(user_message, result, artifacts, opts)
         else
           false -> Repo.rollback(:invalid_finalization_token)
