@@ -170,6 +170,9 @@ Each module broadcasts its own stage — orchestrators broadcast nothing:
 - Injectable via `status_module:` opt in `Api` and `Executor`; inject a `FakeNodeRouter` (calls `apply/3` locally) in unit tests to avoid real RPC
 
 ### Agent API + Executor
+- `RequestControl` is the shared internal control boundary: Engine-authorized
+  principal/grant checks, exact registry/PID targeting, durable input queueing and
+  Jido invocation live there rather than being duplicated by execution consumers.
 - Inspect/steer/inject require the registry's same trusted principal; a request ID
   alone never grants private state or control. A supplied execution scope must
   match the immutable registry scope. Person controls dispatch confidential
