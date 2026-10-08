@@ -7,7 +7,7 @@ defmodule Zaq.Engine.ScopedChannelRatingTest do
   alias Zaq.Channels.{CommunicationBridge, JidoChatBridge}
   alias Zaq.Engine.{Api, ChannelHistoryAdmin, Conversations, HistoryIngress}
   alias Zaq.Engine.ChannelConfig
-  alias Zaq.Engine.Conversations.Message
+  alias Zaq.Engine.Conversations.{ExecutionRecord, Message}
   alias Zaq.Engine.History.Delivery, as: HistoryDelivery
   alias Zaq.Engine.History.Facts
   alias Zaq.Engine.Messages.{Incoming, Outgoing, SourceIdentity}
@@ -89,7 +89,9 @@ defmodule Zaq.Engine.ScopedChannelRatingTest do
       incoming =
         if thread, do: %{incoming | thread_id: thread, message_id: "thread-input"}, else: incoming
 
-      incoming = CommunicationBridge.put_conversation_identity(incoming)
+      incoming =
+        CommunicationBridge.put_conversation_identity(%{incoming | person: %{id: person.id}})
+
       assert {:ok, captured} = HistoryIngress.capture(incoming)
 
       resource = ChannelHistoryResource.for(provider, config.id, "room")
@@ -106,11 +108,17 @@ defmodule Zaq.Engine.ScopedChannelRatingTest do
                Conversations.finalize_incoming(
                  binding.user_message_id,
                  binding.finalization_token,
-                 result
+                 result,
+                 actor: %{person: %{id: person.id}}
                )
 
       original = Repo.get!(Message, response_id)
       assert original.external_message_id == nil
+      execution = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
+      assert execution.person_id == person.id
+      assert execution.trace_entries == result.trace
+      assert execution.public_answer_message_id == response_id
+      assert original.trace == []
 
       outgoing =
         Outgoing.from_pipeline_result(
@@ -176,6 +184,7 @@ defmodule Zaq.Engine.ScopedChannelRatingTest do
       assert stored.source_account_key == SourceIdentity.account_key(provider, config.id, scope)
       assert stored.external_message_id == external_id
       assert stored.trace == original.trace
+      assert Repo.get!(ExecutionRecord, execution.id) == execution
       assert stored.conversation_id == original.conversation_id
 
       assert {:ok, %{history_capture: :stored}} =
@@ -403,7 +412,10 @@ defmodule Zaq.Engine.ScopedChannelRatingTest do
       for {provider, %{bridge: JidoChatBridge}} <- Application.fetch_env!(:zaq, :channels),
           do: to_string(provider)
 
-    Enum.uniq(["slack" | configured])
+    # Declare the supplemental provider as an atom so this isolated suite does
+    # not depend on another test having loaded it before the bridge's safe
+    # String.to_existing_atom/1 conversion.
+    Enum.uniq([Atom.to_string(:slack) | configured])
   end
 
   defp rate(ref, rater) do
