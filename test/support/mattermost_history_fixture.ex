@@ -15,17 +15,21 @@ defmodule Zaq.TestSupport.MattermostHistoryFixture do
     ]
   end
 
-  def post(config, root_author, mention?) do
+  def post(config, root_author, mention?, attrs \\ %{}) do
     root = if root_author, do: "root-#{root_author}", else: ""
 
-    post = %{
-      "id" => "incoming-post",
-      "user_id" => "alice",
-      "channel_id" => "shared-room",
-      "message" => if(mention?, do: "@zaq history question", else: "history note"),
-      "root_id" => root,
-      "create_at" => 1_700_000_000_000
-    }
+    post =
+      Map.merge(
+        %{
+          "id" => "incoming-post",
+          "user_id" => "alice",
+          "channel_id" => "shared-room",
+          "message" => if(mention?, do: "@zaq history question", else: "history note"),
+          "root_id" => root,
+          "create_at" => 1_700_000_000_000
+        },
+        attrs
+      )
 
     frame =
       {:text,

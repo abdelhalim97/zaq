@@ -10,10 +10,10 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   alias Zaq.Engine.Api
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
-  alias Zaq.Engine.Conversations.{Message, Transcript, TranscriptMessage}
+  alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript, TranscriptMessage}
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Engine.Messages.Outgoing
-  alias Zaq.TestSupport.{MattermostHistoryFixture, OpenAIStub}
+  alias Zaq.TestSupport.{MattermostHistoryFixture, OpenAIStub, ToolCallingLLMStub}
 
   @keys [
     :channels,
@@ -26,7 +26,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     :pipeline_hooks_module
   ]
 
-  setup do
+  setup tags do
     Phoenix.PubSub.subscribe(Zaq.PubSub, "node_router:events")
     owner = self()
     observe_history_commit(owner)
@@ -48,7 +48,30 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
       end)
     end)
 
-    {child, endpoint} = OpenAIStub.server(&MattermostHistoryFixture.http(&1, &2, owner), owner)
+    llm_handler =
+      if tags[:authorized_execution] do
+        ToolCallingLLMStub.handler(
+          routes: [
+            %{
+              match: &String.contains?(&1, "history question"),
+              tool: "add",
+              arguments: fn _ -> %{value: 2, amount: 3} end
+            }
+          ],
+          final_response: "History answer"
+        )
+      end
+
+    handler = fn conn, body ->
+      if llm_handler && conn.request_path == "/v1/responses" do
+        send(owner, {:history_llm, Jason.decode!(body)})
+        llm_handler.(conn, body)
+      else
+        MattermostHistoryFixture.http(conn, body, owner)
+      end
+    end
+
+    {child, endpoint} = OpenAIStub.server(handler, owner)
     start_supervised!(child)
 
     credential =
@@ -62,7 +85,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         model: "gpt-4.1-mini",
         credential_id: credential.id,
         strategy: "react",
-        enabled_tool_keys: [],
+        enabled_tool_keys: if(tags[:authorized_execution], do: ["arithmetic.add"], else: []),
         conversation_enabled: true,
         active: true,
         advanced_options: %{"stream" => false}
@@ -103,6 +126,108 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     end)
 
     %{config: config, person: person, agent: agent}
+  end
+
+  @tag :authorized_execution
+  test "authorized thread history reaches the real tool-calling agent without private data",
+       ctx do
+    {:ok, bob} = People.create_person(%{full_name: "Bob"})
+
+    {:ok, _} =
+      People.add_channel(%{
+        person_id: bob.id,
+        platform: "mattermost",
+        channel_identifier: "bob",
+        channel_config_id: ctx.config.id
+      })
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, nil, false, %{
+               "id" => "root-human",
+               "user_id" => "bob",
+               "message" => "Authorized project root"
+             })
+
+    parent =
+      Repo.one!(
+        from t in Transcript,
+          where: t.external_channel_id == "shared-room" and is_nil(t.parent_id)
+      )
+
+    assert {:ok, _} =
+             Zaq.Permissions.grant(
+               {parent.permission_resource_type, parent.permission_resource_id},
+               %{person_id: ctx.person.id, access_rights: ["read"]}
+             )
+
+    root = Repo.get_by!(Message, external_message_id: "root-human")
+
+    %ExecutionRecord{}
+    |> ExecutionRecord.changeset(%{
+      person_id: bob.id,
+      user_message_id: root.id,
+      finalization_token_hash: :crypto.hash(:sha256, "private-execution") |> Base.encode64(),
+      trace_entries: [%{"content" => "FORBIDDEN_PRIVATE_TRACE"}],
+      tool_results: [%{"content" => "FORBIDDEN_PRIVATE_TOOL"}]
+    })
+    |> Repo.insert!()
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", false, %{
+               "id" => "passive-thread",
+               "user_id" => "bob",
+               "message" => "Authorized thread evidence"
+             })
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, nil, false, %{
+               "id" => "forbidden-room",
+               "user_id" => "bob",
+               "channel_id" => "private-room",
+               "message" => "FORBIDDEN_OTHER_ROOM"
+             })
+
+    assert {{:ok, _}, post} = MattermostHistoryFixture.post(ctx.config, "human", true)
+    assert_receive {:history_llm, request}, 5_000
+    input = Jason.encode!(request["input"])
+    assert input =~ "Authorized project root"
+    assert input =~ "Authorized thread evidence"
+    assert input =~ "Bob"
+    assert length(Regex.scan(~r/Authorized project root/, input)) == 1
+    assert length(Regex.scan(~r/history question/, input)) == 1
+    refute input =~ "FORBIDDEN_"
+
+    assert_receive {:llm_tool_call, "add", %{"value" => 2, "amount" => 3}}, 5_000
+    assert_receive {:llm_tool_result, "add", result}, 5_000
+    assert result == %{"ok" => true, "result" => %{"result" => 5.0}}
+    assert_receive {:history_llm, continuation}, 5_000
+    refute Jason.encode!(continuation["input"]) =~ "FORBIDDEN_"
+
+    assert_receive {:history_post, %{"channel_id" => "shared-room", "root_id" => "root-human"}},
+                   5_000
+
+    child = Repo.get_by!(Transcript, external_thread_id: "root-human")
+    answer = await_answer(child.id)
+    outgoing = await_delivery_event()
+    assert answer.content == "History answer"
+    assert outgoing.metadata[:assistant_message_id] == answer.id
+    assert outgoing.routing_context.channel_config_id == ctx.config.id
+    assert Conversations.get_conversation!(answer.conversation_id).person_id == ctx.person.id
+    input_message = Repo.get_by!(Message, external_message_id: post["id"])
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: input_message.id)
+    assert execution.person_id == ctx.person.id
+    assert execution.status == "completed"
+    assert execution.public_answer_message_id == answer.id
+
+    ids = Repo.all(from m in Message, select: m.id, order_by: m.id)
+    count = Repo.aggregate(TranscriptMessage, :count)
+    assert {{:ok, _}, ^post} = MattermostHistoryFixture.post(ctx.config, "human", true)
+    assert Repo.all(from m in Message, select: m.id, order_by: m.id) == ids
+    assert Repo.aggregate(TranscriptMessage, :count) == count
+    refute_receive {:history_llm, _}, 200
+    refute_received {:history_post, _}
+    refute_received {:llm_stub_error, _}
+    refute_received {:unexpected_history_http, _}
   end
 
   for {name, root_author, mention?, answers?} <- MattermostHistoryFixture.scenarios() do
