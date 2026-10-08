@@ -533,6 +533,64 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert Repo.get!(ExecutionRecord, other.execution_id).status == "consumed"
   end
 
+  test "root failure seals queued inputs but retains consumed correction evidence", ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+
+    receipts =
+      for {id, consumed?} <- [{"consumed-before-failure", true}, {"queued-before-failure", false}] do
+        input = incoming(ctx, ctx.alice, id, nil, "Correction #{id}")
+        assert {:ok, _} = HistoryIngress.capture(input)
+        assert {:ok, binding} = Conversations.admit_incoming(input)
+
+        assert {:ok, receipt} =
+                 Conversations.queue_execution_input(
+                   root.user_message_id,
+                   binding,
+                   actor(ctx.alice)
+                 )
+
+        if consumed?,
+          do:
+            assert(
+              :ok ==
+                Conversations.consume_execution_input(
+                  root.user_message_id,
+                  binding.user_message_id,
+                  actor(ctx.alice)
+                )
+            )
+
+        {receipt.execution_id, consumed?}
+      end
+
+    assert {:ok, %{assistant_message_id: nil}} =
+             Conversations.finalize_incoming(
+               root.user_message_id,
+               root.finalization_token,
+               %{
+                 error: true,
+                 error_type: :tool_failure,
+                 trace: [%{"response" => "PRIVATE_FAILED_TOOL"}]
+               },
+               actor: actor(ctx.alice)
+             )
+
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: root.user_message_id)
+    assert execution.status == "failed"
+    assert execution.outcome["error_type"] == "tool_failure"
+
+    for {id, consumed?} <- receipts do
+      receipt = Repo.get!(ExecutionRecord, id)
+      assert receipt.status == if(consumed?, do: "consumed", else: "unconsumed")
+      assert receipt.public_answer_message_id == nil
+      assert receipt.root_execution_id == execution.id
+    end
+
+    assert Repo.aggregate(Message, :count) == 3
+    assert Repo.get!(Message, root.user_message_id).trace == []
+  end
+
   defp admitted(ctx, thread \\ nil) do
     input = incoming(ctx, ctx.alice, "question", thread, "Current input")
     assert {:ok, capture} = HistoryIngress.capture(input)
