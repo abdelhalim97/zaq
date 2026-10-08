@@ -97,9 +97,15 @@ defmodule Zaq.Agent.Api do
   end
 
   def handle_event(%Event{} = event, :inspect_request, _context) do
-    case request_id_request(event.request) do
-      {:ok, request_id} -> %{event | response: RequestRegistry.get(request_id)}
-      {:error, reason} -> %{event | response: {:error, {:invalid_request, reason}}}
+    with {:ok, request_id} <- request_id_request(event.request),
+         {:ok, state} <- authorized_request(event, request_id) do
+      %{event | response: {:ok, state}}
+    else
+      {:error, :missing_request_id} ->
+        %{event | response: {:error, {:invalid_request, :missing_request_id}}}
+
+      {:error, reason} ->
+        %{event | response: {:error, reason}}
     end
   end
 
@@ -109,7 +115,7 @@ defmodule Zaq.Agent.Api do
 
     with {:ok, request_id} <- request_id_request(event.request),
          {:ok, content} <- content_request(event.request),
-         {:ok, request_state} <- RequestRegistry.get(request_id),
+         {:ok, request_state} <- authorized_request(event, request_id),
          {:ok, runtime} <- request_control_runtime(request_state) do
       response =
         case action do
@@ -393,6 +399,46 @@ defmodule Zaq.Agent.Api do
         dispatch_pipeline(event, incoming)
     end
   end
+
+  defp authorized_request(event, request_id) do
+    with {:ok, state} when is_map(state) <- RequestRegistry.get(request_id),
+         {:ok, identity} <- ExecutionActor.identity(event.actor),
+         {:ok, ^identity} <- ExecutionActor.identity(state[:actor]),
+         :ok <- matching_request_scope(event.request, state),
+         :ok <- authorize_person_control(event, state, identity) do
+      {:ok, state}
+    else
+      {:error, reason} when reason in [:not_found, :scope_conflict] -> {:error, reason}
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp matching_request_scope(request, state) do
+    expected = state[:execution_scope]
+
+    case Map.get(request, :execution_scope, Map.get(request, "execution_scope")) do
+      nil -> :ok
+      ^expected -> :ok
+      _ -> {:error, :scope_conflict}
+    end
+  end
+
+  defp authorize_person_control(event, state, {:person, _id}) do
+    router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
+
+    request =
+      Event.new(%{user_message_id: state[:execution_user_message_id]}, :engine,
+        actor: event.actor,
+        opts: [action: :authorize_execution_control, confidential: true]
+      )
+
+    case router.dispatch(request) do
+      %{response: :ok} -> :ok
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp authorize_person_control(_event, _state, _identity), do: :ok
 
   defp validate_admission(_event, %Incoming{provider: nil}), do: :ok
 

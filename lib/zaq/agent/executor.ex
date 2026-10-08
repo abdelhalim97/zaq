@@ -228,6 +228,7 @@ defmodule Zaq.Agent.Executor do
                request: request,
                actor: actor,
                execution_scope: Keyword.get(execution_opts, :scope),
+               execution_user_message_id: execution_input_id(execution_opts),
                started_at: started_at,
                server_id: server_ref,
                runtime_pid: runtime_pid,
@@ -508,6 +509,11 @@ defmodule Zaq.Agent.Executor do
     else
       {:ok, opts}
     end
+  end
+
+  defp execution_input_id(opts) do
+    binding = Keyword.get(opts, :conversation_binding) || %{}
+    Map.get(binding, :user_message_id, Map.get(binding, "user_message_id"))
   end
 
   defp conversation_id(opts) do
