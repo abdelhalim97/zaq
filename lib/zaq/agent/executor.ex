@@ -37,6 +37,7 @@ defmodule Zaq.Agent.Executor do
     ErrorMessage,
     Factory,
     HistoryLoader,
+    HistorySync,
     LogprobsAnalyzer,
     OpaqueAliases,
     RequestControl,
@@ -164,6 +165,16 @@ defmodule Zaq.Agent.Executor do
   """
   @spec run(Incoming.t(), keyword()) :: Outgoing.t()
   def run(%Incoming{} = incoming, opts \\ []) do
+    if is_reference(Keyword.get(opts, :history_session)) do
+      do_run(incoming, opts)
+    else
+      HistorySync.with_session(fn session ->
+        do_run(incoming, Keyword.put(opts, :history_session, session))
+      end)
+    end
+  end
+
+  defp do_run(incoming, opts) do
     started_at = System.monotonic_time(:millisecond)
     agent_module = Keyword.get(opts, :agent_module, Agent)
     server_manager_module = Keyword.get(opts, :server_manager_module, ServerManager)
@@ -193,6 +204,8 @@ defmodule Zaq.Agent.Executor do
                actor
              ),
            {:ok, runtime_pid} <- resolve_runtime_pid(server_ref),
+           {:ok, execution_opts} <-
+             HistorySync.admit(execution_opts, server_id, runtime_pid, actor),
            question <-
              question
              |> append_attachments(incoming.attachments, server_id)
@@ -215,6 +228,7 @@ defmodule Zaq.Agent.Executor do
            %Incoming{} = incoming <- normalize_status_result(status_result, incoming),
            {:ok, %{request: request, events: events}} <-
              ask_or_queue(factory_module, runtime_pid, question, configured_agent,
+               extra_refs: %{message_id: execution_input_id(execution_opts)},
                busy_context: %{incoming: incoming, actor: actor, opts: execution_opts},
                tool_context: %{
                  incoming: incoming,
@@ -444,7 +458,8 @@ defmodule Zaq.Agent.Executor do
   defp ensure_agent_server(server_manager_module, configured_agent, server_id, opts, actor) do
     server_manager_module.ensure_server(configured_agent, server_id, Keyword.get(opts, :context),
       actor: actor,
-      history_binding: history_binding(opts)
+      history_binding: history_binding(opts),
+      history_cursors: (Keyword.get(opts, :execution_history) || %{})[:cursors]
     )
   end
 

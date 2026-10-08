@@ -23,6 +23,7 @@ defmodule Zaq.Agent.Api do
   alias Zaq.Agent.{
     ErrorMessage,
     Executor,
+    HistorySync,
     MCP,
     Pipeline,
     PromptGuard,
@@ -428,6 +429,14 @@ defmodule Zaq.Agent.Api do
   end
 
   defp dispatch_pipeline(event, incoming) do
+    HistorySync.with_session(fn session ->
+      event = %{event | opts: Keyword.put(event.opts, :history_session, session)}
+      result = do_dispatch_pipeline(event, incoming)
+      %{result | opts: Keyword.delete(result.opts, :history_session)}
+    end)
+  end
+
+  defp do_dispatch_pipeline(event, incoming) do
     pipeline_opts = Keyword.get(event.opts, :pipeline_opts, [])
     pipeline_module = Keyword.get(event.opts, :pipeline_module, Pipeline)
     executor_module = Keyword.get(event.opts, :executor_module, Executor)
@@ -441,6 +450,7 @@ defmodule Zaq.Agent.Api do
       pipeline_opts
       |> Keyword.put_new(:telemetry_dimensions, incoming_dims)
       |> Keyword.put(:conversation_binding, conversation_binding(event.assigns))
+      |> Keyword.put(:history_session, Keyword.fetch!(event.opts, :history_session))
 
     outgoing =
       case selected_agent_id(event.assigns) do
@@ -464,7 +474,8 @@ defmodule Zaq.Agent.Api do
             history: Keyword.get(pipeline_opts, :history, %{}),
             context: Keyword.get(pipeline_opts, :context),
             telemetry_dimensions: Keyword.get(pipeline_opts, :telemetry_dimensions, %{}),
-            event: event
+            event: event,
+            history_session: Keyword.fetch!(event.opts, :history_session)
           )
       end
 
@@ -516,6 +527,12 @@ defmodule Zaq.Agent.Api do
 
       case persist_response_context(node_router_mod, event, outgoing) do
         {:ok, persisted} ->
+          HistorySync.complete(
+            Keyword.get(event.opts, :history_session),
+            persisted,
+            outgoing
+          )
+
           event
           |> schedule_return_hop(enrich_outgoing_with_persistence(outgoing, persisted))
 

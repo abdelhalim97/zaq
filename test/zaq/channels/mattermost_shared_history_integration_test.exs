@@ -76,7 +76,8 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         request = Jason.decode!(body)
         send(owner, {:history_llm, request})
 
-        if history_barrier?(tags, request, body) do
+        if tags[:boundary_revocation] || tags[:boundary_persistence] ||
+             history_barrier?(tags, request, body) do
           barrier_timeout = if tags[:queue_overflow], do: 60_000, else: 10_000
           send(owner, {:history_llm_barrier, self()})
 
@@ -764,6 +765,172 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert Repo.aggregate(from(m in Message, where: m.role == "user"), :count) == 3
   end
 
+  @tag :boundary_persistence
+  @tag :authorized_execution
+  test "next admission stays fenced after native terminalization through real outcome persistence",
+       ctx do
+    assert {:ok, _} =
+             Zaq.Permissions.grant(
+               ChannelHistoryResource.for("mattermost", ctx.config.id, "shared-room"),
+               %{person_id: ctx.person.id, access_rights: ["read"]}
+             )
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "boundary-persistence-root",
+               "message" => "@zaq Persist before next admission"
+             })
+
+    assert_receive {:history_llm, _}, 5_000
+    assert_receive {:history_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_history_llm) end)
+    root = Repo.get_by!(Message, external_message_id: "boundary-persistence-root")
+    placement = Repo.get_by!(TranscriptMessage, message_id: root.id)
+    scope = "history:#{placement.transcript_id}:person:#{ctx.person.id}"
+    server_id = "#{ctx.agent.name}:#{scope}"
+    ledger = :sys.get_state(ServerManager).history[server_id]
+    delivery_monitor = Process.monitor(ledger.lease.owner)
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", false, %{
+               "id" => "boundary-persistence-background",
+               "message" => "During persistence background"
+             })
+
+    owner = self()
+    handler = {__MODULE__, :boundary_persistence, make_ref()}
+
+    assert :ok =
+             :telemetry.attach(
+               handler,
+               [:zaq, :repo, :query],
+               fn _, _, metadata, _ ->
+                 if self() == ledger.lease.owner and metadata[:source] == "execution_records" and
+                      "completed" in (metadata[:params] || []) do
+                   send(owner, {:boundary_persist_writer, self()})
+
+                   receive do
+                     :release_boundary_persistence -> :ok
+                   after
+                     10_000 -> flunk("outcome persistence barrier was not released")
+                   end
+                 end
+               end,
+               nil
+             )
+
+    on_exit(fn ->
+      send(ledger.lease.owner, :release_boundary_persistence)
+      :telemetry.detach(handler)
+    end)
+
+    send(worker, :release_history_llm)
+    assert_receive {:boundary_persist_writer, writer}, 5_000
+    assert writer == ledger.lease.owner
+    assert {:ok, %{raw_state: %{__strategy__: strategy}}} = Jido.AgentServer.status(ledger.pid)
+    assert strategy.status == :completed
+    assert strategy.active_request_id == nil
+
+    refute match?(
+             {:ok, _},
+             RequestRegistry.find_active(scope, %{person: %{id: ctx.person.id}}, ledger.pid)
+           )
+
+    manager = Process.whereis(ServerManager)
+    :erlang.trace(manager, true, [:receive, {:tracer, self()}])
+    on_exit(fn -> :erlang.trace(manager, false, [:receive]) end)
+
+    waiter =
+      Task.async(fn ->
+        assert {:ok, lease} =
+                 ServerManager.begin_history_request(server_id, ledger.pid, %{
+                   person: %{id: ctx.person.id}
+                 })
+
+        assert {:ok, %{raw_state: %{__strategy__: applied}}} = Jido.AgentServer.status(lease.pid)
+
+        assert :ok =
+                 ServerManager.complete_history_request(
+                   server_id,
+                   lease.token,
+                   applied.context,
+                   lease.cursors
+                 )
+
+        {lease, applied.context}
+      end)
+
+    assert_receive {:trace, ^manager, :receive,
+                    {:"$gen_call", {waiter_pid, _}, {:begin_history_request, _, _, _}}},
+                   5_000
+
+    assert waiter_pid == waiter.pid
+    assert length(:sys.get_state(manager).history[server_id].waiters) == 1
+    assert Task.yield(waiter, 0) == nil
+    assert :sys.get_state(manager).history[server_id].cursors == ledger.cursors
+    send(writer, :release_boundary_persistence)
+    {next, context} = Task.await(waiter, 5_000)
+    delivered = await_delivery_event()
+    assert_receive {:DOWN, ^delivery_monitor, :process, _, _}, 5_000
+    assert next.token != ledger.lease.token
+
+    assert Enum.count(
+             context.entries,
+             &(&1.refs[:message_id] == delivered.metadata.assistant_message_id)
+           ) == 1
+
+    assert Enum.count(
+             context.entries,
+             &String.contains?(to_string(&1.content), "During persistence background")
+           ) == 1
+
+    assert Repo.get_by!(ExecutionRecord, user_message_id: root.id).status == "completed"
+    assert next.cursors[placement.transcript_id] > ledger.cursors[placement.transcript_id]
+    :telemetry.detach(handler)
+  end
+
+  @tag :boundary_revocation
+  @tag :authorized_execution
+  test "a revoked boundary read disposes warm state without discarding the persisted answer",
+       ctx do
+    resource = ChannelHistoryResource.for("mattermost", ctx.config.id, "shared-room")
+
+    assert {:ok, permission} =
+             Zaq.Permissions.grant(
+               resource,
+               %{person_id: ctx.person.id, access_rights: ["read"]}
+             )
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "boundary-revoked-root",
+               "message" => "@zaq A single final answer"
+             })
+
+    assert_receive {:history_llm, _request}, 5_000
+    assert_receive {:history_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_history_llm) end)
+    root = Repo.get_by!(Message, external_message_id: "boundary-revoked-root")
+    placement = Repo.get_by!(TranscriptMessage, message_id: root.id)
+    server_id = "#{ctx.agent.name}:history:#{placement.transcript_id}:person:#{ctx.person.id}"
+    ledger = :sys.get_state(ServerManager).history[server_id]
+    assert is_pid(ledger.pid)
+    monitor = Process.monitor(ledger.pid)
+    delivery_monitor = Process.monitor(ledger.lease.owner)
+    assert :ok = Zaq.Permissions.revoke(resource, permission)
+    send(worker, :release_history_llm)
+    delivered = await_delivery_event()
+    assert delivered.body == "History answer"
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: root.id)
+    assert execution.status == "completed"
+    assert execution.public_answer_message_id == delivered.metadata.assistant_message_id
+    assert Repo.get!(Message, execution.public_answer_message_id).content == delivered.body
+    assert_receive {:DOWN, ^monitor, :process, _, _}, 5_000
+    assert_receive {:DOWN, ^delivery_monitor, :process, _, _}, 5_000
+    assert :sys.get_state(ServerManager).history[server_id] == nil
+    refute_received {:history_llm, _}
+  end
+
   @tag :per_turn_refresh
   @tag :authorized_execution
   test "three real internal turns reread cumulative A then A+B while preserving both tool pairs",
@@ -859,6 +1026,61 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert length(execution.tool_results) == 2
     assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 1
     assert Repo.aggregate(ExecutionRecord, :count) == 1
+    delivered = await_delivery_event()
+    assert delivered.metadata.assistant_message_id == answer.id
+    scope = "history:#{transcript.id}:person:#{ctx.person.id}"
+    server_id = "#{ctx.agent.name}:#{scope}"
+    ledger = :sys.get_state(ServerManager).history[server_id]
+    assert ledger.lease == nil
+    assert {:ok, %{raw_state: %{__strategy__: strategy}}} = Jido.AgentServer.status(ledger.pid)
+    entries = strategy.context.entries
+
+    for id <- [
+          root.id,
+          late_root.id,
+          answer.id,
+          Repo.get_by!(Message, external_message_id: "cumulative-a").id,
+          Repo.get_by!(Message, external_message_id: "cumulative-b").id
+        ] do
+      assert Enum.count(entries, &(&1.refs[:message_id] == id)) == 1,
+             "missing or duplicated #{id}; refs=#{inspect(Enum.map(entries, & &1.refs))}"
+    end
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", false, %{
+               "id" => "boundary-d",
+               "message" => "After completion background D"
+             })
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "boundary-next",
+               "message" => "@zaq Next warm question"
+             })
+
+    assert_receive {:history_llm, next_request}, 5_000
+    next_input = Jason.encode!(next_request["input"])
+
+    for text <- [
+          "Cumulative background A",
+          "Cumulative background B",
+          "Late retained root",
+          "After completion background D",
+          "history question",
+          "Next warm question",
+          "Cumulative history answer"
+        ] do
+      assert length(Regex.scan(Regex.compile!(Regex.escape(text)), next_input)) == 1
+    end
+
+    assert length(MultiAgentOpenAIStub.tool_results(next_request)) == 2
+    next_delivery = await_delivery_event()
+    refute next_delivery.metadata.assistant_message_id == answer.id
+    next_ledger = :sys.get_state(ServerManager).history[server_id]
+    assert next_ledger.pid == ledger.pid
+    assert next_ledger.lease == nil
+    assert Enum.all?(ledger.cursors, fn {id, cursor} -> next_ledger.cursors[id] >= cursor end)
+    assert Repo.aggregate(ExecutionRecord, :count) == 2
   end
 
   @tag :refresh_budget
@@ -918,6 +1140,12 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
   defp history_llm_handler(tags, owner) do
     cond do
+      tags[:boundary_revocation] || tags[:boundary_persistence] ->
+        fn _conn, body ->
+          request = Jason.decode!(body)
+          {200, MultiAgentOpenAIStub.text_sse("History answer", request["model"])}
+        end
+
       cumulative_refresh?(tags) ->
         &cumulative_refresh_response/2
 

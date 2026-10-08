@@ -109,6 +109,52 @@ defmodule Zaq.Agent.HistoryLoaderTest do
     end
   end
 
+  test "completed exchanges stay before later associations and the next active tool sequence" do
+    transcript = Ecto.UUID.generate()
+    a = projection_message(transcript, "During run", 1)
+    d = projection_message(transcript, "After completion", 2)
+    answer_id = Ecto.UUID.generate()
+
+    context =
+      AIContext.new(system_prompt: "System")
+      |> AIContext.append_user("Old question", refs: %{message_id: Ecto.UUID.generate()})
+      |> AIContext.append_assistant("", [%{id: "old-call", name: "add", arguments: %{value: 2}}])
+      |> AIContext.append_tool_result("old-call", "add", "Old result")
+      |> AIContext.append_assistant("Old answer")
+      |> HistoryLoader.bind_completed_answer(answer_id)
+      |> HistoryLoader.complete_projection([a])
+
+    assert hd(context.entries).refs.message_id == answer_id
+    reconciled = HistoryLoader.bind_completed_answer(context, answer_id, "Persisted fallback")
+    assert hd(reconciled.entries).content == "Persisted fallback"
+    assert hd(reconciled.entries).refs == hd(context.entries).refs
+    assert tl(reconciled.entries) == tl(context.entries)
+    assert HistoryLoader.complete_projection(context, [a]) == context
+
+    next =
+      context
+      |> AIContext.append_user("Next question")
+      |> AIContext.append_assistant("", [%{id: "next-call", name: "add", arguments: %{value: 3}}])
+      |> AIContext.append_tool_result("next-call", "add", "Next result")
+
+    merged = HistoryLoader.merge_projection(next, [a, d])
+
+    assert Enum.map(Enum.reverse(merged.entries), & &1.content) == [
+             "Author (source): During run",
+             "Old question",
+             "",
+             "Old result",
+             "Old answer",
+             "Author (source): After completion",
+             "Next question",
+             "",
+             "Next result"
+           ]
+
+    assert merged.system_prompt == "System"
+    assert HistoryLoader.merge_projection(merged, [a, d]) == merged
+  end
+
   defp projection_message(transcript_id, content, position),
     do: %{
       message_id: Ecto.UUID.generate(),

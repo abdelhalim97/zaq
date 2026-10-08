@@ -66,10 +66,42 @@ defmodule Zaq.Agent.HistoryLoader do
       context.entries
       |> Enum.reverse()
       |> Enum.split_while(fn entry ->
-        entry.role == :system or is_binary(Map.get(entry.refs || %{}, :transcript_id))
+        entry.role == :system or is_binary(Map.get(entry.refs || %{}, :transcript_id)) or
+          Map.get(entry.refs || %{}, :history_completed, false)
       end)
 
     %{context | entries: Enum.reverse(history ++ Enum.reverse(additions.entries) ++ active)}
+  end
+
+  @doc "Binds the completed native answer to its persisted UUID without replacing tool exchanges."
+  def bind_completed_answer(context, message_id, content \\ nil)
+
+  def bind_completed_answer(%AIContext{} = context, message_id, content)
+      when is_binary(message_id) do
+    case context.entries do
+      [%AIContext.Entry{role: :assistant} = entry | rest] ->
+        entry = %{entry | refs: Map.put(entry.refs || %{}, :message_id, message_id)}
+        entry = if is_binary(content), do: %{entry | content: content}, else: entry
+        %{context | entries: [entry | rest]}
+
+      _ ->
+        context
+    end
+  end
+
+  def bind_completed_answer(context, _message_id, _content), do: context
+
+  @doc "Merges the completed request and marks retained exchanges as history for the next turn."
+  def complete_projection(%AIContext{} = context, messages, opts \\ []) do
+    context = merge_projection(context, messages, opts)
+
+    %{
+      context
+      | entries:
+          Enum.map(context.entries, fn entry ->
+            %{entry | refs: Map.put(entry.refs || %{}, :history_completed, true)}
+          end)
+    }
   end
 
   @doc """
