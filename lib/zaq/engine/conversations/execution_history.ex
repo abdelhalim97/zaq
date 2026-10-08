@@ -54,6 +54,91 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
 
   def project(_input, _conversation, _person), do: {:error, :unauthorized}
 
+  @doc "Reads bounded cumulative association additions without advancing a runtime cursor."
+  def delta(%{source_provider: nil}, _conversation, _person, _cursors),
+    do: {:error, :unauthorized}
+
+  def delta(input, conversation, %Person{id: person_id} = person, cursors) do
+    with %Transcript{} = transcript <- input_transcript(input, conversation, person_id),
+         {:ok, sources} <- delta_sources(transcript),
+         :ok <- validate_cursors(cursors, sources) do
+      read_deltas(person, input, transcript, sources, cursors)
+    else
+      nil -> {:error, :unauthorized}
+      {:error, _} = error -> error
+    end
+  end
+
+  def delta(_input, _conversation, _person, _cursors), do: {:error, :unauthorized}
+
+  defp delta_sources(%{parent_id: nil} = transcript), do: {:ok, [{transcript, @local_limit}]}
+
+  defp delta_sources(transcript) do
+    case Repo.get(Transcript, transcript.parent_id) do
+      %Transcript{} = parent -> {:ok, [{parent, @parent_limit}, {transcript, @local_limit}]}
+      nil -> {:error, :unauthorized}
+    end
+  end
+
+  defp validate_cursors(cursors, sources) when is_map(cursors) do
+    valid? =
+      map_size(cursors) == length(sources) and
+        Enum.all?(sources, fn {source, _limit} ->
+          cursor = Map.get(cursors, source.id)
+          is_integer(cursor) and cursor >= 0 and cursor <= source.next_position
+        end)
+
+    if valid?, do: :ok, else: {:error, :invalid_history_cursor}
+  end
+
+  defp validate_cursors(_cursors, _sources), do: {:error, :invalid_history_cursor}
+
+  defp read_deltas(person, input, transcript, sources, cursors) do
+    initial = %{
+      kind: :canonical,
+      transcript_id: transcript.id,
+      messages: [],
+      cursors: %{},
+      upper_cursors:
+        Map.new(sources, fn {source, _limit} -> {source.id, source.next_position} end)
+    }
+
+    Enum.reduce_while(sources, {:ok, initial}, fn {source, limit}, {:ok, projection} ->
+      case TranscriptHistory.list(person, source.id,
+             after_position: cursors[source.id],
+             up_to_position: source.next_position,
+             limit: limit
+           ) do
+        {:ok, messages} ->
+          {:cont,
+           {:ok, merge_delta(projection, messages, source.id, cursors[source.id], input.id)}}
+
+        {:error, _} = error ->
+          {:halt, error}
+      end
+    end)
+  end
+
+  defp merge_delta(projection, messages, source_id, after_position, input_id) do
+    # Advance only through associations actually read, including the active
+    # input which is excluded from model history. A capped page cannot skip
+    # the unseen remainder merely because we captured its upper bound.
+    cursor =
+      case List.last(messages) do
+        nil -> after_position
+        message -> message.position
+      end
+
+    messages = Enum.map(messages, &Map.put(&1, :transcript_id, source_id))
+
+    merged =
+      (projection.messages ++ messages)
+      |> Enum.reject(&(&1.message_id == input_id))
+      |> Enum.uniq_by(& &1.message_id)
+
+    %{projection | messages: merged, cursors: Map.put(projection.cursors, source_id, cursor)}
+  end
+
   defp input_transcript(input, _conversation, person_id) do
     query =
       from t in Transcript,

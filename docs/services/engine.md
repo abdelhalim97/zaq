@@ -937,6 +937,17 @@ root is not synthesized or fetched from a provider. Private legacy admissions
 return a legacy marker only when no canonical placement exists; ambiguous replicas
 fail closed rather than selecting one arbitrarily.
 
+`execution_history/3` accepts `after_cursors:` for cumulative association deltas
+from that same authorized admission. Confidential `:execution_history` dispatch
+forwards a supplied `after_cursors` map. Keys must exactly match the admitted
+transcript and its parent, with nonnegative positions no later than their captured
+upper bounds. Each source retains its existing read limit; returned `cursors`
+stop at the last association read, while `upper_cursors` report the captured ends.
+Paging therefore never skips capped-out associations. The current input is still
+excluded from content but counts as a read association. Reads neither modify
+runtime context nor advance runtime cursors; Agent per-turn integration and
+request-boundary synchronization remain follow-on work.
+
 New canonical Person admissions also create a pending `ExecutionRecord` in the
 existing source-locked transaction. Finalization validates its literal active
 Person actor (Engine dispatch forwards `event.actor`) and atomically stores the
