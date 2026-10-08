@@ -96,6 +96,92 @@ defmodule Zaq.Engine.Conversations do
 
   def authorize_execution_control(_input_id, _actor), do: {:error, :unauthorized}
 
+  @doc "Queues a separately admitted input under the same authorized canonical root."
+  def queue_execution_input(root_input_id, binding, actor, opts \\ [])
+
+  def queue_execution_input(root_input_id, binding, actor, opts) when is_map(binding) do
+    execution_input_transaction(root_input_id, binding[:user_message_id], fn root, child ->
+      with token when is_binary(token) <- binding[:finalization_token],
+           true <- valid_finalization_token?(child, token),
+           :ok <- matching_control_content(child, opts),
+           {:ok, root_projection} <- control_projection(root, actor),
+           {:ok, child_projection} <- execution_history(binding, actor),
+           true <- root_projection[:transcript_id] == child_projection[:transcript_id],
+           {:ok, receipt} <- ExecutionLifecycle.queue(root, child) do
+        receipt
+      else
+        {:error, reason} -> Repo.rollback(reason)
+        _ -> Repo.rollback(:unauthorized)
+      end
+    end)
+  end
+
+  def queue_execution_input(_root_input_id, _binding, _actor, _opts), do: {:error, :unauthorized}
+
+  defp matching_control_content(child, opts) do
+    case Keyword.fetch(opts, :content) do
+      :error -> :ok
+      {:ok, content} when content == child.content -> :ok
+      _ -> {:error, :input_conflict}
+    end
+  end
+
+  @doc "Records real Jido consumption of a queued input; acknowledgement alone is insufficient."
+  def consume_execution_input(root_input_id, child_input_id, actor) do
+    case execution_input_transaction(root_input_id, child_input_id, fn root, child ->
+           consume_locked_input(root, child, actor)
+         end) do
+      {:ok, :ok} -> :ok
+      {:error, _} = error -> error
+    end
+  end
+
+  defp consume_locked_input(root, child, actor) do
+    with :ok <- ExecutionLifecycle.authorize(root, actor),
+         :ok <- ExecutionLifecycle.authorize(child, actor),
+         :ok <- ExecutionLifecycle.consume(root, child) do
+      :ok
+    else
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp control_projection(input, actor) do
+    with %Conversation{} = conversation <- Repo.get(Conversation, input.conversation_id),
+         {:ok, person} <- execution_history_owner(conversation, actor),
+         :ok <- ExecutionLifecycle.authorize(input, actor) do
+      ExecutionHistory.project(input, conversation, person)
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp execution_input_transaction(root_id, child_id, operation) do
+    with {:ok, root_id} <- Ecto.UUID.cast(root_id),
+         {:ok, child_id} <- Ecto.UUID.cast(child_id),
+         true <- root_id != child_id do
+      Repo.transaction(fn -> operate_locked_inputs(root_id, child_id, operation) end)
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp operate_locked_inputs(root_id, child_id, operation) do
+    inputs =
+      Repo.all(
+        from m in Message,
+          where: m.id in ^[root_id, child_id] and m.role == "user",
+          order_by: m.id,
+          lock: "FOR UPDATE"
+      )
+      |> Map.new(&{&1.id, &1})
+
+    case {inputs[root_id], inputs[child_id]} do
+      {%Message{} = root, %Message{} = child} -> operation.(root, child)
+      _ -> Repo.rollback(:unauthorized)
+    end
+  end
+
   defp execution_history_owner(conversation, actor) do
     case ExecutionActor.validate(actor) do
       {:ok, %{person: %{id: id}}} when id == conversation.person_id and id > 0 ->

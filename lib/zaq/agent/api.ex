@@ -116,14 +116,15 @@ defmodule Zaq.Agent.Api do
     with {:ok, request_id} <- request_id_request(event.request),
          {:ok, content} <- content_request(event.request),
          {:ok, request_state} <- authorized_request(event, request_id),
-         {:ok, runtime} <- request_control_runtime(request_state) do
+         {:ok, runtime} <- request_control_runtime(request_state),
+         {:ok, control_opts} <- control_input_opts(event, request_state, content, request_id) do
       response =
         case action do
           :steer_request ->
-            factory_module.steer(runtime, content, expected_request_id: request_id)
+            factory_module.steer(runtime, content, control_opts)
 
           :inject_request ->
-            factory_module.inject(runtime, content, expected_request_id: request_id)
+            factory_module.inject(runtime, content, control_opts)
         end
 
       %{event | response: response}
@@ -410,6 +411,38 @@ defmodule Zaq.Agent.Api do
     else
       {:error, reason} when reason in [:not_found, :scope_conflict] -> {:error, reason}
       _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp control_input_opts(event, %{execution_user_message_id: id}, content, request_id)
+       when is_binary(id) do
+    case conversation_binding(event.request) do
+      nil -> {:error, :admission_required}
+      binding -> queue_control_input(event, id, binding, content, request_id)
+    end
+  end
+
+  defp control_input_opts(_event, _state, _content, request_id),
+    do: {:ok, [expected_request_id: request_id]}
+
+  defp queue_control_input(event, root_id, binding, content, request_id) do
+    router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
+
+    request =
+      Event.new(%{root_user_message_id: root_id, binding: binding, content: content}, :engine,
+        actor: event.actor,
+        opts: [action: :queue_execution_input, confidential: true]
+      )
+
+    case router.dispatch(request) do
+      %{response: {:ok, receipt}} ->
+        {:ok, [expected_request_id: request_id, extra_refs: receipt.refs]}
+
+      %{response: {:error, reason}} ->
+        {:error, reason}
+
+      _ ->
+        {:error, :history_unavailable}
     end
   end
 

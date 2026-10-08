@@ -4,6 +4,27 @@ defmodule Zaq.Agent.RequestRegistryTest do
 
   alias Zaq.Agent.RequestRegistry
 
+  test "active lookup matches literal principal and exact scope without terminal requests" do
+    scope = "lookup-#{System.unique_integer([:positive])}"
+    actor = %{person: %{id: 123}}
+    id = "active-#{System.unique_integer([:positive])}"
+
+    assert :ok =
+             RequestRegistry.put(id, %{
+               actor: actor,
+               execution_scope: scope,
+               status: :streaming,
+               runtime_pid: self()
+             })
+
+    assert {:ok, {^id, _}} = RequestRegistry.find_active(scope, actor)
+    assert {:error, :not_found} = RequestRegistry.find_active(scope, %{person: %{id: 124}})
+    assert {:error, :not_found} = RequestRegistry.find_active(scope <> "-other", actor)
+    assert :ok = RequestRegistry.put(id, %{status: :completed})
+    assert {:error, :not_found} = RequestRegistry.find_active(scope, actor)
+    assert :ok = RequestRegistry.delete(id)
+  end
+
   @table :zaq_agent_request_registry
 
   setup do

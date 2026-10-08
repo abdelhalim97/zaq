@@ -951,8 +951,14 @@ per-counter legacy fallback; retries still recompute totals once per answer.
 public-answer roots. Only roots use `pending`/`completed`/`failed`; children use
 `queued`/`consumed`/`unconsumed` and cannot link a public answer. The additive
 `20261008000000_add_execution_input_receipts` migration preserves populated roots
-and refuses rollback when receipt evidence would be lost. Runtime receipt wiring
-is tracked in B3 (`zaq-emb.30.4`); schema support alone is not consumption proof.
+and refuses rollback when receipt evidence would be lost.
+Confidential `:queue_execution_input` dispatch validates both canonical admissions,
+the literal Person, current grants, same transcript and exact submitted content.
+Root/input Message locks fence this transition against finalization. Only actual
+Jido `input_injected` evidence through `:consume_execution_input` marks a queued
+receipt consumed. Root finalization seals every remaining queued receipt as
+`unconsumed`, without manufacturing a second public answer. Automatic busy-input
+routing and further race coverage remain tracked in B3 (`zaq-emb.30.4`).
 
 - Public API for the full conversation/message/rating/share lifecycle.
 - Access from BO crosses `NodeRouter.dispatch/1` and the Engine role API. Some existing callers still use generic invoke helpers; new calls follow the domain-action dispatch contract above.

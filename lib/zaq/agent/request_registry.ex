@@ -10,6 +10,8 @@ defmodule Zaq.Agent.RequestRegistry do
 
   use GenServer
 
+  alias Zaq.Identity.ExecutionActor
+
   @table :zaq_agent_request_registry
   @ownership_fields [
     :runtime_pid,
@@ -64,6 +66,41 @@ defmodule Zaq.Agent.RequestRegistry do
   end
 
   def get(_request_id), do: {:error, :not_found}
+
+  @doc "Finds one active local request by exact scope/principal; callers must authorize controls."
+  def find_active(scope, actor) when is_binary(scope) do
+    with table when table != :undefined <- table_ref(),
+         {:ok, identity} <- ExecutionActor.identity(actor) do
+      matches = scoped_requests(table, scope, identity)
+
+      case matches do
+        [match] -> {:ok, match}
+        [] -> {:error, :not_found}
+        _ -> {:error, :ambiguous_request}
+      end
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  def find_active(_scope, _actor), do: {:error, :not_found}
+
+  defp scoped_requests(table, scope, identity) do
+    :ets.foldl(
+      fn {id, state}, acc ->
+        if active_owner?(state, scope, identity), do: [{id, state} | acc], else: acc
+      end,
+      [],
+      table
+    )
+  end
+
+  defp active_owner?(state, scope, identity) when is_map(state) do
+    state[:execution_scope] == scope and state[:status] in [:running, :streaming] and
+      ExecutionActor.identity(state[:actor]) == {:ok, identity}
+  end
+
+  defp active_owner?(_state, _scope, _identity), do: false
 
   @spec delete(String.t()) :: :ok
   def delete(request_id) when is_binary(request_id) do

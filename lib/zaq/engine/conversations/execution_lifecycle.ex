@@ -10,6 +10,8 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
   alias Zaq.Identity.ExecutionActor
   alias Zaq.Repo
 
+  import Ecto.Query
+
   @doc "Creates the private root for a newly admitted canonical Person input."
   def admit(%{person_id: id}, input, token, {:ok, _provider, _account_key})
       when is_integer(id) and id > 0 and is_binary(token) do
@@ -45,6 +47,53 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
   @doc "Returns whether the locked input belongs to the new private storage contract."
   def private?(input), do: not is_nil(Repo.get_by(ExecutionRecord, user_message_id: input.id))
 
+  @doc "Links one pending admitted input to a live root without transferring answer ownership."
+  def queue(root_input, child_input) do
+    root = Repo.get_by(ExecutionRecord, user_message_id: root_input.id)
+    child = Repo.get_by(ExecutionRecord, user_message_id: child_input.id)
+
+    with :ok <- pending_root(root),
+         %ExecutionRecord{status: "pending", root_execution_id: nil, person_id: person_id} <-
+           child,
+         true <- person_id == root.person_id,
+         {:ok, child} <-
+           child
+           |> ExecutionRecord.changeset(%{root_execution_id: root.id, status: "queued"})
+           |> Repo.update() do
+      {:ok,
+       %{
+         execution_id: child.id,
+         root_execution_id: root.id,
+         refs: %{message_id: child_input.id, execution_id: child.id, root_execution_id: root.id}
+       }}
+    else
+      {:error, _} = error -> error
+      _ -> {:error, :input_conflict}
+    end
+  end
+
+  @doc "Marks only this root's queued receipt as consumed, idempotently."
+  def consume(root_input, child_input) do
+    root = Repo.get_by(ExecutionRecord, user_message_id: root_input.id)
+    child = Repo.get_by(ExecutionRecord, user_message_id: child_input.id)
+
+    with :ok <- pending_root(root),
+         %ExecutionRecord{root_execution_id: root_id, status: status} <- child,
+         true <- root_id == root.id and status in ["queued", "consumed"] do
+      case child |> ExecutionRecord.changeset(%{status: "consumed"}) |> Repo.update() do
+        {:ok, _} -> :ok
+        {:error, _} = error -> error
+      end
+    else
+      {:error, _} = error -> error
+      _ -> {:error, :input_conflict}
+    end
+  end
+
+  defp pending_root(%ExecutionRecord{root_execution_id: nil, status: "pending"}), do: :ok
+  defp pending_root(%ExecutionRecord{}), do: {:error, :terminal_request}
+  defp pending_root(_), do: {:error, :unauthorized}
+
   @doc "Stores one terminal root disposition; public-answer uniqueness remains schema-enforced."
   def finish(input, answer_id, status, trace, usage, outcome) do
     case Repo.get_by(ExecutionRecord, user_message_id: input.id) do
@@ -52,6 +101,11 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
         {:ok, nil}
 
       execution ->
+        from(child in ExecutionRecord,
+          where: child.root_execution_id == ^execution.id and child.status == "queued"
+        )
+        |> Repo.update_all(set: [status: "unconsumed", updated_at: DateTime.utc_now()])
+
         execution
         |> ExecutionRecord.changeset(%{
           status: status,
