@@ -185,10 +185,15 @@ defmodule Zaq.Engine.Conversations do
     with {:ok, root_id} <- Ecto.UUID.cast(root_id),
          {:ok, child_id} <- Ecto.UUID.cast(child_id),
          true <- root_id != child_id do
-      Repo.transaction(fn -> operate_locked_inputs(root_id, child_id, operation) end)
+      Repo.transaction(fn -> operate_locked_inputs(root_id, child_id, operation) end,
+        mode: :savepoint
+      )
     else
       _ -> {:error, :unauthorized}
     end
+  rescue
+    _error in [Ecto.ConstraintError, Postgrex.Error, DBConnection.ConnectionError] ->
+      {:error, :execution_persistence_failed}
   end
 
   defp operate_locked_inputs(root_id, child_id, operation) do
