@@ -603,9 +603,19 @@ without safe permission mutation support return `:unsupported`.
 
 ### History Loader (`Zaq.Agent.HistoryLoader`)
 - Loads initial context for runtime agent cold starts
+- Canonical Engine admissions are validated before Agent status/guard side effects,
+  and again before Executor starts or reuses a runtime. The confidential Engine
+  `:execution_history` operation owns Person/grant checks; failed authorization
+  never falls back to the legacy loader.
+- `from_projection/2` converts only authorized canonical messages to attributed
+  Jido entries with UUID/placement references. It does not query Engine storage.
+  Executor supplies this context on cold start and selects a transcript/Person
+  scope; request-boundary warm-context synchronization remains follow-on work.
 - Factory hydrates conversation-backed runtimes only from the explicit Engine-issued
   `conversation_id`; it never parses a runtime server name to recover persistence identity.
-- Pending and failed admitted user messages are excluded from model history. The current
+- The legacy loader excludes pending and failed admitted user messages. Canonical
+  projections retain them as factual history but exclude the current admitted input.
+  The current
   input is supplied as the active request rather than loaded twice on a cold start.
 - The direct loader retains person/provider lookup for legacy callers, but normal Engine
   ingress resolves a concrete conversation before Agent execution.

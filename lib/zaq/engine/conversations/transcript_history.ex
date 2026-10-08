@@ -617,7 +617,7 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
               {transcript.permission_resource_type, transcript.permission_resource_id}
             )},
          {:ok, cursor, upper, limit} <- page_options(opts) do
-      {:ok, projected_messages(id, cursor, upper, limit)}
+      {:ok, projected_messages(id, cursor, upper, limit, Keyword.get(opts, :external_message_id))}
     else
       :error -> {:error, :not_found}
       nil -> {:error, :not_found}
@@ -663,7 +663,7 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
 
   defp valid_admin_scope?(transcript), do: valid_scope?(transcript, %{}, :read)
 
-  defp projected_messages(id, cursor, upper, limit) do
+  defp projected_messages(id, cursor, upper, limit, external_id \\ nil) do
     query =
       from placement in TranscriptMessage,
         join: message in Message,
@@ -683,6 +683,12 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
         }
 
     query = if upper, do: where(query, [p], p.position <= ^upper), else: query
+
+    query =
+      if external_id,
+        do: where(query, [_p, message], message.external_message_id == ^external_id),
+        else: query
+
     query |> Repo.all() |> Enum.map(&sanitize_attachments/1)
   end
 
@@ -1058,15 +1064,24 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
     cursor = Keyword.get(opts, :after_position, 0)
     upper = Keyword.get(opts, :up_to_position)
     limit = Keyword.get(opts, :limit, 50)
+    external_id = Keyword.get(opts, :external_message_id)
 
     if is_integer(cursor) and cursor >= 0 and
          (is_nil(upper) or (is_integer(upper) and upper >= cursor)) and
-         is_integer(limit) and limit > 0 and limit <= @max_page_size do
+         valid_page_filters?(limit, external_id) do
       {:ok, cursor, upper, limit}
     else
       {:error, :invalid_cursor}
     end
   end
+
+  defp valid_page_filters?(limit, external_id),
+    do:
+      is_integer(limit) and limit > 0 and limit <= @max_page_size and
+        valid_external_filter?(external_id)
+
+  defp valid_external_filter?(nil), do: true
+  defp valid_external_filter?(value), do: is_binary(value) and value != ""
 
   defp sanitize_attachments(%{attachments: attachments} = message) do
     %{message | attachments: sanitize_attachment_list(attachments)}

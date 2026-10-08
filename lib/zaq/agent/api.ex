@@ -85,7 +85,7 @@ defmodule Zaq.Agent.Api do
     case event.request do
       %Incoming{} = incoming ->
         with {:ok, actor} <- ExecutionActor.from_event_request(event),
-             :ok <- validate_admission(event, incoming) do
+             :ok <- validate_admission(%{event | actor: actor}, incoming) do
           run_pipeline(%{event | actor: actor}, incoming)
         else
           {:error, reason} -> %{event | response: {:error, reason}, next_hop: nil}
@@ -397,7 +397,26 @@ defmodule Zaq.Agent.Api do
   defp validate_admission(_event, %Incoming{provider: nil}), do: :ok
 
   defp validate_admission(event, _incoming) do
-    if conversation_binding(event.assigns), do: :ok, else: {:error, :invalid_conversation_binding}
+    case conversation_binding(event.assigns) do
+      nil ->
+        {:error, :invalid_conversation_binding}
+
+      binding ->
+        router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
+
+        request =
+          Event.new(binding, :engine,
+            actor: event.actor,
+            trace_id: event.trace_id,
+            opts: [action: :execution_history, confidential: true]
+          )
+
+        case router.dispatch(request) do
+          %{response: {:ok, _projection}} -> :ok
+          %{response: {:error, reason}} -> {:error, reason}
+          _ -> {:error, :history_unavailable}
+        end
+    end
   end
 
   defp dispatch_pipeline(event, incoming) do

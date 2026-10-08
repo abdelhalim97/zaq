@@ -11,6 +11,7 @@ defmodule Zaq.Engine.Conversations do
   alias Zaq.Engine.Conversations.{
     Conversation,
     ConversationShare,
+    ExecutionHistory,
     ExecutionRecord,
     Message,
     MessageRating,
@@ -30,6 +31,7 @@ defmodule Zaq.Engine.Conversations do
   alias Zaq.Engine.Messages.{ConversationIdentity, Incoming, Measurements, SourceIdentity}
   alias Zaq.Engine.Messages.Incoming.Audience
   alias Zaq.Engine.Telemetry
+  alias Zaq.Identity.ExecutionActor
   alias Zaq.Repo
 
   @doc "Appends canonical content to a transcript from an internally trusted channel source."
@@ -48,6 +50,45 @@ defmodule Zaq.Engine.Conversations do
           {:ok, [map()]} | {:error, term()}
   def list_canonical_messages(person, transcript_id, opts \\ []),
     do: TranscriptHistory.list(person, transcript_id, opts)
+
+  @doc "Validates an Engine admission capability and returns only authorized execution history."
+  @spec execution_history(map(), term()) :: {:ok, map()} | {:error, term()}
+  def execution_history(binding, actor) when is_map(binding) do
+    with {:ok, conversation_id} <- Ecto.UUID.cast(binding[:conversation_id]),
+         {:ok, input_id} <- Ecto.UUID.cast(binding[:user_message_id]),
+         token when is_binary(token) <- binding[:finalization_token],
+         %Message{conversation_id: ^conversation_id, role: "user"} = input <-
+           Repo.get(Message, input_id),
+         true <- valid_finalization_token?(input, token),
+         %Conversation{} = conversation <- Repo.get(Conversation, conversation_id),
+         {:ok, person} <- execution_history_owner(conversation, actor) do
+      ExecutionHistory.project(input, conversation, person)
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  def execution_history(_binding, _actor), do: {:error, :unauthorized}
+
+  defp execution_history_owner(conversation, actor) do
+    case ExecutionActor.validate(actor) do
+      {:ok, %{person: %{id: id}}} when id == conversation.person_id and id > 0 ->
+        case Repo.get(Person, id) do
+          %Person{status: "active"} = person -> {:ok, person}
+          _ -> {:error, :unauthorized}
+        end
+
+      {:ok, %{kind: kind} = actor} when is_nil(conversation.person_id) ->
+        legacy_execution_owner(conversation.user_id, kind, actor)
+
+      _ ->
+        {:error, :unauthorized}
+    end
+  end
+
+  defp legacy_execution_owner(nil, _kind, _actor), do: {:ok, nil}
+  defp legacy_execution_owner(id, :bo_user, %{user_id: id}), do: {:ok, nil}
+  defp legacy_execution_owner(_id, _kind, _actor), do: {:error, :unauthorized}
 
   @doc """
   Lists transcripts by literal Person ownership, in ID order, without alias inference.

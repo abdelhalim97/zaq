@@ -36,6 +36,7 @@ defmodule Zaq.Agent.Executor do
     Answering,
     ErrorMessage,
     Factory,
+    HistoryLoader,
     LogprobsAnalyzer,
     OpaqueAliases,
     ServerManager,
@@ -177,6 +178,7 @@ defmodule Zaq.Agent.Executor do
 
     result =
       with {:ok, actor} <- actor_result,
+           {:ok, execution_opts} <- authorized_execution_context(execution_opts, actor),
            {:ok, configured_agent} <- selected_agent_result,
            configured_agent <- apply_system_prompt_override(configured_agent, execution_opts),
            server_id <- agent_server_id(configured_agent, execution_opts),
@@ -468,6 +470,43 @@ defmodule Zaq.Agent.Executor do
     case conversation_id(opts) do
       nil -> nil
       conversation_id -> %{conversation_id: conversation_id}
+    end
+  end
+
+  defp authorized_execution_context(opts, actor) do
+    binding = Keyword.get(opts, :conversation_binding) || %{}
+    token = Map.get(binding, :finalization_token, Map.get(binding, "finalization_token"))
+
+    if is_binary(token) do
+      request = %{
+        conversation_id: conversation_id(opts),
+        user_message_id: Map.get(binding, :user_message_id, Map.get(binding, "user_message_id")),
+        finalization_token: token
+      }
+
+      event =
+        Event.new(request, :engine,
+          actor: actor,
+          opts: [action: :execution_history, confidential: true]
+        )
+
+      case node_router(opts).dispatch(event) do
+        %{response: {:ok, %{kind: :legacy}}} ->
+          {:ok, opts}
+
+        %{response: {:ok, %{kind: :canonical} = projection}} ->
+          scope = "history:#{projection.transcript_id}:person:#{ActorNormalizer.person_id(actor)}"
+          context = HistoryLoader.from_projection(projection.messages, opaque_alias_scope: scope)
+          {:ok, opts |> Keyword.put(:context, context) |> Keyword.put(:scope, scope)}
+
+        %{response: {:error, reason}} ->
+          {:error, reason}
+
+        _ ->
+          {:error, :history_unavailable}
+      end
+    else
+      {:ok, opts}
     end
   end
 

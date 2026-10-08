@@ -1,5 +1,6 @@
 defmodule Zaq.Agent.HistoryLoaderTest do
   use Zaq.DataCase, async: false
+  use ExUnitProperties
 
   alias Jido.AI.Context, as: AIContext
   alias Zaq.Accounts.Person
@@ -7,6 +8,59 @@ defmodule Zaq.Agent.HistoryLoaderTest do
   alias Zaq.Agent.OpaqueAliases
   alias Zaq.Engine.Conversations.{Conversation, Message}
   alias Zaq.Repo
+
+  property "canonical conversion never copies opaque private fields into model entries" do
+    check all(
+            content <- string(:alphanumeric, min_length: 1),
+            private <- string(:alphanumeric, min_length: 1)
+          ) do
+      message = %{
+        message_id: Ecto.UUID.generate(),
+        role: "external",
+        content: content,
+        author_name: "Author",
+        author_id: "source",
+        provider_sent_at: nil,
+        attachments: [],
+        metadata: %{secret: private},
+        trace: [%{content: private}],
+        tool_results: [private]
+      }
+
+      [entry] = HistoryLoader.from_projection([message]).entries
+      assert entry.content == "Author (source): #{content}"
+      assert entry.refs == %{message_id: message.message_id}
+      assert entry.tool_calls == nil
+      assert entry.thinking == nil
+    end
+  end
+
+  test "canonical projection conversion retains attribution and UUID references, not private fields" do
+    id = Ecto.UUID.generate()
+    transcript_id = Ecto.UUID.generate()
+
+    context =
+      HistoryLoader.from_projection([
+        %{
+          message_id: id,
+          transcript_id: transcript_id,
+          position: 2,
+          role: "external",
+          content: "Factual note",
+          author_name: "Bob",
+          author_id: "bob",
+          provider_sent_at: nil,
+          attachments: [],
+          trace: [%{content: "PRIVATE_TRACE"}]
+        }
+      ])
+
+    [entry] = context.entries
+    assert entry.role == :user
+    assert entry.content == "Bob (bob): Factual note"
+    assert entry.refs == %{message_id: id, transcript_id: transcript_id, position: 2}
+    refute inspect(context) =~ "PRIVATE_TRACE"
+  end
 
   defp insert_person do
     Repo.insert!(%Person{

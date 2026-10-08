@@ -111,6 +111,9 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule SpyNodeRouter do
+    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+      do: %{event | response: {:ok, %{kind: :legacy}}}
+
     def dispatch(event) do
       send(self(), {:node_router_dispatch, Keyword.get(event.opts, :action), event})
       %{event | response: :ok}
@@ -118,6 +121,9 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule NilPersonNodeRouter do
+    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+      do: %{event | response: {:ok, %{kind: :legacy}}}
+
     def dispatch(event) do
       response =
         case Keyword.get(event.opts, :action) do
@@ -144,6 +150,9 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule ConfigurablePersistFailNodeRouter do
+    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+      do: %{event | response: {:ok, %{kind: :legacy}}}
+
     def dispatch(event) do
       action = Keyword.get(event.opts, :action)
       send(self(), {:configurable_persist_dispatch, action, event})
@@ -172,6 +181,9 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule PersistInvalidResponseNodeRouter do
+    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+      do: %{event | response: {:ok, %{kind: :legacy}}}
+
     def dispatch(event) do
       response =
         case Keyword.get(event.opts, :action) do
@@ -184,6 +196,9 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule PersistOkTupleNodeRouter do
+    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+      do: %{event | response: {:ok, %{kind: :legacy}}}
+
     def dispatch(event) do
       response =
         case Keyword.get(event.opts, :action) do
@@ -196,6 +211,9 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule PersistOkNonMapNodeRouter do
+    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+      do: %{event | response: {:ok, %{kind: :legacy}}}
+
     def dispatch(event) do
       response =
         case Keyword.get(event.opts, :action) do

@@ -13,6 +13,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript, TranscriptMessage}
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Engine.Messages.Outgoing
+  alias Zaq.Permissions.ChannelHistoryResource
   alias Zaq.TestSupport.{MattermostHistoryFixture, OpenAIStub, ToolCallingLLMStub}
 
   @keys [
@@ -106,6 +107,18 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
     {:ok, person} = People.create_person(%{full_name: "Alice"})
 
+    unless tags[:authorized_execution] do
+      assert {:ok, _} =
+               Zaq.Permissions.grant(
+                 ChannelHistoryResource.for(
+                   "mattermost",
+                   config.id,
+                   "shared-room"
+                 ),
+                 %{person_id: person.id, access_rights: ["read"]}
+               )
+    end
+
     {:ok, _} =
       People.add_channel(%{
         person_id: person.id,
@@ -192,7 +205,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     input = Jason.encode!(request["input"])
     assert input =~ "Authorized project root"
     assert input =~ "Authorized thread evidence"
-    assert input =~ "Bob"
+    assert input =~ "#{root.author_name} (#{root.author_id})"
     assert length(Regex.scan(~r/Authorized project root/, input)) == 1
     assert length(Regex.scan(~r/history question/, input)) == 1
     refute input =~ "FORBIDDEN_"
@@ -402,6 +415,16 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
       assert {:error, :not_found} = People.match_by_channel("mattermost", "alice", other.id)
       people_count = Repo.aggregate(Zaq.Accounts.Person, :count)
+
+      assert {:ok, _} =
+               Zaq.Permissions.grant(
+                 ChannelHistoryResource.for(
+                   "mattermost",
+                   other.id,
+                   "shared-room"
+                 ),
+                 %{person_id: ctx.person.id, access_rights: ["read"]}
+               )
 
       assert {{:ok, _}, post} = MattermostHistoryFixture.post(other, nil, true)
       assert {:ok, resolved} = People.match_by_channel("mattermost", "alice", other.id)

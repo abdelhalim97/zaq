@@ -926,6 +926,17 @@ Distributed server invalidation remains a later consumer integration.
 
 ### Conversations Context (`Zaq.Engine.Conversations`)
 
+`execution_history/2` verifies the admission token, conversation-backed input and
+literal active Person owner, then composes a sanitized canonical projection through
+`TranscriptHistory.list/3`. Engine API exposes it only as confidential
+`:execution_history` dispatch. Direct reads the shared parent; Shared combines the
+retained root, up to 50 parent messages and up to 100 local messages; Replicated
+selects the admitted Person's exact placement. Canonical UUIDs deduplicate the root
+and current input is excluded. Every source uses fresh history grants. A missing
+root is not synthesized or fetched from a provider. Private legacy admissions
+return a legacy marker only when no canonical placement exists; ambiguous replicas
+fail closed rather than selecting one arbitrarily.
+
 - Public API for the full conversation/message/rating/share lifecycle.
 - Access from BO crosses `NodeRouter.dispatch/1` and the Engine role API. Some existing callers still use generic invoke helpers; new calls follow the domain-action dispatch contract above.
 - Dispatches `Zaq.Hooks` `:feedback_provided` event after a rating is saved.
