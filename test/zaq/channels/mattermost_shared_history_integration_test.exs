@@ -73,12 +73,10 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
     handler = fn conn, body ->
       if llm_handler && conn.request_path == "/v1/responses" do
-        send(owner, {:history_llm, Jason.decode!(body)})
+        request = Jason.decode!(body)
+        send(owner, {:history_llm, request})
 
-        initial_request? = not Map.has_key?(Jason.decode!(body), "previous_response_id")
-
-        if tags[:input_consumption] and not String.contains?(body, "function_call_output") and
-             (tags[:queue_overflow] != true or initial_request?) do
+        if history_barrier?(tags, request, body) do
           barrier_timeout = if tags[:queue_overflow], do: 60_000, else: 10_000
           send(owner, {:history_llm_barrier, self()})
 
@@ -766,8 +764,95 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert Repo.aggregate(from(m in Message, where: m.role == "user"), :count) == 3
   end
 
+  @tag :per_turn_refresh
+  @tag :authorized_execution
+  test "three real internal turns reread cumulative A then A+B while preserving both tool pairs",
+       ctx do
+    assert {:ok, _} =
+             Zaq.Permissions.grant(
+               ChannelHistoryResource.for("mattermost", ctx.config.id, "shared-room"),
+               %{person_id: ctx.person.id, access_rights: ["read"]}
+             )
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "cumulative-root",
+               "message" => "@zaq history question"
+             })
+
+    assert_receive {:history_llm, initial}, 5_000
+    assert_receive {:history_llm_barrier, first_worker}, 5_000
+    on_exit(fn -> send(first_worker, :release_history_llm) end)
+    refute Jason.encode!(initial["input"]) =~ "Cumulative background"
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", false, %{
+               "id" => "cumulative-a",
+               "message" => "Cumulative background A"
+             })
+
+    send(first_worker, :release_history_llm)
+
+    assert_receive {:history_llm, second}, 5_000
+    assert_receive {:history_llm_barrier, second_worker}, 5_000
+    on_exit(fn -> send(second_worker, :release_history_llm) end)
+    second_input = Jason.encode!(second["input"])
+    assert length(Regex.scan(~r/Cumulative background A/, second_input)) == 1
+    refute second_input =~ "Cumulative background B"
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", false, %{
+               "id" => "cumulative-b",
+               "message" => "Cumulative background B"
+             })
+
+    send(second_worker, :release_history_llm)
+
+    assert_receive {:history_llm, third}, 5_000
+    third_input = Jason.encode!(third["input"])
+    assert length(Regex.scan(~r/Cumulative background A/, third_input)) == 1
+    assert length(Regex.scan(~r/Cumulative background B/, third_input)) == 1
+    assert length(Regex.scan(~r/history question/, third_input)) == 1
+    assert String.contains?(third_input, "alice")
+    [system, a, b, current, call1, output1, call2, output2] = third["input"]
+    assert system == List.first(initial["input"])
+    assert current == List.last(initial["input"])
+    assert a == Enum.at(second["input"], 1)
+
+    assert MultiAgentOpenAIStub.latest_user_message(%{"input" => [b]}) ==
+             "alice (alice): Cumulative background B"
+
+    for {call, output, id, arguments, result} <- [
+          {call1, output1, "refresh-call-1", %{"value" => 2, "amount" => 3}, 5.0},
+          {call2, output2, "refresh-call-2", %{"value" => 3, "amount" => 4}, 7.0}
+        ] do
+      assert call["type"] == "function_call"
+      assert call["call_id"] == id
+      assert Jason.decode!(call["arguments"]) == arguments
+      assert output["type"] == "function_call_output"
+      assert output["call_id"] == id
+      assert Jason.decode!(output["output"]) == %{"ok" => true, "result" => %{"result" => result}}
+    end
+
+    transcript = Repo.get_by!(Transcript, external_thread_id: "root-human")
+    answer = await_answer(transcript.id)
+    assert answer.content == "Cumulative history answer"
+    root = Repo.get_by!(Message, external_message_id: "cumulative-root")
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: root.id)
+    assert execution.status == "completed"
+    assert execution.public_answer_message_id == answer.id
+    assert execution.usage["prompt_tokens"] == 15
+    assert execution.usage["completion_tokens"] == 3
+    assert length(execution.tool_results) == 2
+    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 1
+    assert Repo.aggregate(ExecutionRecord, :count) == 1
+  end
+
   defp history_llm_handler(tags, owner) do
     cond do
+      tags[:per_turn_refresh] ->
+        &cumulative_refresh_response/2
+
       tags[:root_failure] ->
         fn _conn, _body -> {400, %{"error" => %{"message" => "Scripted rejection"}}} end
 
@@ -794,6 +879,39 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
       true ->
         nil
+    end
+  end
+
+  defp history_barrier?(%{per_turn_refresh: true}, request, _body),
+    do: length(MultiAgentOpenAIStub.tool_results(request)) < 2
+
+  defp history_barrier?(tags, request, body),
+    do:
+      tags[:input_consumption] == true and not String.contains?(body, "function_call_output") and
+        (tags[:queue_overflow] != true or not Map.has_key?(request, "previous_response_id"))
+
+  defp cumulative_refresh_response(_conn, body) do
+    request = Jason.decode!(body)
+
+    case length(MultiAgentOpenAIStub.tool_results(request)) do
+      0 ->
+        {200,
+         MultiAgentOpenAIStub.tool_call_sse("add", %{value: 2, amount: 3},
+           model: request["model"],
+           call_id: "refresh-call-1",
+           fc_id: "refresh-fc-1"
+         )}
+
+      1 ->
+        {200,
+         MultiAgentOpenAIStub.tool_call_sse("add", %{value: 3, amount: 4},
+           model: request["model"],
+           call_id: "refresh-call-2",
+           fc_id: "refresh-fc-2"
+         )}
+
+      2 ->
+        {200, MultiAgentOpenAIStub.text_sse("Cumulative history answer", request["model"])}
     end
   end
 
