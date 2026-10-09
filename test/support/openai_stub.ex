@@ -24,6 +24,9 @@ defmodule Zaq.TestSupport.OpenAIStub do
     conn = put_resp_header(conn, "connection", "close")
 
     case opts[:handler].(conn, body) do
+      %Plug.Conn{} = response ->
+        response
+
       {status, %{} = response} ->
         conn
         |> put_resp_content_type("application/json")

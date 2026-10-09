@@ -82,6 +82,9 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
 
     llm =
       cond do
+        tags[:steering_phase] ->
+          steering_llm_handler(owner, tags.steering_phase)
+
         tags[:concurrent_people] ->
           concurrent_llm_handler(owner)
 
@@ -147,7 +150,8 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
         model_max_context_tokens: 20_000,
         credential_id: credential.id,
         strategy: "react",
-        enabled_tool_keys: ["arithmetic.add"],
+        enabled_tool_keys:
+          if(tags[:steering_phase], do: ["basic.sleep"], else: ["arithmetic.add"]),
         conversation_enabled: true,
         active: true,
         advanced_options: %{"stream" => false}
@@ -456,6 +460,269 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
 
       refute_received {:llm_stub_error, _}
       refute_received {:unexpected_history_http, _}
+    end
+  end
+
+  for phase <- [:first_sleep, :second_sleep, :silent_model_wait, :reasoning_stream, :text_stream] do
+    @tag strategy: :shared
+    @tag active_update: :owner_followup
+    @tag steering_phase: phase
+    test "same-Person Spanish correction during #{phase} stays in one native execution", ctx do
+      registry = Process.whereis(RequestRegistry)
+      :erlang.trace(registry, true, [:receive, {:tracer, self()}])
+
+      on_exit(fn ->
+        if Process.alive?(registry), do: :erlang.trace(registry, false, [:receive])
+      end)
+
+      steering_ingress(ctx.config)
+      assert_receive {:strategy_llm, initial}, 5_000
+      root = Repo.get_by!(Message, external_message_id: "steering-root")
+      execution = Repo.get_by!(ExecutionRecord, user_message_id: root.id)
+      actor = %{person: %{id: execution.person_id}}
+      transcript = owner_transcript(root, execution.person_id)
+      scope = "history:#{transcript.id}:person:#{execution.person_id}"
+
+      {request_id, state, worker} =
+        await_steering_phase(ctx.steering_phase, registry, scope, actor)
+
+      :erlang.trace(registry, false, [:receive])
+      observe_native_input(state.consumer_pid)
+
+      spanish_correction(ctx.config)
+
+      assert_receive :strategy_input_queued, 5_000
+      update = Repo.get_by!(Message, external_message_id: "spanish-correction")
+      receipt = Repo.get_by!(ExecutionRecord, user_message_id: update.id)
+      assert receipt.root_execution_id == execution.id
+      assert receipt.public_answer_message_id == nil
+      if worker, do: send(worker, :release_steering_llm)
+
+      assert_receive {:steering_final_model, final_request}, 20_000
+
+      for _ <- 1..if(ctx.steering_phase == :second_sleep, do: 1, else: 2) do
+        assert_receive {:strategy_llm, _}, 5_000
+      end
+
+      encoded = Jason.encode!(final_request["input"])
+      assert length(Regex.scan(~r/actually in Spanish/, encoded)) == 1
+      assert length(Regex.scan(~r/finally say Hi in japanese/, encoded)) == 1
+      assert Enum.take(final_request["input"], 1) == Enum.take(initial["input"], 1)
+      results = MultiAgentOpenAIStub.tool_results(final_request)
+      assert Enum.map(results, & &1.call_id) == ["sleep-one", "sleep-two"]
+      assert Enum.all?(results, &(&1.output["ok"] == true))
+      await_committed_delivery()
+
+      completed = Repo.get!(ExecutionRecord, execution.id)
+      assert completed.status == "completed"
+      assert completed.person_id == execution.person_id
+      assert Repo.get!(Message, completed.public_answer_message_id).content == "Hola"
+
+      assert Repo.aggregate(
+               from(e in ExecutionRecord, where: is_nil(e.root_execution_id)),
+               :count
+             ) == 1
+
+      assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 1
+      assert Repo.get!(ExecutionRecord, receipt.id).status == "consumed"
+      assert_native_consumption(state.consumer_pid, request_id, update.id)
+
+      if Process.alive?(state.consumer_pid),
+        do: :erlang.trace(state.consumer_pid, false, [:receive])
+
+      assert completed.outcome["measurements"]["tool_call_count"] == 2
+      assert completed.outcome["measurements"]["llm_call_count"] == 3
+      assert {:error, :not_found} = RequestRegistry.find_active(scope, actor)
+      assert_transport(:shared, nil, "Hola")
+      refute_receive {:strategy_llm, _}, 200
+      refute_received {:unexpected_history_http, _}
+    end
+  end
+
+  @tag strategy: :shared
+  @tag steering_phase: :terminal_followup
+  test "a correction after native completion becomes a new answer-owning followup", ctx do
+    steering_ingress(ctx.config)
+    assert_receive {:strategy_llm, _}, 5_000
+    assert_receive {:steering_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_steering_llm) end)
+    root = Repo.get_by!(Message, external_message_id: "steering-root")
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: root.id)
+    actor = %{person: %{id: execution.person_id}}
+    transcript = owner_transcript(root, execution.person_id)
+    scope = "history:#{transcript.id}:person:#{execution.person_id}"
+    assert {:ok, {_id, state}} = RequestRegistry.find_active(scope, actor)
+    send(worker, :release_steering_llm)
+    assert_receive {:steering_final_model, _}, 5_000
+    await_committed_delivery()
+
+    assert {:ok, %{status: :completed}} =
+             Jido.AgentServer.await_completion(state.runtime_pid,
+               status_path: [:__strategy__, :status],
+               timeout: 5_000
+             )
+
+    assert {:error, :not_found} = RequestRegistry.find_active(scope, actor)
+    assert_transport(:shared, nil, "こんにちは")
+
+    spanish_correction(ctx.config)
+    assert_receive {:steering_followup_model, followup}, 5_000
+    assert MultiAgentOpenAIStub.latest_user_message(followup) =~ "actually in Spanish"
+    await_committed_delivery()
+    update = Repo.get_by!(Message, external_message_id: "spanish-correction")
+    second = Repo.get_by!(ExecutionRecord, user_message_id: update.id)
+    assert second.status == "completed"
+    assert second.root_execution_id == nil
+    assert second.person_id == execution.person_id
+    assert Repo.get!(Message, second.public_answer_message_id).content == "Hola"
+
+    assert second.public_answer_message_id !=
+             Repo.get!(ExecutionRecord, execution.id).public_answer_message_id
+
+    assert Repo.aggregate(from(e in ExecutionRecord, where: is_nil(e.root_execution_id)), :count) ==
+             2
+
+    assert_transport(:shared, nil, "Hola")
+    refute_received :strategy_input_queued
+  end
+
+  defp steering_ingress(config) do
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(config, nil, true, %{
+               "id" => "steering-root",
+               "channel_id" => @shared_room,
+               "message" =>
+                 "@zaq local sleep for 10 seconds, then sleep again for 5 seconds and finally say Hi in japanese"
+             })
+  end
+
+  defp spanish_correction(config) do
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(config, nil, true, %{
+               "id" => "spanish-correction",
+               "channel_id" => @shared_room,
+               "message" => "@zaq actually in Spanish"
+             })
+  end
+
+  defp await_steering_phase(phase, registry, scope, actor) do
+    {status, worker} =
+      case phase do
+        :first_sleep ->
+          {:tool_running, nil}
+
+        :second_sleep ->
+          assert_receive {:strategy_llm, _}, 15_000
+          {:tool_running, nil}
+
+        :silent_model_wait ->
+          assert_receive {:steering_llm_barrier, pid}, 5_000
+          on_exit(fn -> send(pid, :release_steering_llm) end)
+          {:tool_completed, pid}
+
+        _ ->
+          assert_receive {:steering_llm_barrier, pid}, 5_000
+          on_exit(fn -> send(pid, :release_steering_llm) end)
+          {:streaming, pid}
+      end
+
+    call_id = if phase == :second_sleep, do: "sleep-two", else: "sleep-one"
+    await_registry_phase(registry, status, call_id)
+    assert {:ok, {id, state}} = RequestRegistry.find_active(scope, actor)
+    assert state.status == status
+    {id, state, worker}
+  end
+
+  defp await_registry_phase(registry, status, call_id) do
+    assert_receive {:trace, ^registry, :receive,
+                    {:"$gen_call", _, {:put, _id, %{status: ^status} = attrs}}},
+                   15_000
+
+    :sys.get_state(registry)
+
+    if status == :tool_running and not Enum.any?(attrs.tool_calls, &(&1["id"] == call_id)),
+      do: await_registry_phase(registry, status, call_id)
+  end
+
+  defp steering_llm_handler(owner, phase) do
+    turn = :atomics.new(1, [])
+
+    fn conn, body ->
+      request = Jason.decode!(body)
+      steering_model_turn(:atomics.add_get(turn, 1, 1), conn, request, owner, phase)
+    end
+  end
+
+  defp steering_model_turn(1, conn, request, owner, phase) do
+    if phase == :terminal_followup, do: steering_model_barrier(owner)
+    duration = if phase == :first_sleep, do: 10_000, else: 1
+
+    response =
+      MultiAgentOpenAIStub.tool_call_sse("sleep_action", %{duration_ms: duration},
+        model: request["model"],
+        call_id: "sleep-one"
+      )
+
+    if phase in [:reasoning_stream, :text_stream],
+      do: streaming_steering_response(conn, response, owner, phase),
+      else: {200, response}
+  end
+
+  defp steering_model_turn(2, _conn, request, owner, phase) do
+    if phase == :silent_model_wait, do: steering_model_barrier(owner)
+    duration = if phase in [:first_sleep, :second_sleep], do: 5_000, else: 1
+
+    {200,
+     MultiAgentOpenAIStub.tool_call_sse("sleep_action", %{duration_ms: duration},
+       model: request["model"],
+       call_id: "sleep-two"
+     )}
+  end
+
+  defp steering_model_turn(3, _conn, request, owner, _phase) do
+    send(owner, {:steering_final_model, request})
+
+    answer =
+      if Jason.encode!(request["input"]) =~ "actually in Spanish", do: "Hola", else: "こんにちは"
+
+    {200, MultiAgentOpenAIStub.text_sse(answer, request["model"])}
+  end
+
+  defp steering_model_turn(4, _conn, request, owner, :terminal_followup) do
+    send(owner, {:steering_followup_model, request})
+    {200, MultiAgentOpenAIStub.text_sse("Hola", request["model"])}
+  end
+
+  defp steering_model_turn(_turn, _conn, _request, _owner, _phase),
+    do: {500, %{"error" => "unexpected steering model turn"}}
+
+  defp streaming_steering_response(conn, response, owner, phase) do
+    event =
+      if phase == :reasoning_stream,
+        do: "response.reasoning.delta",
+        else: "response.output_text.delta"
+
+    conn =
+      conn |> Plug.Conn.put_resp_content_type("text/event-stream") |> Plug.Conn.send_chunked(200)
+
+    assert {:ok, conn} =
+             Plug.Conn.chunk(
+               conn,
+               "event: #{event}\ndata: #{Jason.encode!(%{delta: "Considering the greeting. "})}\n\n"
+             )
+
+    steering_model_barrier(owner)
+    assert {:ok, conn} = Plug.Conn.chunk(conn, response)
+    conn
+  end
+
+  defp steering_model_barrier(owner) do
+    send(owner, {:steering_llm_barrier, self()})
+
+    receive do
+      :release_steering_llm -> :ok
+    after
+      10_000 -> flunk("steering model barrier was not released")
     end
   end
 
@@ -797,25 +1064,29 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
     refute render(view) =~ "History answer"
   end
 
-  defp assert_transport(strategy, reply_to \\ "<strategy-input@example.com>")
+  defp assert_transport(
+         strategy,
+         reply_to \\ "<strategy-input@example.com>",
+         answer \\ "History answer"
+       )
 
-  defp assert_transport(:replicated, reply_to) do
+  defp assert_transport(:replicated, reply_to, answer) do
     assert_receive {:email, email}, 5_000
     assert Enum.map(email.to, &elem(&1, 1)) == ["alice@example.com", "bob@example.com"]
     assert Enum.map(email.cc, &elem(&1, 1)) == ["carol@example.com"]
-    assert email.text_body =~ "History answer"
-    assert email.html_body =~ "History answer"
+    assert email.text_body =~ answer
+    assert email.html_body =~ answer
     assert email.headers["In-Reply-To"] == reply_to
     assert email.headers["References"] =~ "<strategy-input@example.com>"
     assert email.headers["Message-ID"] != nil
   end
 
-  defp assert_transport(_strategy, _reply_to) do
+  defp assert_transport(_strategy, _reply_to, answer) do
     assert_receive {:history_post, payload}, 5_000
     assert payload["channel_id"] in [@shared_room, "alice-dm"]
     # Status posts are allowed; require the complete answer at the real endpoint.
-    unless payload["message"] == "History answer" do
-      assert_receive {:history_update, %{"message" => "History answer"}}, 5_000
+    unless payload["message"] == answer do
+      assert_receive {:history_update, %{"message" => ^answer}}, 5_000
     end
   end
 

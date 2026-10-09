@@ -24,6 +24,9 @@ defmodule Zaq.Agent.RequestRegistry do
     :execution_user_message_id
   ]
   @terminal_statuses [:completed, :failed, :cancelled]
+  # Tool completion ends a tool call, not the request: this status can persist
+  # through the next model call before any reasoning/text delta arrives.
+  @active_statuses [:running, :streaming, :tool_running, :tool_completed]
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -135,7 +138,7 @@ defmodule Zaq.Agent.RequestRegistry do
   end
 
   defp active_owner?(state, scope, identity, runtime) when is_map(state) do
-    state[:execution_scope] == scope and state[:status] in [:running, :streaming] and
+    state[:execution_scope] == scope and state[:status] in @active_statuses and
       matching_runtime?(state, runtime) and
       ExecutionActor.identity(state[:actor]) == {:ok, identity}
   end
