@@ -27,6 +27,72 @@ defmodule Zaq.Agent.RequestRegistryTest do
 
   @table :zaq_agent_request_registry
 
+  for status <- [:running, :streaming, :tool_running, :tool_completed] do
+    test "#{status} remains steerable only by the exact principal, scope and agent" do
+      id = "phase-#{System.unique_integer([:positive])}"
+      scope = "history-#{id}"
+      actor = %{person: %{id: 123}}
+
+      on_exit(fn -> RequestRegistry.delete(id) end)
+
+      assert :ok =
+               RequestRegistry.put(id, %{
+                 actor: actor,
+                 execution_scope: scope,
+                 agent: %{id: 1},
+                 runtime_pid: self(),
+                 status: unquote(status)
+               })
+
+      assert {:ok, {^id, _}} = RequestRegistry.find_active(scope, actor, self())
+      assert {:ok, {^id, _}} = RequestRegistry.find_active(scope, actor, %{agent_id: "1"})
+      assert {:error, :not_found} = RequestRegistry.find_active(scope, actor, %{agent_id: 2})
+      assert {:error, :not_found} = RequestRegistry.find_active(scope <> ":thread", actor)
+      assert {:error, :not_found} = RequestRegistry.find_active(scope, %{person: %{id: 124}})
+      assert {:error, :not_found} = RequestRegistry.find_active(scope, nil)
+    end
+  end
+
+  property "active phases remain discoverable until the first terminal or removal fence" do
+    check all(
+            phases <- list_of(member_of([:running, :streaming, :tool_running, :tool_completed])),
+            terminal <- member_of([:completed, :failed, :cancelled, :removed])
+          ) do
+      id = "phase-property-#{System.unique_integer([:positive])}"
+      scope = "history-#{id}"
+      actor = %{person: %{id: 123}}
+
+      assert :ok =
+               RequestRegistry.put(id, %{
+                 actor: actor,
+                 execution_scope: scope,
+                 runtime_pid: self(),
+                 status: :running
+               })
+
+      for phase <- phases do
+        assert :ok = RequestRegistry.put(id, %{status: phase})
+        assert {:ok, {^id, %{status: ^phase}}} = RequestRegistry.find_active(scope, actor)
+      end
+
+      if terminal == :removed do
+        assert {:ok, _} = RequestRegistry.remove_history_runtime(self(), 123)
+      else
+        assert :ok = RequestRegistry.put(id, %{status: terminal})
+      end
+
+      assert {:error, :not_found} = RequestRegistry.find_active(scope, actor)
+
+      for phase <- [:running, :streaming, :tool_running, :tool_completed] do
+        assert {:error, :terminal_request} = RequestRegistry.put(id, %{status: phase})
+        assert {:error, :not_found} = RequestRegistry.find_active(scope, actor)
+      end
+
+      assert :ok = RequestRegistry.delete(id)
+      :ets.delete(@table, {:removed_runtime, self(), 123})
+    end
+  end
+
   test "same Person/scope requests are selected only for the exact configured agent and incarnation" do
     scope = "agent-scope-#{System.unique_integer([:positive])}"
     actor = %{person: %{id: 123}}
