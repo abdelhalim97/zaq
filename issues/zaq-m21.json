@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-10T19:59:47Z",
+  "description": "Fresh coverage failed LLMPerformanceFailureTest:15 expects OwnershipError but shared pool still referred to prior stopped owner, yielding DBConnection.Holder.checkout exit. Nonasync ExUnit.Case test intentionally uses no DB ownership to exercise real NodeRouter/telemetry LiveView fallback. Diagnose and explicitly establish manual sandbox mode to ensure intended missing-owner exception; preserve assert_raise and all chart/empty/default/no-refresh expectations. Do not broaden error assertions/rescue production exits or mock internal paths. Test-only; isolated regression and fresh coverage required. User's historical delivery carryforward unrelated; new failures block.",
+  "id": "zaq-m21",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "[#768 validation] Isolate no-owner telemetry failure from prior shared sandbox teardown",
+  "type": "bug",
+  "updated_at": "2026-10-10T19:59:47Z"
+}
