@@ -54,11 +54,15 @@
     {
       "text": "Bounded diagnosis: same five-file seed0 scope75tests2properties now green on three independent runs81.3s/101.6s/82.2s; broader native AgentChannelsConversations+workflowpool+ReqLLM config seed0 passes3490tests79properties17doctests343.8s. Existing failure-only sanitized native/SQL/Finch snapshots and five-second assertions intact. Original Sharedownerfollowup committed-delivery failure NOT reproduced with new diagnostics; no cause/fix established, do NOT close on retries. E2E21browsercases done within83test matrix; partial core review artifact reports unresolved validation finding. Need continued investigation or explicit human carry-forward decision, plus remaining review/coverage/finalgate. User-staged WIP preserved, noGitcommit/push.",
       "timestamp": "2026-10-10T17:55:46Z"
+    },
+    {
+      "text": "Julien explicitly selected Carry unresolved follow-up on2026-10-10 after the reported nonrecurrence. Historical failure moved to independent OPEN zaq-1wb, with original evidence/assertions/diagnostics retained and no fix claim. This specific historical observation no longer blocks current validation; any NEW failure still blocks. Continue remaining branchreview/coverage/finalprecommit; .31.10 itself is not completed yet.",
+      "timestamp": "2026-10-10T19:40:08Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "[zaq-emb.31] D: registry removal and live recovery preservation",
   "type": "task",
-  "updated_at": "2026-10-10T17:55:46Z"
+  "updated_at": "2026-10-10T19:40:08Z"
 }
