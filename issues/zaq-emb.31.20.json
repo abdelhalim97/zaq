@@ -33,11 +33,15 @@
     {
       "text": "Local implementation review complete for coverage gate; recorded accepted deferred historical risk remains OPENzaq-1wb. Additional affected Engine146tests3properties green, docs lifecycle row aligned with removed registry/native authority. Required21browsercases83test matrix and native preservation already current. Remaining numericalcoverage/finalprecommit gates stayopen; no finalacceptance/publication.",
       "timestamp": "2026-10-10T19:46:55Z"
+    },
+    {
+      "text": "Coverage gate remains BLOCKED after second fresh attempt600000ms, seed6258/maxcases4 unchanged excludes: ETIMEDOUT at600368ms, no completed ExUnit summary/ExCoveralls completion; status0 is invalid due timeout. Full indexed log label PR B coverage retry mix coveralls.json max-cases 4 seed 6258 full output and subprocess metadata. ChatLive stopped-owner/MCP transport error logs not established causal/test failures. No generated/staleJSONuse or coverup/finalprecommit. Required stop/report applies; current handoff/review updated. New test fixes zaq-0vo/m21 isolated73tests2properties/mixq pass but remainopen pendingfullgate. Historicalzaq-1wb stillhuman-deferred/notfixed. No finalacceptance/Gitpublication.",
+      "timestamp": "2026-10-10T20:17:54Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "[#768] P7 Integrated admission acceptance",
   "type": "task",
-  "updated_at": "2026-10-10T19:46:55Z"
+  "updated_at": "2026-10-10T20:17:54Z"
 }
