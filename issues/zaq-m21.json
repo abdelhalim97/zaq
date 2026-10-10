@@ -10,11 +10,15 @@
     {
       "text": "Causal real EngineDispatch/Sandbox probe in separate test VM after100 stopped shared owners produced98 checkout exits and2 OwnershipError raises; explicitly Sandbox.modeRepo manual then real dispatch produces OwnershipError. Test now establishes intended noowner condition in setup; original assert_raise and all chart/default/no-refresh assertions unchanged. No production rescue or internal mock. mixq passes;73tests2properties affected matrix seed6258 passes70.9s. Pending freshcoverage before closure.",
       "timestamp": "2026-10-10T20:06:16Z"
+    },
+    {
+      "text": "Julien's manual mixprecommit clean10593tests236properties48doctests0failures849s verifies no-owner scenario isolation alongside whole selected suite. ExactOwnershipError/chart expectations preserved; causal100owner probe recorded. Numericalcoverage separately unresolved .33; no production error masking.",
+      "timestamp": "2026-10-10T20:56:30Z"
     }
   ],
   "priority": 1,
   "status": "open",
   "title": "[#768 validation] Isolate no-owner telemetry failure from prior shared sandbox teardown",
   "type": "bug",
-  "updated_at": "2026-10-10T20:06:16Z"
+  "updated_at": "2026-10-10T20:56:30Z"
 }
