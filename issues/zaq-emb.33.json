@@ -35,11 +35,15 @@
     {
       "text": "Coverage retry after parent test-only fixes zaq-0vo/zaq-m21: mix coveralls.json --max-cases 4 --seed 6258 via Context Mode indexed full stdout/stderr (source label PR B coverage retry mix coveralls.json max-cases 4 seed 6258 full output and subprocess metadata); child timeout exactly600000ms. Spawn metadata elapsedMs=600368,status=0,signal=null,error=spawnSync mix ETIMEDOUT; NOT successful. ExUnit seed6258,max_cases4, default excludes integration/paradedb/real_browser. No Finished in/test count or numbered test failure summary and no ExCoveralls/report-generation completion in output: timeout while test suite still printing progress, unlike prior post-summary attempt. Indexed logs contain DBConnection.ConnectionError owner exited with Task.Supervised still using sandbox connection in ChatLive.run_pipeline_async/8 -\u003e NodeRouter -\u003e IncomingMessageRouter -\u003e Conversations.admit_unlocked/2; also Jido.MCP.Registry transport mcp_463 GenServer CaseClauseError on {:status, ref, 200} during MCP initialize. These are observed asynchronous logs, not confirmed numbered ExUnit failures/causal hang diagnosis. Per stop rule no report read, no coverup, no edits or further gates. zaq-1wb deferred remains untouched; parent must diagnose fresh timeout before final gate.",
       "timestamp": "2026-10-10T20:17:03Z"
+    },
+    {
+      "text": "Parent verified indexed retry metadata:600368ms ETIMEDOUT no completedsummary; stop coverage progression per role. docs handoff/review now accurately record BLOCKED coverage, causal isolated testfixes and remainingzaq-0vo/m21; no report accepted, coverup/finalprecommit notrun. Need diagnose completion/runtime before next authorized attempt, not secretly increase600s deadline or change test exclusions.",
+      "timestamp": "2026-10-10T20:17:55Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "[zaq-emb.33] PR B coverage handoff and review",
   "type": "task",
-  "updated_at": "2026-10-10T20:17:03Z"
+  "updated_at": "2026-10-10T20:17:55Z"
 }
