@@ -10,11 +10,15 @@
     {
       "text": "Original generator exhaustion independently reproduced with StreamData.seeded6258+resize60: TooManyDuplicates remaining2/maxtries10. No Strategy assertion reached on that generator failure. Switched uniq_list_of to ordinary bounded list_of1..30,max_length15, preserving all prior invariant assertions and broadening to valid duplicate recipient evidence; added exact reversed-recipient target equality. No maxtries/test retries/exclusions. mix q passes;73tests2properties affected property+BO+historyadmin+realstrategy matrix seed6258 passes70.9s. Pending freshcoverage before closure.",
       "timestamp": "2026-10-10T20:06:15Z"
+    },
+    {
+      "text": "Julien's current manual mixprecommit reports full qualitygate and10593tests236properties48doctests0failures at849s, providing broader clean validation for testgenerator fix; original concrete generator exhaustion fixed without retries/weaker assertions. Numericalcoverage separately unresolved in .33, not a failure in this invariant test.",
+      "timestamp": "2026-10-10T20:56:27Z"
     }
   ],
   "priority": 1,
   "status": "open",
   "title": "[#768 validation] Stabilize recipient-permutation generator without rejection sampling",
   "type": "bug",
-  "updated_at": "2026-10-10T20:06:15Z"
+  "updated_at": "2026-10-10T20:56:27Z"
 }
