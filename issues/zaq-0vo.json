@@ -6,9 +6,15 @@
   "description": "Fresh required coverage2026-10-10 exposed StrategyTest:300 StreamData.TooManyDuplicatesError on uniq_list_of(integer1..30,max_length15), before invariant execution. Construct bounded unique recipient subsets directly instead of raising maxtries/test retries or shrinking inputspace; retain all existing authority/connector assertions and strengthen actual permutation invariance. Reproduce generator exhaustion independently, validate isolated and required freshcoverage. Test-only, existing Strategy API; no production/dependency changes, noGitpublication.",
   "id": "zaq-0vo",
   "labels": [],
+  "comments": [
+    {
+      "text": "Original generator exhaustion independently reproduced with StreamData.seeded6258+resize60: TooManyDuplicates remaining2/maxtries10. No Strategy assertion reached on that generator failure. Switched uniq_list_of to ordinary bounded list_of1..30,max_length15, preserving all prior invariant assertions and broadening to valid duplicate recipient evidence; added exact reversed-recipient target equality. No maxtries/test retries/exclusions. mix q passes;73tests2properties affected property+BO+historyadmin+realstrategy matrix seed6258 passes70.9s. Pending freshcoverage before closure.",
+      "timestamp": "2026-10-10T20:06:15Z"
+    }
+  ],
   "priority": 1,
   "status": "open",
   "title": "[#768 validation] Stabilize recipient-permutation generator without rejection sampling",
   "type": "bug",
-  "updated_at": "2026-10-10T19:59:41Z"
+  "updated_at": "2026-10-10T20:06:15Z"
 }
