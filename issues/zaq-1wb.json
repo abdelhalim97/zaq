@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-10T19:40:01Z",
+  "description": "Julien explicitly selected Carry unresolved follow-up in this session on2026-10-10. Preserve historical five-file seed0 failure75tests2properties: Sharedownerfollowup reached real continuation but committed-delivery assertion5s failed; cause not conclusively captured. Do NOT equate with .31.5 SQLSandbox queue/pool issues, .31.11 completed-record ordering or .31.21 native silenttimeout. Same scope now passes three independent seed0 runs81.3/101.6/82.2s; wide native AgentChannelsConversations/workflow/pool matrix3490tests79properties17doctests passes343.8s, plus approved browser/native83test matrix including21browsercases. Green runs do not establish cause/fix. Keep original assertions/no retries/skip. test/support/delivery_diagnostics.ex and await_committed_delivery append bounded sanitized native call/SQL/Finch/process/execution/confirmation/placement evidence before teardown when reproducible. Next reproduce and identify exact generating/transport/association/commit stage, then test-first fix at its owner. Reuse existing delivery/admission/lifecycle boundaries; no speculative parallel operation or dependency changes. Evidence docs/exec-plans/review/feature-issue-768-history-b-execution-review.md and handoff. Explicitly nonblocking for current review/coverage/finalprecommit under this human carry-forward decision; any NEW failure still blocks. No claim fixed, no Gitpublication authorized.",
+  "id": "zaq-1wb",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "[#768] Deferred follow-up: historical Shared steering committed-delivery test failure",
+  "type": "bug",
+  "updated_at": "2026-10-10T19:40:01Z"
+}
