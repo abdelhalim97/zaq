@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-10T22:35:48Z",
+  "description": "Coverage assessment2026-10-11 docs/exec-plans/review/history-b-coverage-results.md records13below95files after successfulhumanfullcoverage10593tests236properties48doctests0failures. Seven testfile additions pass284tests4properties targetedcoverage/mixq. Remaining meaningful gaps: deterministic public native busy-to-queue/acceptedfollowup error or deadline states and legitimate duplicate placements; contract-invalid return-shapes, noopcallbacks, facade/FKblocked states documented as exceptions, not fabricated with internalmocks/stateforgery. No claim95allfiles. Reuse current realNodeRouter/Jido/Conversations/externalbarrierfixtures; don'tduplicateoperations/refactorproduction solelyforcoverage. Separate from historical deliveryzaq-1wb and upstreamtimeout/cancellation defects. Nonblocking documentedcoverageexceptions for current finalgate; new correctnessfailures block. NoGitpublication.",
+  "id": "zaq-68v",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "[#768] Follow up meaningful native-boundary coverage exceptions",
+  "type": "task",
+  "updated_at": "2026-10-10T22:35:48Z"
+}
