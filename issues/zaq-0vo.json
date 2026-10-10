@@ -2,6 +2,8 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-10-10T22:13:43Z",
+  "close_reason": "Causal finite generator exhaustion fixed with broader valid duplicate inputs and permutation assertions; isolated73tests2properties/mixq plus human full coverage10593tests236properties48doctests0failures passed",
   "created": "2026-10-10T19:59:41Z",
   "description": "Fresh required coverage2026-10-10 exposed StrategyTest:300 StreamData.TooManyDuplicatesError on uniq_list_of(integer1..30,max_length15), before invariant execution. Construct bounded unique recipient subsets directly instead of raising maxtries/test retries or shrinking inputspace; retain all existing authority/connector assertions and strengthen actual permutation invariance. Reproduce generator exhaustion independently, validate isolated and required freshcoverage. Test-only, existing Strategy API; no production/dependency changes, noGitpublication.",
   "id": "zaq-0vo",
@@ -17,8 +19,8 @@
     }
   ],
   "priority": 1,
-  "status": "open",
+  "status": "closed",
   "title": "[#768 validation] Stabilize recipient-permutation generator without rejection sampling",
   "type": "bug",
-  "updated_at": "2026-10-10T20:56:27Z"
+  "updated_at": "2026-10-10T22:13:43Z"
 }
