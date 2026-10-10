@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Julien",
   "blocked_by": [
     "zaq-emb.33"
   ],
@@ -18,8 +18,8 @@
     }
   ],
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "[zaq-emb.34] PR B final precommit and human implementation approval",
   "type": "task",
-  "updated_at": "2026-10-10T20:56:24Z"
+  "updated_at": "2026-10-10T22:35:58Z"
 }
