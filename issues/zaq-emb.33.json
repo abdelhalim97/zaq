@@ -43,11 +43,15 @@
     {
       "text": "Human-run mixprecommit now clean:10593tests236properties48doctests0failures,849.0s. This supersedes previous absence of finalgate evidence but not failed600scoverage attempts. Verified actual precommit alias does NOT generate numericalcoverage; existing cover/excoveralls.json remains unread/untrusted. No agent retry or report-age workaround. Need human coverage completion or explicit coverage deferral to advance this gate.",
       "timestamp": "2026-10-10T20:56:26Z"
+    },
+    {
+      "text": "Julien selected Run coverage manually rather than defer numericalcoverage. Await his successful mixcoveralls.json completion; do NOT start another agent attempt, use timeout-generatedJSON, or advance finalapproval yet. Once successful humanfreshcoverage is reported, run coverup/review gaps per workflow. His cleanprecommit remains recorded; no redundant rerun or Gitauthorization.",
+      "timestamp": "2026-10-10T20:58:43Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "[zaq-emb.33] PR B coverage handoff and review",
   "type": "task",
-  "updated_at": "2026-10-10T20:56:26Z"
+  "updated_at": "2026-10-10T20:58:43Z"
 }
