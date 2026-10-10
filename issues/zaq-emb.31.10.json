@@ -58,11 +58,15 @@
     {
       "text": "Julien explicitly selected Carry unresolved follow-up on2026-10-10 after the reported nonrecurrence. Historical failure moved to independent OPEN zaq-1wb, with original evidence/assertions/diagnostics retained and no fix claim. This specific historical observation no longer blocks current validation; any NEW failure still blocks. Continue remaining branchreview/coverage/finalprecommit; .31.10 itself is not completed yet.",
       "timestamp": "2026-10-10T19:40:08Z"
+    },
+    {
+      "text": "Integrated acceptance ready for finalhumanreview: requiredhumanbehaviorapproval/E2E done, acceptedfreshhumancoverage10593tests green, perfilecoveragework+targeted284tests4properties and finalprecommit green. Detailedcoverageexceptionszaq-68v; historicalflakezaq-1wb deferredbyJulien, notfixed. No newruntime/productionchanges incoverage. Finalhumanimplementationapproval stillpending .34; do not claimGitpublished/merged.",
+      "timestamp": "2026-10-10T22:38:42Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "[zaq-emb.31] D: registry removal and live recovery preservation",
   "type": "task",
-  "updated_at": "2026-10-10T19:40:08Z"
+  "updated_at": "2026-10-10T22:38:42Z"
 }
