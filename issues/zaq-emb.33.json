@@ -23,11 +23,15 @@
     {
       "text": "Local implementation review now approved FOR COVERAGE with explicitly deferred historical finding zaq-1wb under Julien's Carry unresolved follow-up decision; not final acceptance/external published PR review. Remaining changed production paths, schemas/migrations, config/dependencies and new regression scenarios inspected. One stale RequestRegistry navigation row fixed in docs/services/message-lifecycle.md; no production changes in review. Additional Engine BOauth/membership/dispatch/history/removal/rating scope146tests3properties passes49.0s seed0. Review report updated with disposition and bounded scope. Proceed fresh coverage-upper workflow; any new failure blocks. NoGitpublication.",
       "timestamp": "2026-10-10T19:46:54Z"
+    },
+    {
+      "text": "Coverage-upper fresh mix coveralls.json attempt 2026-10-10: spawnSync mix coveralls.json timeout=600000ms, status=0 signal=null error=spawnSync mix ETIMEDOUT (timeout overrides apparent status). Tests printed Finished in 571.8s (173.0s async,398.8s sync), 37 doctests/181 properties/7416 tests, 2 failures,1 skipped,122 excluded. Failures: test/zaq/engine/history/strategy_test.exs:300 recipient permutations property StreamData.TooManyDuplicatesError (10 non-unique elements, 1 remaining); test/zaq_web/live/bo/llm_performance_failure_test.exs:12 telemetry failure expected DBConnection.OwnershipError, instead exited in DBConnection.Holder.checkout for telemetry_rollups because holder owner exited. Timeout after tests while ExCoveralls stats/report generation or teardown; Erlang stderr included ExCoveralls.Stats.report/1 stack, but precise hang point undetermined. Spawn output only filtered in memory; no retained full log/seed/full failure stacks. Existing cover/excoveralls.json NOT used; no coverup, source edits, or follow-on gates. These newly observed failures and timeout block coverage and final precommit; parent diagnosis required; zaq-1wb remains independent deferred risk.",
+      "timestamp": "2026-10-10T19:58:11Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "[zaq-emb.33] PR B coverage handoff and review",
   "type": "task",
-  "updated_at": "2026-10-10T19:46:54Z"
+  "updated_at": "2026-10-10T19:58:11Z"
 }
