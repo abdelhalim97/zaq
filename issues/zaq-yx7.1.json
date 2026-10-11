@@ -4,14 +4,16 @@
   "blocks": [
     "zaq-yx7.2"
   ],
+  "closed_at": "2026-10-11T06:55:08Z",
+  "close_reason": "Pinned published 6c6df55e; Channels owns shared process options; thin adapter returns stable Connector spec; real-host root/internal restart, disable and unrelated bridge isolation pass. mix q passed; expanded isolated tests: 150 tests + 10 properties. Reuses WebBridge lifecycle; no ZAQ recovery machinery.",
   "created": "2026-10-11T06:39:48Z",
   "description": "Pin 6c6df55e1835b97a83901a0acda06d35b00312f9; start Channels-only shared infrastructure via options; use stable Connector children and existing WebBridge lifecycle. Reuse: existing startup/replacement/shutdown operations, local-only supervisor wiring (no new domain Action). Test ordering, recovery, removal and isolation.",
   "id": "zaq-yx7.1",
   "labels": [],
   "parent": "zaq-yx7",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-yx7.1] Migrate widget to published supervised connector lifecycle",
   "type": "task",
-  "updated_at": "2026-10-11T06:40:09Z"
+  "updated_at": "2026-10-11T06:55:08Z"
 }
