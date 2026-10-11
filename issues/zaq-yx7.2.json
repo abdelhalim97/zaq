@@ -9,9 +9,15 @@
   "id": "zaq-yx7.2",
   "labels": [],
   "parent": "zaq-yx7",
+  "comments": [
+    {
+      "text": "Readiness v2 closed schema retains local verification; BO Ready (local) labels and explanations. Replaced package env with startup opts and removed evaluation TLS vars. Documented trusted proxy peer IPs/headers/routes. Actual CA-verified TLS proxy -\u003e HTTP host cookies/CSRF/WSS tests pass. Manual embedded Chromium probe passes auth, real E2E LLM reply, renewal, reconnect, explicit durable restore and signed disconnect, no browser errors. mix q passes; isolated suite 165 tests + 10 properties; Channels/System Configuration 192 and BO Chat 9 existing browser tests pass in three browsers. Initial unrelated System Configuration option timeout passed alone and on full rerun, without changes. Docs links + diff check pass. No release recommendation: upstream browser CI failed at first check; multi-node remains unverified. Final UX/E2E/coverage/precommit deferred.",
+      "timestamp": "2026-10-11T07:21:53Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7.2] Adopt widget readiness v2 and proxy host deployment",
   "type": "task",
-  "updated_at": "2026-10-11T06:55:09Z"
+  "updated_at": "2026-10-11T07:21:53Z"
 }
