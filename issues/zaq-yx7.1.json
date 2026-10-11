@@ -10,8 +10,8 @@
   "labels": [],
   "parent": "zaq-yx7",
   "priority": 2,
-  "status": "open",
-  "title": "Migrate widget to published supervised connector lifecycle",
+  "status": "in_progress",
+  "title": "[zaq-yx7.1] Migrate widget to published supervised connector lifecycle",
   "type": "task",
-  "updated_at": "2026-10-11T06:40:00Z"
+  "updated_at": "2026-10-11T06:40:09Z"
 }
