@@ -9,9 +9,15 @@
   "id": "zaq-emb.35",
   "labels": [],
   "parent": "zaq-emb",
+  "comments": [
+    {
+      "text": "Implemented all four authorized cleanup findings: removed discarded membership-removal lists/wrapper, required ServerManager lease retention for canonical refresh, deleted unused ExecutionHistory.delta/4, removed obsolete two-tuple idle clause. Real Engine/NodeRouter regression failed before fix (unexpected success without lease) and passed after. Isolated _fold DB targeted suite: 188 tests/4 properties zero failures. Initial mix q found two new test alias suggestions; fixed aliases and rerun mix q passed, 19111 mods/funs. Final mix precommit exit 0: 9020 tests/174 properties/17 doctests zero failures, 1 skipped,114 excluded,828.8s tests. Existing unrelated warnings and MCP transport error logging appeared without test failures. No timeout/cancellation fix claimed. Uncommitted; awaiting human review of this follow-up.",
+      "timestamp": "2026-10-11T08:56:02Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[#768] Remove superseded admission and membership plumbing",
   "type": "task",
-  "updated_at": "2026-10-11T08:34:38Z"
+  "updated_at": "2026-10-11T08:56:02Z"
 }
