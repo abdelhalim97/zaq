@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "zaq-yx7.7"
+  ],
   "blocks": [],
   "created": "2026-10-11T10:03:31Z",
   "description": "Upstream implementation dispatched by explicit user instruction to ses_ed938c98dffeNy0Lv6C031hy3u with returnResult. Integrate agreed public adapter API and process-owned proxy/session/auth config; remove old config and update tests/docs. Upstream root-recovery fixes prerequisite; no edits to upstream checkout in this session, no automatic merge/main switch. Validate lifecycle/proxy/cookies/status and existing browser regressions, preserve deferred finalization. Record exact dependency revision and publication availability. Tests first around dynamic contracts and boot option propagation; upstream owns package validation properties.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-yx7.8] Integrate upstream process options adapter candidate and validate",
   "type": "task",
-  "updated_at": "2026-10-11T10:03:41Z"
+  "updated_at": "2026-10-11T10:03:42Z"
 }
