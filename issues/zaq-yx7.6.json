@@ -5,6 +5,8 @@
     "zaq-yx7.4",
     "zaq-yx7.8"
   ],
+  "closed_at": "2026-10-11T11:02:36Z",
+  "close_reason": "Published candidate 090f2493914f5cae77c22cb5fb2963d170643440 fetched and pinned. Fresh host suite 485 tests +11 properties passes seed893691, including unpaused root kill with connector and unrelated child preserved; mix q clean. Upstream reports final 270-test precommit, repeated root-kill/concurrent-start tests and 400-pass/2-skipped browser gate. Original failure cause remains a hypothesis; acceptance is regression evidence, not causal proof.",
   "created": "2026-10-11T09:09:12Z",
   "description": "Audit-only upstream issue https://github.com/www-zaq-ai/web_widget/issues/23#issuecomment-6107439809 against PR24 revision6c6df55e1835b97a83901a0acda06d35b00312f9. Independent fresh fixture root kill sometimes fails to reconstruct runtime despite infrastructure registration restored. Final relevant run seed893691: 516 tests +10properties, 1 root-recovery failure; earlier515/10 clean and three lifecycle seeds clean. No ZAQ recovery machinery or upstream source edits. Investigate/fix upstream via authorized external work, update resolved candidate only when approved, rerun unpaused-root isolation and relevant regression suite. Blocks cleanup validation/release recommendation.",
   "id": "zaq-yx7.6",
@@ -17,8 +19,8 @@
     }
   ],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[zaq-yx7.6] Resolve candidate root-kill recovery acceptance blocker",
   "type": "task",
-  "updated_at": "2026-10-11T10:33:05Z"
+  "updated_at": "2026-10-11T11:02:36Z"
 }
