@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "zaq-emb",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[#768] Fold unconsumed PR B execution migrations",
   "type": "task",
-  "updated_at": "2026-10-11T08:31:54Z"
+  "updated_at": "2026-10-11T08:34:34Z"
 }
