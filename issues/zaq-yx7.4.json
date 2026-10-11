@@ -9,7 +9,7 @@
   "parent": "zaq-yx7",
   "priority": 2,
   "status": "open",
-  "title": "Remove widget readiness plumbing and unify adapter status",
+  "title": "[zaq-yx7.4] Remove widget readiness plumbing and unify adapter status",
   "type": "task",
-  "updated_at": "2026-10-11T08:06:55Z"
+  "updated_at": "2026-10-11T08:07:11Z"
 }
