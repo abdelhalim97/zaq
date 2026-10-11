@@ -4,6 +4,7 @@
   "blocks": [
     "zaq-emb.36"
   ],
+  "closed_at": "2026-10-11T08:56:04Z",
   "created": "2026-10-11T08:31:53Z",
   "description": "Julien authorized all four cleanup findings. Local-only: simplify ChannelHistoryMembership reconciliation using existing Permissions; require ServerManager.history_projection lease contract; delete unused ExecutionHistory.delta and obsolete idle message clause. No new operation/Action or tool exposure. Preserve existing grants, typed denials, inspection, exact-PID retirement. Verify affected integration/property tests and missing-lease regression. No new UX or E2E needed.",
   "id": "zaq-emb.35",
@@ -16,8 +17,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[#768] Remove superseded admission and membership plumbing",
   "type": "task",
-  "updated_at": "2026-10-11T08:56:02Z"
+  "updated_at": "2026-10-11T08:56:04Z"
 }
