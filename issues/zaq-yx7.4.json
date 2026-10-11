@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "zaq-yx7.3"
+  ],
   "blocks": [],
   "created": "2026-10-11T08:06:55Z",
   "description": "Delete Web.Readiness, Web.Runtime and SupervisedWidgetAdapter wrappers. Concrete WidgetAdapter owns package child specs, installation and status translation. WebBridge uses existing channel_ingress_status event. Keep package-owned aggregation, bounded failure handling, effective settings and verification scope. Update tests/docs and revalidate; UX/E2E finalization still deferred.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-yx7.4] Remove widget readiness plumbing and unify adapter status",
   "type": "task",
-  "updated_at": "2026-10-11T08:07:11Z"
+  "updated_at": "2026-10-11T08:07:12Z"
 }

@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "zaq-yx7.4"
+  ],
   "created": "2026-10-11T08:06:46Z",
   "description": "User approved cleanup: restore Application and static Channels wiring; generic provider infrastructure bootstrap under BridgeSupervisor; one WidgetAdapter constructs WebWidget infrastructure and Connector specs from process opts; remove separate :zaq/:web_widget config and global HTTP cookie overrides. Reuse BridgeSupervisor bootstrap/start/teardown and WebBridge lifecycle; local-only child-spec adapter, not a new Action. Test dynamic subtree ownership/restarts and rollback.",
   "id": "zaq-yx7.3",
@@ -11,5 +13,5 @@
   "status": "in_progress",
   "title": "[zaq-yx7.3] Simplify widget lifecycle and deployment ownership",
   "type": "task",
-  "updated_at": "2026-10-11T08:07:10Z"
+  "updated_at": "2026-10-11T08:07:12Z"
 }
