@@ -7,9 +7,15 @@
   "id": "zaq-yx7.9",
   "labels": [],
   "parent": "zaq-yx7",
+  "comments": [
+    {
+      "text": "Implemented approved three-review fix. Deleted Web.Adapter; its callback declarations now live on WebBridge alongside adapter resolution, option assembly and runtime/infrastructure invocation. Removed adapter helpers/default dispatch from base Bridge. CommunicationBridge owns optional infrastructure callback and registry dispatch, forwards startup options unchanged. BridgeSupervisor starts specs with OTP-only rollback (including malformed child specs). Tests first: 5 expected failures demonstrated previous domain API absence, supervisor option rewriting and missing bridge-local overrides; new property proves arbitrary option values remain opaque to domain routing. Final 676 tests+12 properties pass seed893691, including JidoChatBridge and real host root-recovery. mix q clean on retry after ExDNA 5000ms internal timeout; no rule/timeout changes. 42 docs links and diff check clean. Evaluation rebuilt/restarted; real WSS auth/response/renewal/reconnect/durable restore/signed disconnect passes connector6, browser errors empty. Upstream pin090f249 unchanged; ZAQ uncommitted. Existing BO WebKit blocker remains zaq-yx7.5; final UX/coverage/precommit gates remain deferred.",
+      "timestamp": "2026-10-11T19:25:49Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7] Keep adapter construction inside WebBridge",
   "type": "task",
-  "updated_at": "2026-10-11T19:17:37Z"
+  "updated_at": "2026-10-11T19:25:49Z"
 }
