@@ -5,26 +5,32 @@ unless Code.ensure_loaded?(Zaq.Repo.Migrations.AddExecutionInputReceipts) do
   )
 end
 
+unless Code.ensure_loaded?(Zaq.Repo.Migrations.AddExecutionFollowupIdentity) do
+  Code.require_file(
+    "../../../../priv/repo/migrations/20261009000000_add_execution_followup_identity.exs",
+    __DIR__
+  )
+end
+
 defmodule Zaq.Engine.Conversations.ExecutionInputReceiptsMigrationTest do
   use Zaq.DataCase, async: false
 
   alias Zaq.Accounts.Person
   alias Zaq.Engine.Conversations.{ExecutionRecord, Message}
+  alias Zaq.Repo.Migrations.AddExecutionFollowupIdentity
   alias Zaq.Repo.Migrations.AddExecutionInputReceipts
 
   @version 20_261_008_000_000
   @opts [log: false, migration_lock: false, skip_table_creation: true]
 
   test "empty and populated-root upgrades preserve UUIDs, capabilities and private payloads" do
-    assert :ok = Ecto.Migrator.down(Repo, @version, AddExecutionInputReceipts, @opts)
-    assert :ok = Ecto.Migrator.up(Repo, @version, AddExecutionInputReceipts, @opts)
+    round_trip()
 
     person = Repo.insert!(%Person{full_name: "Migration owner"})
     input = message("Root input")
     root = insert_execution(person, input, %{})
 
-    assert :ok = Ecto.Migrator.down(Repo, @version, AddExecutionInputReceipts, @opts)
-    assert :ok = Ecto.Migrator.up(Repo, @version, AddExecutionInputReceipts, @opts)
+    round_trip()
     assert Repo.get!(ExecutionRecord, root.id) == root
 
     child =
@@ -33,12 +39,26 @@ defmodule Zaq.Engine.Conversations.ExecutionInputReceiptsMigrationTest do
         status: "queued"
       })
 
+    assert :ok =
+             Ecto.Migrator.down(Repo, @version + 1_000_000, AddExecutionFollowupIdentity, @opts)
+
     assert_raise Postgrex.Error, ~r/Cannot remove populated execution input receipts/, fn ->
       Ecto.Migrator.down(Repo, @version, AddExecutionInputReceipts, @opts)
     end
 
+    assert :ok = Ecto.Migrator.up(Repo, @version + 1_000_000, AddExecutionFollowupIdentity, @opts)
+
     assert Repo.get!(ExecutionRecord, child.id) == child
     assert Repo.get!(ExecutionRecord, root.id) == root
+  end
+
+  defp round_trip do
+    assert :ok =
+             Ecto.Migrator.down(Repo, @version + 1_000_000, AddExecutionFollowupIdentity, @opts)
+
+    assert :ok = Ecto.Migrator.down(Repo, @version, AddExecutionInputReceipts, @opts)
+    assert :ok = Ecto.Migrator.up(Repo, @version, AddExecutionInputReceipts, @opts)
+    assert :ok = Ecto.Migrator.up(Repo, @version + 1_000_000, AddExecutionFollowupIdentity, @opts)
   end
 
   defp message(content) do

@@ -343,8 +343,16 @@ defmodule Zaq.Engine.ChannelHistoryMembershipTest do
              Conversations.list_canonical_messages(ctx.bob, ctx.placement.transcript_id)
   end
 
-  test "committed removal generations survive later snapshots without cancelling surviving members",
+  test "membership revisions preserve old inert generation data without enqueueing cancellation",
        ctx do
+    root = Repo.get!(Transcript, ctx.placement.transcript_id)
+
+    root
+    |> Ecto.Changeset.change(
+      membership_state: Map.put(root.membership_state, "removal_generation", 7)
+    )
+    |> Repo.update!()
+
     Process.put(
       :membership_response,
       {:ok,
@@ -370,9 +378,13 @@ defmodule Zaq.Engine.ChannelHistoryMembershipTest do
     jobs =
       Repo.all(from j in Oban.Job, where: j.worker == "Zaq.Engine.HistoryRuntimeRemovalWorker")
 
-    assert [job] = jobs
-    assert job.args["person_ids"] == [ctx.alice.id]
-    assert job.args["generation"] == 1
+    assert jobs == []
+
+    assert {:error, :unauthorized} =
+             Conversations.list_canonical_messages(ctx.alice, ctx.placement.transcript_id)
+
+    assert {:ok, [_]} =
+             Conversations.list_canonical_messages(ctx.bob, ctx.placement.transcript_id)
 
     Process.put(
       :membership_response,
@@ -389,12 +401,12 @@ defmodule Zaq.Engine.ChannelHistoryMembershipTest do
              ChannelHistoryMembership.refresh(ctx.placement.transcript_id, router: SnapshotRouter)
 
     root = Repo.get!(Transcript, ctx.placement.transcript_id)
-    assert root.membership_state["removal_generation"] == 1
+    assert root.membership_state["removal_generation"] == 7
 
     assert Repo.aggregate(
              from(j in Oban.Job, where: j.worker == "Zaq.Engine.HistoryRuntimeRemovalWorker"),
              :count
-           ) == 1
+           ) == 0
 
     Process.put(
       :membership_response,

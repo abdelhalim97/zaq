@@ -45,7 +45,6 @@ defmodule Zaq.Agent.Factory do
 
   alias Jido.Agent.Strategy.State, as: StrategyState
   alias Jido.AI.Context, as: AIContext
-  alias Jido.AI.Request.Stream, as: RequestStream
   alias Jido.AI.Skill.AgentIntegration
 
   alias Zaq.Agent.{
@@ -67,6 +66,50 @@ defmodule Zaq.Agent.Factory do
   def strategy_opts do
     super()
     |> Keyword.delete(:model)
+  end
+
+  @doc "Reads only an exact native request's lifecycle, never another run's strategy snapshot."
+  @spec request_state(pid(), String.t()) :: {:ok, map()} | {:error, term()}
+  def request_state(pid, id) when is_pid(pid) and is_binary(id) do
+    with true <- Process.alive?(pid),
+         {:ok, %{raw_state: raw}} <- Jido.AgentServer.status(pid),
+         request when is_map(request) <- get_in(raw, [:requests, id]) do
+      strategy = raw[:__strategy__] || %{}
+
+      {:ok,
+       %{
+         status: request.status,
+         accepting?: request.status == :pending and strategy[:active_request_id] == id,
+         error: request[:error],
+         completed_at: request[:completed_at]
+       }}
+    else
+      false -> {:error, :stale_runtime}
+      nil -> {:error, :not_found}
+      _ -> {:error, :native_state_unavailable}
+    end
+  catch
+    :exit, _ -> {:error, :stale_runtime}
+  end
+
+  def request_state(_, _), do: {:error, :stale_runtime}
+
+  @doc "Overlays native terminal evidence on sanitized retained presentation, read-only."
+  @spec inspect_request(String.t(), map()) :: map()
+  def inspect_request(id, observation) do
+    case request_state(observation[:runtime_pid], id) do
+      {:ok, %{status: :completed}} ->
+        Map.put(observation, :status, :completed)
+
+      {:ok, %{status: status, error: error}} when status in [:failed, :timeout] ->
+        status =
+          if error == :cancelled, do: :cancelled, else: :failed
+
+        Map.put(observation, :status, status)
+
+      _ ->
+        observation
+    end
   end
 
   @impl true
@@ -367,42 +410,14 @@ defmodule Zaq.Agent.Factory do
 
   def apply_history_context(_pid, _context, _op_id), do: {:error, :invalid_context_operation}
 
-  @doc "Cancels an exact native active request before shutdown, waking its stream sink and stopping workers."
-  def cancel_history_request(pid) when is_pid(pid) do
-    with {:ok, %{raw_state: %{__strategy__: strategy}}} <- Jido.AgentServer.status(pid) do
-      cancel_active_history_request(pid, strategy[:active_request_id])
-    end
+  @doc "Checks actual native activity for an exact incarnation; callers perform it outside Manager."
+  def history_runtime_idle(pid) when is_pid(pid) do
+    with {:ok, %{raw_state: raw}} <- Jido.AgentServer.status(pid),
+         strategy when is_map(strategy) <- raw[:__strategy__],
+         do: history_context_idle(strategy)
   catch
-    :exit, _ -> {:error, :stale_runtime}
+    :exit, _ -> {:error, :native_state_unavailable}
   end
-
-  @doc "Wakes fenced local stream sinks on forced removal; cancellation is never consumption evidence."
-  def wake_history_streams(sinks) do
-    Enum.each(sinks, fn {request_id, consumer} ->
-      RequestStream.send_event(
-        {:pid, consumer},
-        RequestStream.cancelled_event(request_id, :history_membership_removed)
-      )
-    end)
-
-    :ok
-  end
-
-  defp cancel_active_history_request(pid, id) when is_binary(id) do
-    signal =
-      Jido.Signal.new!("ai.react.cancel", %{request_id: id, reason: :history_membership_removed},
-        source: "/zaq/agent/history"
-      )
-
-    with {:ok, agent} <- Jido.AgentServer.call(pid, signal, 5_000),
-         nil <- StrategyState.get(agent, %{})[:active_request_id] do
-      :ok
-    else
-      _ -> {:error, :history_cancellation_unconfirmed}
-    end
-  end
-
-  defp cancel_active_history_request(_pid, _id), do: :ok
 
   defp history_context_idle(strategy) do
     if is_binary(strategy[:active_request_id]) or

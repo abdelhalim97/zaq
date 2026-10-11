@@ -245,9 +245,25 @@ defmodule Zaq.Engine.Api do
   def handle_event(%Event{} = event, :authorize_execution_control, _context) do
     response =
       if Keyword.get(event.opts, :confidential) == true and is_map(event.request) do
-        Conversations.authorize_execution_control(event.request[:user_message_id], event.actor)
+        Conversations.authorize_execution_control(
+          event.request[:user_message_id],
+          event.actor,
+          event.request[:execution_id]
+        )
       else
         {:error, :confidential_event_required}
+      end
+
+    %{event | response: response}
+  end
+
+  def handle_event(%Event{} = event, :admit_execution, _context) do
+    response =
+      with true <- Keyword.get(event.opts, :confidential) == true,
+           %{binding: binding, content: content} <- event.request do
+        Conversations.admit_execution(binding, event.actor, content)
+      else
+        _ -> {:error, :confidential_event_required}
       end
 
     %{event | response: response}
@@ -262,10 +278,26 @@ defmodule Zaq.Engine.Api do
             _ -> []
           end
 
+        history_opts =
+          Keyword.put(
+            history_opts,
+            :trusted_access_denial,
+            Keyword.get(event.opts, :trusted_access_denial, false)
+          )
+
         Conversations.execution_history(event.request, event.actor, history_opts)
       else
         {:error, :confidential_event_required}
       end
+
+    %{event | response: response}
+  end
+
+  def handle_event(%Event{} = event, :prepare_execution_followup, _context) do
+    response =
+      if Keyword.get(event.opts, :confidential) == true and is_map(event.request),
+        do: Conversations.prepare_execution_followup(event.request, event.actor),
+        else: {:error, :confidential_event_required}
 
     %{event | response: response}
   end
@@ -282,9 +314,8 @@ defmodule Zaq.Engine.Api do
              event.request do
         conversations_module = Keyword.get(event.opts, :conversations_module, Conversations)
 
-        conversations_module.finalize_incoming(user_message_id, finalization_token, outcome,
-          actor: event.actor
-        )
+        opts = [actor: event.actor] ++ Map.to_list(Map.take(event.request, [:execution_id]))
+        conversations_module.finalize_incoming(user_message_id, finalization_token, outcome, opts)
       else
         {:error, reason} -> {:error, reason}
         other -> {:error, {:invalid_request, other}}
@@ -1069,7 +1100,9 @@ defmodule Zaq.Engine.Api do
         request[:root_user_message_id],
         request[:binding],
         actor,
-        content: request[:content]
+        content: request[:content],
+        root_execution_id: request[:root_execution_id],
+        closed_disposition: request[:closed_disposition] == true
       )
 
   defp execution_input_event(:reject_execution_input, request, actor),
@@ -1078,7 +1111,9 @@ defmodule Zaq.Engine.Api do
         request[:root_user_message_id],
         request[:user_message_id],
         actor,
-        request[:reason]
+        request[:reason],
+        root_execution_id: request[:root_execution_id],
+        execution_id: request[:execution_id]
       )
 
   defp execution_input_event(:consume_execution_input, request, actor),
@@ -1086,7 +1121,9 @@ defmodule Zaq.Engine.Api do
       Conversations.consume_execution_input(
         request[:root_user_message_id],
         request[:user_message_id],
-        actor
+        actor,
+        root_execution_id: request[:root_execution_id],
+        execution_id: request[:execution_id]
       )
 
   defp handle_rate_message(conversations_module, message_ref, rater_attrs) do

@@ -41,7 +41,6 @@ defmodule Zaq.Agent.Executor do
     LogprobsAnalyzer,
     OpaqueAliases,
     RequestControl,
-    RequestRegistry,
     ServerManager,
     StreamEvents
   }
@@ -163,7 +162,7 @@ defmodule Zaq.Agent.Executor do
   - `:event` — the dispatching `%Zaq.Event{}`; its validated actor binds the server lifecycle and is exposed to tools. Without an event actor, a trusted Incoming Person is required; missing identity never becomes anonymous implicitly
   - `:agent_module`, `:server_manager_module`, `:factory_module`, `:answering_module`, `:node_router` — injectable dependencies for testing
   """
-  @spec run(Incoming.t(), keyword()) :: Outgoing.t()
+  @spec run(Incoming.t(), keyword()) :: Outgoing.t() | RequestControl.handoff()
   def run(%Incoming{} = incoming, opts \\ []) do
     if is_reference(Keyword.get(opts, :history_session)) do
       do_run(incoming, opts)
@@ -191,7 +190,7 @@ defmodule Zaq.Agent.Executor do
 
     result =
       with {:ok, actor} <- actor_result,
-           {:ok, execution_opts} <- authorized_execution_context(execution_opts, actor),
+           {:ok, execution_opts} <- authorized_execution_context(execution_opts, actor, incoming),
            {:ok, configured_agent} <- selected_agent_result,
            configured_agent <- apply_system_prompt_override(configured_agent, execution_opts),
            server_id <- agent_server_id(configured_agent, execution_opts),
@@ -210,7 +209,6 @@ defmodule Zaq.Agent.Executor do
              question
              |> append_attachments(incoming.attachments, server_id)
              |> timestamp_question(),
-           :ok <- live_history_runtime(runtime_pid, actor),
            _ <-
              Event.new(
                %{provider: incoming.provider, channel_id: incoming.channel_id},
@@ -219,7 +217,6 @@ defmodule Zaq.Agent.Executor do
                type: :async
              )
              |> node_router(execution_opts).dispatch(),
-           :ok <- live_history_runtime(runtime_pid, actor),
            status_result <-
              status_mod(execution_opts).broadcast(
                incoming,
@@ -228,10 +225,12 @@ defmodule Zaq.Agent.Executor do
                node_router(execution_opts)
              ),
            %Incoming{} = incoming <- normalize_status_result(status_result, incoming),
-           :ok <- live_history_runtime(runtime_pid, actor),
            {:ok, %{request: request, events: events}} <-
              ask_or_queue(factory_module, runtime_pid, question, configured_agent,
-               extra_refs: %{message_id: execution_input_id(execution_opts)},
+               extra_refs: %{
+                 message_id: execution_input_id(execution_opts),
+                 execution_id: execution_record_id(execution_opts)
+               },
                busy_context: %{incoming: incoming, actor: actor, opts: execution_opts},
                tool_context: %{
                  incoming: incoming,
@@ -251,6 +250,7 @@ defmodule Zaq.Agent.Executor do
                actor: actor,
                execution_scope: Keyword.get(execution_opts, :scope),
                execution_user_message_id: execution_input_id(execution_opts),
+               execution_id: execution_record_id(execution_opts),
                started_at: started_at,
                server_id: server_ref,
                runtime_pid: runtime_pid,
@@ -272,6 +272,9 @@ defmodule Zaq.Agent.Executor do
       else
         {:queued, outgoing} ->
           outgoing
+
+        {:followup, disposition} ->
+          {:followup, disposition}
 
         {:error, %ReqLLM.Error.API.Stream{} = reason, partial} ->
           :ok =
@@ -325,12 +328,6 @@ defmodule Zaq.Agent.Executor do
       end
 
     result
-  end
-
-  defp live_history_runtime(pid, actor) do
-    if RequestRegistry.history_runtime_removed?(pid, actor),
-      do: {:error, :history_membership_removed},
-      else: :ok
   end
 
   # A streaming error after tokens were already delivered means the answer is
@@ -399,28 +396,6 @@ defmodule Zaq.Agent.Executor do
            server_manager_module,
            nil
          )
-
-  defp surface_execution_error(
-         incoming,
-         :history_membership_removed,
-         dims,
-         _selected,
-         _opts,
-         _manager,
-         partial
-       ) do
-    record_execution_error(dims, :history_membership_removed)
-
-    Outgoing.from_pipeline_result(
-      incoming,
-      Map.merge(partial_execution_data(partial), %{
-        answer: "",
-        error: true,
-        execution_disposition: "removed",
-        termination_reason: "history_membership_removed"
-      })
-    )
-  end
 
   defp surface_execution_error(
          incoming,
@@ -498,10 +473,9 @@ defmodule Zaq.Agent.Executor do
   defp ensure_agent_server(server_manager_module, configured_agent, server_id, opts, actor) do
     server_manager_module.ensure_server(configured_agent, server_id, Keyword.get(opts, :context),
       actor: actor,
+      history_session: Keyword.get(opts, :history_session),
       history_binding: history_binding(opts),
-      history_cursors: (Keyword.get(opts, :execution_history) || %{})[:cursors],
-      history_removal_generations:
-        (Keyword.get(opts, :execution_history) || %{})[:removal_generations]
+      history_cursors: (Keyword.get(opts, :execution_history) || %{})[:cursors]
     )
   end
 
@@ -539,7 +513,7 @@ defmodule Zaq.Agent.Executor do
     end
   end
 
-  defp authorized_execution_context(opts, actor) do
+  defp authorized_execution_context(opts, actor, incoming) do
     opts = Keyword.delete(opts, :canonical_execution)
     binding = Keyword.get(opts, :conversation_binding) || %{}
     token = Map.get(binding, :finalization_token, Map.get(binding, "finalization_token"))
@@ -548,20 +522,21 @@ defmodule Zaq.Agent.Executor do
       request = %{
         conversation_id: conversation_id(opts),
         user_message_id: Map.get(binding, :user_message_id, Map.get(binding, "user_message_id")),
+        execution_id: Map.get(binding, :execution_id, Map.get(binding, "execution_id")),
         finalization_token: token
       }
 
-      event =
-        Event.new(request, :engine,
-          actor: actor,
-          opts: [action: :execution_history, confidential: true]
-        )
+      content =
+        case Keyword.get(opts, :event) do
+          %Event{request: %Incoming{content: content}} -> content
+          _ -> incoming.content
+        end
 
-      case node_router(opts).dispatch(event) do
-        %{response: {:ok, %{kind: :legacy}}} ->
+      case admitted_projection(opts, binding, actor, content) do
+        {:ok, %{kind: :legacy}} ->
           {:ok, opts}
 
-        %{response: {:ok, %{kind: :canonical} = projection}} ->
+        {:ok, %{kind: :canonical} = projection} ->
           scope = "history:#{projection.transcript_id}:person:#{ActorNormalizer.person_id(actor)}"
           context = HistoryLoader.from_projection(projection.messages, opaque_alias_scope: scope)
 
@@ -572,12 +547,12 @@ defmodule Zaq.Agent.Executor do
            |> Keyword.put(:execution_history, %{
              binding: request,
              cursors: projection.cursors,
-             removal_generations: Map.get(projection, :removal_generations),
+             projection: projection,
              scope: scope
            })
            |> Keyword.put(:canonical_execution, true)}
 
-        %{response: {:error, reason}} ->
+        {:error, reason} ->
           {:error, reason}
 
         _ ->
@@ -591,6 +566,11 @@ defmodule Zaq.Agent.Executor do
   defp execution_input_id(opts) do
     binding = Keyword.get(opts, :conversation_binding) || %{}
     Map.get(binding, :user_message_id, Map.get(binding, "user_message_id"))
+  end
+
+  defp execution_record_id(opts) do
+    binding = Keyword.get(opts, :conversation_binding) || %{}
+    Map.get(binding, :execution_id, Map.get(binding, "execution_id"))
   end
 
   defp ask_or_queue(factory, runtime, question, configured_agent, opts) do
@@ -623,7 +603,7 @@ defmodule Zaq.Agent.Executor do
 
   defp queue_busy_input(runtime, %{incoming: incoming, actor: actor, opts: opts}) do
     with {:ok, {request_id, _state}} <-
-           RequestRegistry.find_active(Keyword.get(opts, :scope), actor, runtime),
+           RequestControl.find_native_request(Keyword.get(opts, :scope), actor, runtime),
          event <-
            Event.new(%{execution_scope: Keyword.get(opts, :scope)}, :agent,
              actor: actor,
@@ -638,7 +618,8 @@ defmodule Zaq.Agent.Executor do
              request_id,
              incoming.content,
              :steer_request,
-             Keyword.get(opts, :conversation_binding)
+             Keyword.get(opts, :conversation_binding),
+             followup?: Keyword.get(opts, :live_followup, false)
            ) do
       {:queued,
        Outgoing.from_pipeline_result(incoming, %{
@@ -655,6 +636,13 @@ defmodule Zaq.Agent.Executor do
       %{conversation_id: id} when is_binary(id) and id != "" -> id
       %{"conversation_id" => id} when is_binary(id) and id != "" -> id
       _ -> nil
+    end
+  end
+
+  defp admitted_projection(opts, binding, actor, content) do
+    case HistorySync.execution_admission(opts, binding, actor, content) do
+      {:error, {:history_access_denied, _}} -> {:error, :unauthorized}
+      result -> result
     end
   end
 

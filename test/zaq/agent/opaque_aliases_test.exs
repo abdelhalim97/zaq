@@ -543,6 +543,28 @@ defmodule Zaq.Agent.OpaqueAliasesTest do
              OpaqueAliases.expand_tool_call(call, %{opaque_alias_scope: scope})
   end
 
+  property "defaulted handle schemas retain alias expansion and scope isolation", %{scope: scope} do
+    check all(file_id <- StreamData.string(:alphanumeric, min_length: 1, max_length: 24)) do
+      handle = handle!(file_id)
+      alias = alias_for(scope, DirectHandleAction, %{record: record(file_id, handle)})
+      call = %{arguments: %{default_handle: alias}, action_module: DefaultUnionAction}
+
+      assert {:ok, %{arguments: %{default_handle: ^handle}}} =
+               OpaqueAliases.expand_tool_call(call, %{opaque_alias_scope: scope})
+
+      assert {:error, {:unknown_opaque_alias, ^alias}} =
+               OpaqueAliases.expand_tool_call(call, %{opaque_alias_scope: scope <> ":foreign"})
+
+      assert {:error, :missing_opaque_alias_scope} =
+               OpaqueAliases.expand_tool_call(call, %{})
+
+      nil_call = %{call | arguments: %{default_handle: nil}}
+
+      assert {:ok, ^nil_call} =
+               OpaqueAliases.expand_tool_call(nil_call, %{opaque_alias_scope: scope})
+    end
+  end
+
   test "collects handles from legacy Nimble schemas", %{scope: scope} do
     handles = Enum.map(["record", "page", "list"], &handle!(&1))
     [record_handle, page_handle, list_handle] = handles

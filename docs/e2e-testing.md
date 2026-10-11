@@ -169,6 +169,48 @@ or host browser profiles are mounted into the browser container.
 
 ## Running Tests
 
+### Channel history execution journey (isolated, no reset)
+
+After explicit PR B behavior approval, the consolidated history browser journeys
+run through the real Endpoint on an ephemeral loopback port inside SQL Sandbox.
+They reuse the production-path Mattermost/email ingress fixtures and configured
+native agent/tool execution; only external model/provider/SMTP boundaries are
+replaced. Normal BO login uses CSRF forms. Private process checkpoints coordinate
+browser observations and ingress; no public test-only endpoint is added.
+
+```sh
+mix test test/zaq/channels/history_strategy_full_flow_test.exs --only browser_engine
+```
+
+The matrix has 21 browser cases across Chromium, Firefox and WebKit, each checking
+390px and 1280px. It covers Shared/Direct/Replicated persisted answer inspection
+after fresh reload, exact measured tokens/call counts/latency, expandable real
+tool arguments/results, staff denial, concurrent Person-owned answers and
+recipient-only isolation. Live cases show pending admitted work, accepted own
+steering, revoked access, denial of new unadmitted input, one persisted/delivered
+answer and exact runtime retirement. Late-closure cases retain the immutable
+rejected receipt, one linked accepted recovery, both public answers and no grants.
+Native boundary assertions retain their five-second deadlines; browser login is
+prepared before held model execution in the live journey.
+
+To include the existing complementary native histories (busy-lease continuation,
+manual-access survival, retained tool pairs, fresh-read denial, delayed provider
+confirmation/failure and persistence) without resetting a database:
+
+```sh
+mix test test/zaq/channels/history_strategy_full_flow_test.exs \
+  test/zaq/channels/mattermost_shared_history_integration_test.exs \
+  --include real_browser --max-cases 4 --seed 0
+```
+
+Do not combine `--only browser_engine:chromium` with `--include real_browser` to
+filter one engine: ExUnit includes are additive, so that selects all browser cases.
+Use `--only browser_engine:chromium` alone. Native stream-timeout propagation is
+separately deferred; these are bounded-provider journeys, not a timeout fix.
+Screenshots are written under `test/e2e/test-results/history-*.png`.
+No E2E bootstrap, port-4002 demo restart, database reset or real provider credentials
+are needed. Install the same Playwright dependencies/engines as other browser tests.
+
 ### People authentication journey (isolated, no reset)
 
 After `mix assets.build` and installing `test/e2e` Playwright dependencies plus

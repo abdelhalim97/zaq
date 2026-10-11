@@ -277,7 +277,8 @@ defmodule Zaq.Engine.IncomingMessageRouter do
     normalized = %{
       "conversation_id" => binding.conversation_id,
       "user_message_id" => binding.user_message_id,
-      "finalization_token" => binding.finalization_token
+      "finalization_token" => binding.finalization_token,
+      "execution_id" => binding[:execution_id]
     }
 
     %{event | assigns: Map.put(event.assigns || %{}, "conversation_binding", normalized)}

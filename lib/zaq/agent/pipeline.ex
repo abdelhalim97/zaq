@@ -57,7 +57,7 @@ defmodule Zaq.Agent.Pipeline do
   # Public API
   # ---------------------------------------------------------------------------
 
-  @spec run(Incoming.t(), keyword()) :: Outgoing.t()
+  @spec run(Incoming.t(), keyword()) :: Outgoing.t() | Zaq.Agent.RequestControl.handoff()
   def run(%Incoming{} = incoming, opts \\ []) do
     incoming = pre_do_run(incoming, opts)
 
@@ -74,7 +74,11 @@ defmodule Zaq.Agent.Pipeline do
       )
 
     result = do_run(incoming, opts)
-    Outgoing.from_pipeline_result(incoming, result)
+
+    case result do
+      {:followup, _} = handoff -> handoff
+      result -> Outgoing.from_pipeline_result(incoming, result)
+    end
   end
 
   defp event_actor(%Event{actor: actor}), do: actor
@@ -92,7 +96,7 @@ defmodule Zaq.Agent.Pipeline do
     incoming
   end
 
-  @spec do_run(Incoming.t(), keyword()) :: map()
+  @spec do_run(Incoming.t(), keyword()) :: map() | Zaq.Agent.RequestControl.handoff()
   defp do_run(%Incoming{} = incoming, opts) do
     content = incoming.content
     history = Keyword.get(opts, :history, %{})
@@ -142,6 +146,9 @@ defmodule Zaq.Agent.Pipeline do
 
       result
     else
+      {:followup, _} = handoff ->
+        handoff
+
       {:halt, _payload} ->
         error_result(:halted)
 
@@ -264,8 +271,7 @@ defmodule Zaq.Agent.Pipeline do
         has_history: history != %{}
       })
 
-    %Outgoing{} =
-      outgoing =
+    outgoing =
       executor_module(opts).run(incoming,
         agent_id: nil,
         scope: Keyword.get(opts, :scope),
@@ -280,10 +286,15 @@ defmodule Zaq.Agent.Pipeline do
         telemetry_dimensions: telemetry_dimensions(opts),
         node_router: node_router(opts),
         event: Keyword.get(opts, :event),
+        live_followup: Keyword.get(opts, :live_followup, false),
+        history_reservation: Keyword.get(opts, :history_reservation),
         history_session: Keyword.get(opts, :history_session)
       )
 
-    {:ok, outgoing}
+    case outgoing do
+      {:followup, _} = handoff -> handoff
+      %Outgoing{} -> {:ok, outgoing}
+    end
   end
 
   # ---------------------------------------------------------------------------

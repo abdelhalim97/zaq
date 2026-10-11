@@ -383,12 +383,12 @@ defmodule Zaq.Engine.Conversations.ExecutionRecordTest do
 
   property "different request capabilities never become one execution identity" do
     owner = person()
-    input = message("user", "Question")
 
     check all(
             seed <- StreamData.string(:alphanumeric, min_length: 1, max_length: 20),
             max_runs: 15
           ) do
+      input = message("user", "Question #{System.unique_integer([:positive])}")
       hash = capability("#{System.unique_integer([:positive])}:#{seed}")
 
       assert {:ok, run} =
@@ -400,6 +400,19 @@ defmodule Zaq.Engine.Conversations.ExecutionRecordTest do
 
       assert run.finalization_token_hash == hash
       assert run.public_answer_message_id == nil
+
+      # A different token cannot introduce a competing answer owner for this input.
+      assert {:error, duplicate} =
+               %ExecutionRecord{}
+               |> ExecutionRecord.changeset(
+                 execution_attrs(owner, input, %{
+                   finalization_token_hash: capability("competing:#{hash}")
+                 })
+               )
+               |> Repo.insert()
+
+      assert %{user_message_id: _} = errors_on(duplicate)
+      assert Repo.get!(ExecutionRecord, run.id) == run
     end
   end
 end

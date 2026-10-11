@@ -202,6 +202,22 @@ for required environment variables, restart behavior and legacy database handlin
 
 ## Environment Variables
 
+### LLM HTTP connection capacity
+
+`REQ_LLM_POOL_SIZE` sets the positive integer connection capacity per provider
+origin (scheme, host and port), defaulting to `50`. ReqLLM uses one HTTP/1 pool
+so available connections share a single queue; long-running streams cannot strand
+another request in an occupied one-connection shard while other shards are idle.
+
+The legacy `REQ_LLM_POOL_COUNT` variable remains a fallback when
+`REQ_LLM_POOL_SIZE` is absent. Its value now supplies connection capacity rather
+than a shard count: an existing value of `8` becomes one pool with eight
+connections, preserving the previous total capacity. The new variable takes
+precedence when both are set. Empty, malformed and non-positive effective values
+fail at startup. Restart the application after changing these settings.
+
+### Variable reference
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `ROLES` | `:all` | Services to start on this node |

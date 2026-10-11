@@ -171,13 +171,14 @@ Each module broadcasts its own stage — orchestrators broadcast nothing:
 
 ### Agent API + Executor
 - `RequestControl` is the shared internal control boundary: Engine-authorized
-  principal/grant checks, exact registry/PID targeting, durable input queueing and
+  principal/grant checks, exact native-request/PID targeting, durable input queueing and
   Jido invocation live there rather than being duplicated by execution consumers.
-- Inspect/steer/inject require the registry's same trusted principal; a request ID
+- Inspect/steer/inject require the binding's same trusted principal; a request ID
   alone never grants private state or control. A supplied execution scope must
-  match the immutable registry scope. Person controls dispatch confidential
+  match the immutable ServerManager binding scope. Inspection dispatches confidential
   `:authorize_execution_control` to Engine, rechecking the literal active Person
-  and canonical grants from the immutable admitted-input UUID. No raw admission
+  and current grants. New canonical steer/inject inputs pass `:admit_execution`
+  once, then use their recorded admission rather than reauthorizing the root. No raw admission
   token is added to inspection state. Runtime PID and actual Jido ID fences remain
   authoritative for steering/injection. Non-Person legacy controls require the
   same explicit kind/subject principal as their registered owner.
@@ -190,9 +191,28 @@ Each module broadcasts its own stage — orchestrators broadcast nothing:
   Runtime refusal (including PID death after queueing) records a rejected receipt
   through Engine before returning failure; consumption winning that race remains
   authoritative and is never overwritten by rejection handling.
+  Incoming/busy admission alone may return a private live-handoff disposition after
+  definitive native `idle`/`closed` nonacceptance or Engine finalization-before-queue.
+  Rejection is persisted first; consumed inputs, generic timeout, overflow, mismatch,
+  unavailable/replaced runtime and admission failures never trigger it.
+  Low-level `:steer_request`/`:inject_request` retain their native refusal behavior.
+  Agent API reserves the same incarnation's FIFO history lease within its local
+  completion session, waiting at most 60 seconds (or a shorter incoming deadline).
+  Expired/dead waiters are removed; completion publishes synchronized context before
+  granting the next lease. Accepted waiters and reservations survive history-access
+  loss. Engine then prepares one immutable-receipt-linked root with a fresh
+  capability. Only its creating caller replaces the trusted binding and enters the
+  normal Pipeline/Executor path, adopting rather than reacquiring the reserved lease.
+  The internal handoff result/reservation is never public outgoing metadata or a
+  scheduler; crashes do not resume it, and ambiguous starts are not retried.
+  Native completion already visible during discovery follows ordinary admission.
 - A provider-ingressed explicit input from the active root's Person uses that
   same control path before creating new status messages. Lookup matches canonical
-  transcript/Person scope and immutable configured-agent identity. Busy admission
+  transcript/Person scope and immutable configured-agent identity. ServerManager
+  retains bindings and presentation; Factory reads exact native request state.
+  Stream-derived phase labels never decide activity or authorize controls.
+  Exact-incarnation admission pins protect already accepted targeting; native admission remains authoritative
+  after discovery (which does not eliminate check-then-steer races). Busy admission
   races in Executor fall back to the exact active PID/Jido request; legacy
   unscoped runs retain busy rejection. Queued receipts stop the return hop and
   never finalize a second public answer.
@@ -202,6 +222,10 @@ Each module broadcasts its own stage — orchestrators broadcast nothing:
   `{:error, :invalid_conversation_binding}` before prompt processing, status or execution.
   Internal workflow runs with `provider: nil` remain exempt. There is no whole-exchange
   persistence fallback; Engine verifies the admission capability during finalization.
+  Canonical bindings also carry an exact private `execution_id`, propagated through
+  native input refs, history reads, receipt consumption/rejection and finalization.
+  Input UUIDs alone never select arbitrarily between a rejected receipt and its
+  recovered root. No execution capability is exposed in inspection or tool results.
 - `:run_pipeline` is a single entrypoint with three sequential responsibilities:
   1. **Guard**: `PromptGuard.validate/1` — if it fails, returns a guard-blocked `Outgoing` through the standard persist + channels return-hop path (same delivery flow as regular pipeline responses)
   2. **Signal**: `Status.broadcast(:validating)` — fired once after the guard passes, before routing
@@ -508,6 +532,9 @@ without safe permission mutation support return `:unsupported`.
   the System credential row. Factory's Engine action performs the lifecycle read and
   canonical resolution together.
 - Stores `context_window` runtime state (`max_context_tokens`, fixed `tokens_per_character`, safety margin) and forwards it through Jido `tool_context` for each request transformer run
+- Model-facing signed-value aliases use `OpaqueAliases`' existing schema traversal.
+  With Zoi 0.18.11, defaults remain metadata on the underlying schema; traversal
+  must not require the removed `Zoi.Types.Default` wrapper or apply defaults itself.
 
 ### Server Manager (`Zaq.Agent.ServerManager`)
 - Ensures server presence and reconciles tracked runtimes.
@@ -549,6 +576,10 @@ without safe permission mutation support return `:unsupported`.
 
 ### Stream Events (`Zaq.Agent.StreamEvents`)
 - Reduces `Jido.AI.Agent.ask_stream/3` events into one request result consumed by `Executor`.
+- Native ReAct event order relies on upstream `jido_ai` PR #370's dedicated worker
+  directive, included in the current lock. Do not substitute generic per-event
+  Emit tasks or add a ZAQ lifecycle/reorder workaround. See the
+  [native ordering diagnostic](../operations/native-event-ordering.md).
 - Broadcasts buffered realtime updates through `Status.broadcast/4` so all channels keep using the same channel update flow.
 - Captures a uniform top-level message trace list, including content/reasoning segments and tool calls.
 - `Factory.after_tool_call/3` uses `MediaResultTransformer` to wrap materialized
@@ -573,18 +604,22 @@ without safe permission mutation support return `:unsupported`.
   the next request's cold history consistent with the persisted history that excludes the
   failed turn. Cleanup is incarnation-fenced: a stale failing request cannot stop a newer
   replacement process registered under the same opaque runtime name.
-- Registers request-local inspection state in `Zaq.Agent.RequestRegistry` for inspect/steer/inject actions.
+- Stores sanitized request presentation and immutable targeting in `ServerManager`;
+  the separate RequestRegistry process/module has been removed.
 - Executor supplies the actual Jido request handle to StreamEvents. Production
-  registry keys use its ID; the incoming correlation ID is retained separately,
+  observation keys use its ID; the incoming correlation ID is retained separately,
   alongside runtime PID, owning node, actor and execution scope. Legacy direct
   stream consumers without a handle retain their incoming-ID compatibility path.
-- Registry updates are serialized and cannot replace established ownership fields
+- Presentation updates are serialized and cannot replace established ownership fields
   or reopen a completed, failed or cancelled request after a trailing flush.
   These checks are runtime consistency fences, not authorization: control entry
   points still require trusted actor/scope checks.
 - Production steer/inject calls target the recorded runtime PID and actual request
-  ID, not a reusable server name. A dead incarnation or terminal registry entry is
-  rejected before Factory is called; a replacement runtime is never substituted.
+  ID, not a reusable server name. Dead/removed incarnations are rejected; native
+  expected-request controls enforce acceptance without a presentation status gate.
+  Inspection overlays native terminal status on retained presentation, preserving
+  all segment/buffer/tool details through runtime teardown. Observations live until
+  ServerManager restarts, are protected against outside writes, and never expose tokens.
 
 ### Provider Spec (`Zaq.Agent.ProviderSpec`)
 - Generic facade for provider normalization, model specs and runtime options
@@ -636,10 +671,12 @@ without safe permission mutation support return `:unsupported`.
 
 ### History Loader (`Zaq.Agent.HistoryLoader`)
 - Loads initial context for runtime agent cold starts
-- Canonical Engine admissions are validated before Agent status/guard side effects,
-  and again before Executor starts or reuses a runtime. The confidential Engine
-  `:execution_history` operation owns Person/grant checks; failed authorization
-  never falls back to the legacy loader.
+- Canonical input authorization runs once before Agent status/guard side effects
+  through confidential Engine `:admit_execution`. `HistorySync` carries that result
+  only in its owning live completion session, keyed by binding, Person identity and
+  exact input content. Standalone canonical Executor calls enter the same gate.
+  A persisted pending row or caller-supplied reference/projection is not admission.
+  Failed authorization never falls back to the legacy loader.
 - `from_projection/2` converts only authorized canonical messages to attributed
   Jido entries with UUID/placement references. It does not query Engine storage.
   Executor supplies this context on cold start and selects a transcript/Person
@@ -651,7 +688,10 @@ without safe permission mutation support return `:unsupported`.
   dispatch. HistoryLoader merges UUID-referenced additions into a request-local
   projection, excluding retained/consumed steering inputs and preserving active
   tool exchanges, then existing context-window enforcement applies. This does not
-  modify retained Jido state or advance runtime cursors.
+  modify retained Jido state or advance runtime cursors. The exact live lease retains
+  the last bounded authorized projection. A verified effective-access denial stops
+  new history reads but uses that projection to continue accepted model/tool work;
+  identity, cursor and infrastructure failures still fail truthfully.
 - `Factory.apply_history_context/3` provides the native idle-apply mechanic for
   request-boundary synchronization: it accepts only an exact PID and operation ID, rejects
   active runs before dispatch, and verifies Jido's applied-operation receipt and
@@ -666,7 +706,9 @@ without safe permission mutation support return `:unsupported`.
   metadata. After successful persistence, it rereads authorized additions, binds
   the native final answer to its persisted UUID, merges without duplicating inputs
   or tool pairs, and confirms idle application before releasing admission. Capped
-  pages publish only their read cursors, never unseen captured ends. Failed runs,
+  pages publish only their read cursors, never unseen captured ends. On verified
+  access loss, completion binds the persisted answer using already-authorized context
+  and releases accepted waiters without fetching forbidden additions. Failed runs,
   unhandled outcomes, and synchronization failures dispose the runtime. Successful
   persistence still permits delivery if subsequent synchronization fails. Direct
   canonical Executor calls without an API persistence owner dispose rather than
@@ -674,17 +716,15 @@ without safe permission mutation support return `:unsupported`.
   stale incarnations and failed application; the provider integration suite covers
   warm reuse, post-completion additions, revocation and admission paused through
   an actual Engine finalization transaction.
-- The history ledger also binds the trusted Person and initial Engine source
-  removal generations to the exact PID. Internal `:history_membership_removed`
-  events require the explicit Engine system identity and validated confidential
-  payload. ServerManager selects bindings, never parsed runtime names, and cancels
-  only incarnations older than the removal generation. RequestRegistry fences both
-  that PID and its admitted input before native cancellation/shutdown; Factory
-  wakes local stream sinks, and queued admissions receive the removal reason.
-  StreamEvents discards buffered output and API suppresses fallback/terminal
-  delivery while retaining failed private execution persistence. Other people and
-  unrelated sources remain running; inherited thread runtimes share their parent's
-  source binding. A fresh runtime still requires ordinary Engine authorization.
+- Engine's verified effective-access denial requests local soft retirement using
+  immutable Person/source/PID bindings. No runtime is created to retire it; invalid
+  bindings and outages do not select victims. Admission pins, leases, accepted
+  waiters and live reservations drain before asynchronous native idle checks and
+  exact-PID disposal. Retirement never uses the credential force-drain timer or
+  suppresses accepted output. New authorized work after regrant waits outside the
+  manager for a fresh incarnation. Idle expiry is PID-bound and protects accepted
+  work; stale callbacks cannot stop replacements. Inspection and separate protected
+  operations continue to require current authorization.
 - Factory hydrates conversation-backed runtimes only from the explicit Engine-issued
   `conversation_id`; it never parses a runtime server name to recover persistence identity.
 - The legacy loader excludes pending and failed admitted user messages. Canonical
@@ -777,7 +817,6 @@ lib/zaq/agent/
 ├── prompt_template.ex          # Ecto schema + context for DB-stored prompts
 ├── provider_spec.ex            # Provider normalization + model spec policy
 ├── query_filters.ex            # Retrieval query filter helpers
-├── request_registry.ex         # Request-local inspection state
 ├── retrieval.ex                # Query rewriting agent; broadcasts :retrieving
 ├── runtime_sync.ex             # Runtime orchestration for agent + MCP mutations
 ├── stream_events.ex            # Stream reduction, realtime updates, trace capture

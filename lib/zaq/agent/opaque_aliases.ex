@@ -139,7 +139,6 @@ defmodule Zaq.Agent.OpaqueAliases do
   end
 
   defp collect_paths(%Zoi.Types.Array{inner: inner}, path), do: collect_paths(inner, path ++ [:*])
-  defp collect_paths(%Zoi.Types.Default{inner: inner}, path), do: collect_paths(inner, path)
 
   defp collect_paths(%Zoi.Types.Union{schemas: schemas}, path) do
     Enum.flat_map(schemas, &collect_paths(&1, path))

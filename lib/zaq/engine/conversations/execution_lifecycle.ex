@@ -7,10 +7,35 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
 
   alias Zaq.Accounts.Person
   alias Zaq.Engine.Conversations.ExecutionRecord
+  alias Zaq.Engine.Conversations.Message
   alias Zaq.Identity.ExecutionActor
   alias Zaq.Repo
 
   import Ecto.Query
+
+  @doc "Selects an exact input-bound execution; input-only compatibility never guesses among records."
+  @spec fetch(Message.t(), Ecto.UUID.t() | nil) ::
+          {:ok, ExecutionRecord.t() | nil} | {:error, term()}
+  def fetch(input, execution_id \\ nil) do
+    query = from e in ExecutionRecord, where: e.user_message_id == ^input.id
+
+    case execution_id do
+      nil ->
+        select_execution(Repo.all(from e in query, limit: 2))
+
+      id ->
+        with {:ok, id} <- Ecto.UUID.cast(id),
+             %ExecutionRecord{} = execution <- Repo.one(from e in query, where: e.id == ^id) do
+          {:ok, execution}
+        else
+          _ -> {:error, :unauthorized}
+        end
+    end
+  end
+
+  defp select_execution([]), do: {:ok, nil}
+  defp select_execution([execution]), do: {:ok, execution}
+  defp select_execution(_), do: {:error, :ambiguous_execution}
 
   @doc "Creates the private root for a newly admitted canonical Person input."
   def admit(%{person_id: id}, input, token, {:ok, _provider, _account_key})
@@ -26,24 +51,64 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
 
   def admit(_conversation, _input, _token, _source), do: {:ok, nil}
 
+  @doc "Records successful authorization once while the caller holds the admitted-input lock."
+  def accept_admission(input, execution_id) do
+    case fetch(input, execution_id) do
+      {:ok, nil} ->
+        :ok
+
+      {:ok, %ExecutionRecord{status: "pending", root_execution_id: nil} = execution} ->
+        if execution.admitted_at do
+          :ok
+        else
+          execution
+          |> Ecto.Changeset.change(admitted_at: DateTime.utc_now())
+          |> Repo.update!()
+
+          :ok
+        end
+
+      {:ok, _} ->
+        {:error, :terminal_request}
+
+      error ->
+        error
+    end
+  end
+
+  @doc "Closes a denied provisional root without revoking an earlier admitted execution."
+  def deny_admission(input, execution_id) do
+    case fetch(input, execution_id) do
+      {:ok, %ExecutionRecord{status: "pending", admitted_at: nil, root_execution_id: nil}} ->
+        finish(input, nil, "failed", [], %{}, %{"reason" => "admission_denied"}, execution_id)
+
+      _ ->
+        :ok
+    end
+  end
+
   @doc "Checks the literal active execution owner, including finalization replays."
-  def authorize(input, actor) do
-    case Repo.get_by(ExecutionRecord, user_message_id: input.id) do
-      nil -> :ok
-      execution -> authorize_owner(execution, actor)
+  def authorize(input, actor, execution_id \\ nil) do
+    case fetch(input, execution_id) do
+      {:ok, nil} -> :ok
+      {:ok, execution} -> authorize_owner(execution, actor)
+      error -> error
     end
   end
 
   @doc "Authorizes a public-answer root, never a private steering receipt."
-  def authorize_finalization(input, actor) do
-    case Repo.get_by(ExecutionRecord, user_message_id: input.id) do
-      nil ->
+  def authorize_finalization(input, actor, execution_id \\ nil) do
+    case fetch(input, execution_id) do
+      {:ok, nil} ->
         :ok
 
-      execution ->
+      {:ok, execution} ->
         with :ok <- authorize_owner(execution, actor) do
           public_root(execution)
         end
+
+      error ->
+        error
     end
   end
 
@@ -61,23 +126,34 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
   end
 
   @doc "Returns whether the locked input belongs to the new private storage contract."
-  def private?(input), do: not is_nil(Repo.get_by(ExecutionRecord, user_message_id: input.id))
+  def private?(input),
+    do: Repo.exists?(from e in ExecutionRecord, where: e.user_message_id == ^input.id)
 
   @doc "Links one pending admitted input to a live root without transferring answer ownership."
-  def queue(root_input, child_input) do
-    root = Repo.get_by(ExecutionRecord, user_message_id: root_input.id)
-    child = Repo.get_by(ExecutionRecord, user_message_id: child_input.id)
-
-    queue_records(root, child, child_input.id)
+  def queue(root_input, child_input, opts \\ []) do
+    with {:ok, root} <- fetch(root_input, opts[:root_execution_id]),
+         {:ok, child} <- fetch(child_input, opts[:execution_id]) do
+      queue_records(root, child, child_input.id)
+    end
   end
 
   defp queue_records(
          %ExecutionRecord{id: id, status: status},
-         %ExecutionRecord{root_execution_id: id},
+         %ExecutionRecord{root_execution_id: id, status: "unconsumed"} = child,
          _input_id
        )
        when status in ["completed", "failed"],
-       do: {:error, :terminal_request}
+       do: {:closed_before_accept, input_receipt(child)}
+
+  defp queue_records(
+         %ExecutionRecord{status: status, id: id},
+         %ExecutionRecord{status: "consumed", root_execution_id: id},
+         _input_id
+       )
+       when status in ["completed", "failed"], do: {:error, :terminal_request}
+
+  defp queue_records(_root, %ExecutionRecord{status: "consumed"}, _input_id),
+    do: {:error, :input_consumed}
 
   defp queue_records(root, child, input_id) do
     with %ExecutionRecord{root_execution_id: nil} <- root,
@@ -91,7 +167,7 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
     end
   end
 
-  defp link_input(root, child, input_id) do
+  defp link_input(root, child, _input_id) do
     {status, outcome} =
       if root.status == "pending",
         do: {"queued", child.outcome},
@@ -106,24 +182,30 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
            })
            |> Repo.update() do
       if status == "queued" do
-        {:ok,
-         %{
-           execution_id: child.id,
-           root_execution_id: root.id,
-           refs: %{message_id: input_id, execution_id: child.id, root_execution_id: root.id}
-         }}
+        {:ok, input_receipt(child)}
       else
-        {:rejected, :terminal_request}
+        {:closed_before_accept, input_receipt(child)}
       end
     end
   end
 
-  @doc "Marks only this root's queued receipt as consumed, idempotently."
-  def consume(root_input, child_input) do
-    root = Repo.get_by(ExecutionRecord, user_message_id: root_input.id)
-    child = Repo.get_by(ExecutionRecord, user_message_id: child_input.id)
+  defp input_receipt(child) do
+    %{
+      execution_id: child.id,
+      root_execution_id: child.root_execution_id,
+      refs: %{
+        message_id: child.user_message_id,
+        execution_id: child.id,
+        root_execution_id: child.root_execution_id
+      }
+    }
+  end
 
-    with :ok <- pending_root(root),
+  @doc "Marks only this root's queued receipt as consumed, idempotently."
+  def consume(root_input, child_input, opts \\ []) do
+    with {:ok, root} <- fetch(root_input, opts[:root_execution_id]),
+         {:ok, child} <- fetch(child_input, opts[:execution_id]),
+         :ok <- pending_root(root),
          %ExecutionRecord{root_execution_id: root_id, status: status} <- child,
          true <- root_id == root.id and status in ["queued", "consumed"] do
       case child |> ExecutionRecord.changeset(%{status: "consumed"}) |> Repo.update() do
@@ -141,11 +223,10 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
   defp pending_root(_), do: {:error, :unauthorized}
 
   @doc "Seals a rejected queued child, preserving consumption and terminal receipt evidence."
-  def reject(root_input, child_input, reason) do
-    root = Repo.get_by(ExecutionRecord, user_message_id: root_input.id)
-    child = Repo.get_by(ExecutionRecord, user_message_id: child_input.id)
-
-    with %ExecutionRecord{root_execution_id: nil, id: root_id} <- root,
+  def reject(root_input, child_input, reason, opts \\ []) do
+    with {:ok, root} <- fetch(root_input, opts[:root_execution_id]),
+         {:ok, child} <- fetch(child_input, opts[:execution_id]),
+         %ExecutionRecord{root_execution_id: nil, id: root_id} <- root,
          %ExecutionRecord{root_execution_id: ^root_id} <- child do
       reject_child(child, reason)
     else
@@ -158,7 +239,7 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
 
   defp reject_child(%ExecutionRecord{status: "queued"} = child, reason) do
     safe_reason =
-      if reason in [:stale_runtime, :terminal_request, :scope_conflict],
+      if reason in [:stale_runtime, :terminal_request, :scope_conflict, :closed_before_accept],
         do: Atom.to_string(reason),
         else: "runtime_rejected"
 
@@ -176,12 +257,12 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
   defp reject_child(_child, _reason), do: {:error, :input_conflict}
 
   @doc "Stores one terminal root disposition; public-answer uniqueness remains schema-enforced."
-  def finish(input, answer_id, status, trace, usage, outcome) do
-    case Repo.get_by(ExecutionRecord, user_message_id: input.id) do
-      nil ->
+  def finish(input, answer_id, status, trace, usage, outcome, execution_id \\ nil) do
+    case fetch(input, execution_id) do
+      {:ok, nil} ->
         {:ok, nil}
 
-      execution ->
+      {:ok, execution} ->
         from(child in ExecutionRecord,
           where: child.root_execution_id == ^execution.id and child.status == "queued"
         )
@@ -197,6 +278,67 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
           outcome: outcome
         })
         |> Repo.update()
+
+      error ->
+        error
+    end
+  end
+
+  @doc "Creates one new root linked to an unchanged rejected receipt; duplicate callers receive no capability."
+  @spec prepare_followup(Message.t(), map(), map()) ::
+          {:ok, map() | :already_prepared} | {:error, term()}
+  def prepare_followup(input, request, actor) do
+    with {:ok, %ExecutionRecord{} = receipt} <- fetch(input, request.receipt_execution_id),
+         :ok <- admitted_receipt(receipt),
+         :ok <- authorize_owner(receipt, actor),
+         :ok <- recoverable_receipt(receipt, request.root_execution_id),
+         %ExecutionRecord{status: "completed", root_execution_id: nil} <-
+           Repo.get(ExecutionRecord, receipt.root_execution_id) do
+      insert_followup(input, receipt)
+    else
+      {:error, _} = error -> error
+      _ -> {:error, :prior_execution_not_completed}
+    end
+  end
+
+  defp admitted_receipt(%ExecutionRecord{admitted_at: %DateTime{}}), do: :ok
+  defp admitted_receipt(_), do: {:error, :admission_required}
+
+  defp recoverable_receipt(%ExecutionRecord{status: "consumed"}, _), do: {:error, :input_consumed}
+
+  defp recoverable_receipt(%ExecutionRecord{status: "unconsumed", root_execution_id: root}, root)
+       when not is_nil(root), do: :ok
+
+  defp recoverable_receipt(_, _), do: {:error, :input_conflict}
+
+  defp insert_followup(input, receipt) do
+    case Repo.get_by(ExecutionRecord, recovered_from_execution_id: receipt.id) do
+      nil ->
+        token = Ecto.UUID.generate()
+
+        attrs = %{
+          person_id: receipt.person_id,
+          user_message_id: input.id,
+          recovered_from_execution_id: receipt.id,
+          finalization_token_hash: token |> then(&:crypto.hash(:sha256, &1)) |> Base.encode64()
+        }
+
+        with {:ok, execution} <-
+               %ExecutionRecord{}
+               |> ExecutionRecord.changeset(attrs)
+               |> Ecto.Changeset.put_change(:admitted_at, receipt.admitted_at)
+               |> Repo.insert() do
+          {:ok,
+           %{
+             conversation_id: input.conversation_id,
+             user_message_id: input.id,
+             execution_id: execution.id,
+             finalization_token: token
+           }}
+        end
+
+      _ ->
+        {:ok, :already_prepared}
     end
   end
 end

@@ -1,7 +1,7 @@
 defmodule Zaq.Engine.Workflows.FinchPoolContentionTest do
   @moduledoc """
   Regression test for the shared ReqLLM Finch pool under concurrent workflow
-  load. Forces `ReqLLM.Finch`'s pool `count` down to 8 — below the 10 real LLM
+  load. Forces `ReqLLM.Finch`'s pool capacity down to 8 — below the 10 real LLM
   calls this test drives (5 concurrent workflow runs x 2 agent nodes each) — so
   a checkout-timeout/pool-exhaustion regression surfaces immediately instead of
   hiding behind spare pool headroom.
@@ -19,20 +19,18 @@ defmodule Zaq.Engine.Workflows.FinchPoolContentionTest do
   alias Zaq.Engine.Workflows
   alias Zaq.TestSupport.{MultiAgentOpenAIStub, OpenAIStub}
 
-  @pool_count 8
-
-  setup do
+  setup tags do
     Mox.set_mox_global()
     stub(Zaq.NodeRouterMock, :dispatch, fn event -> event end)
 
     original_finch_config = Application.get_env(:req_llm, :finch, [])
-    shrink_finch_pool(@pool_count)
+    if tags[:pool_capacity], do: shrink_finch_pool(tags.pool_capacity)
     on_exit(fn -> restore_finch_pool(original_finch_config) end)
 
     :ok
   end
 
-  # Swaps the live `ReqLLM.Finch` child for one with a smaller pool `count`, in
+  # Swaps the live `ReqLLM.Finch` child for one with a smaller capacity, in
   # place, under its existing supervisor (`ReqLLM.Supervisor`). Restarting via
   # `Supervisor.restart_child/2` would just reuse the ORIGINAL childspec
   # captured when the app booted, so the child must be deleted and re-added
@@ -40,7 +38,7 @@ defmodule Zaq.Engine.Workflows.FinchPoolContentionTest do
   # Finch derives its child-spec `id` from the `:name` option (`ReqLLM.Finch`),
   # not the bare `Finch` module — that's the id `ReqLLM.Supervisor` registered
   # it under at boot.
-  defp shrink_finch_pool(count) do
+  defp shrink_finch_pool(size) do
     :ok = Supervisor.terminate_child(ReqLLM.Supervisor, ReqLLM.Finch)
     :ok = Supervisor.delete_child(ReqLLM.Supervisor, ReqLLM.Finch)
 
@@ -48,7 +46,7 @@ defmodule Zaq.Engine.Workflows.FinchPoolContentionTest do
       Supervisor.start_child(
         ReqLLM.Supervisor,
         {Finch,
-         name: ReqLLM.Finch, pools: %{default: [protocols: [:http1], size: 1, count: count]}}
+         name: ReqLLM.Finch, pools: %{default: [protocols: [:http1], size: size, count: 1]}}
       )
   end
 
@@ -145,6 +143,7 @@ defmodule Zaq.Engine.Workflows.FinchPoolContentionTest do
     |> String.contains?(["pool_timeout", "checkout", "nimblepool"])
   end
 
+  @tag pool_capacity: 8
   test "5 concurrent runs of a 2-agent workflow complete cleanly on an 8-slot Finch pool" do
     test_pid = self()
     hits = :atomics.new(1, [])
@@ -203,5 +202,237 @@ defmodule Zaq.Engine.Workflows.FinchPoolContentionTest do
       assert Enum.all?(step_runs, &(&1.status == "completed"))
       refute Enum.any?(step_runs, &pool_error?(&1.errors))
     end
+  end
+
+  test "a held model request does not strand another behind the same selected shard" do
+    owner = self()
+    previous = Application.fetch_env(:req_llm, :stream_pool_strategy)
+    Application.put_env(:req_llm, :stream_pool_strategy, fn entries -> Enum.min(entries) end)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:req_llm, :stream_pool_strategy, value)
+        :error -> Application.delete_env(:req_llm, :stream_pool_strategy)
+      end
+    end)
+
+    {server, endpoint} =
+      OpenAIStub.server(
+        fn _conn, body ->
+          send(owner, {:model_arrived, self()})
+
+          receive do
+            :release -> :ok
+          after
+            10_000 -> raise "model barrier not released"
+          end
+
+          {200, MultiAgentOpenAIStub.text_sse("ok", MultiAgentOpenAIStub.request_model(body))}
+        end,
+        owner
+      )
+
+    start_supervised!(server)
+    first = start_model_request(endpoint)
+    assert_receive {:model_arrived, first_worker}, 5_000
+    on_exit(fn -> send(first_worker, :release) end)
+    second = start_model_request(endpoint)
+    assert_receive {:model_arrived, second_worker}, 5_000
+    on_exit(fn -> send(second_worker, :release) end)
+    send(first_worker, :release)
+    send(second_worker, :release)
+    assert Task.await(first, 5_000) == "ok"
+    assert Task.await(second, 5_000) == "ok"
+  end
+
+  defp start_model_request(endpoint) do
+    Task.async(fn ->
+      {:ok, response} =
+        ReqLLM.stream_text("openai:gpt-4.1-mini", "hello",
+          base_url: endpoint,
+          api_key: "test-key"
+        )
+
+      ReqLLM.StreamResponse.text(response)
+    end)
+  end
+
+  for cancellation <- [:halt, :kill] do
+    @cancellation cancellation
+    @tag pool_capacity: 1
+    test "saturation queues requests and #{@cancellation} cancellation releases capacity for reuse" do
+      owner = self()
+      handler_id = {__MODULE__, self()}
+
+      :telemetry.attach(
+        handler_id,
+        [:finch, :queue, :start],
+        fn _, _, _, _ ->
+          send(owner, {:checkout_started, self()})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      {server, endpoint} =
+        OpenAIStub.server(
+          fn conn, _body ->
+            send(owner, {:transport_arrived, self()})
+            conn = Plug.Conn.send_chunked(conn, 200)
+            {:ok, conn} = Plug.Conn.chunk(conn, "ready")
+
+            receive do
+              :release -> conn
+            after
+              10_000 -> raise "transport barrier not released"
+            end
+          end,
+          owner
+        )
+
+      start_supervised!(server)
+
+      first =
+        Task.async(fn ->
+          Finch.build(:get, endpoint)
+          |> Finch.stream_while(ReqLLM.Finch, :waiting, fn
+            {:data, _}, _ ->
+              send(owner, {:stream_ready, self()})
+
+              receive do
+                :cancel -> {:halt, :cancelled}
+              after
+                10_000 -> raise "stream cancellation not requested"
+              end
+
+            _, acc ->
+              {:cont, acc}
+          end)
+        end)
+
+      assert_receive {:transport_arrived, first_worker}, 5_000
+      assert_receive {:stream_ready, first_pid}, 5_000
+      on_exit(fn -> send(first_worker, :release) end)
+      second = start_transport_request(endpoint)
+      second_pid = second.pid
+      assert_receive {:checkout_started, ^second_pid}, 5_000
+      refute_receive {:transport_arrived, _}, 100
+
+      case @cancellation do
+        :halt ->
+          send(first_pid, :cancel)
+          assert Task.await(first, 5_000) == {:ok, :cancelled}
+
+        :kill ->
+          assert Task.shutdown(first, :brutal_kill) == nil
+          refute Process.alive?(first_pid)
+      end
+
+      send(first_worker, :release)
+      assert_receive {:transport_arrived, second_worker}, 5_000
+      send(second_worker, :release)
+      assert {:ok, %Finch.Response{status: 200}} = Task.await(second, 5_000)
+
+      third = start_transport_request(endpoint)
+      assert_receive {:transport_arrived, third_worker}, 5_000
+      send(third_worker, :release)
+      assert {:ok, %Finch.Response{status: 200}} = Task.await(third, 5_000)
+    end
+  end
+
+  for capacity <- [1, 50] do
+    @capacity capacity
+    @tag pool_capacity: capacity
+    test "ReqLLM cancellation wakes a queued stream on a saturated #{@capacity}-slot pool" do
+      owner = self()
+      handler_id = {__MODULE__, self()}
+
+      :telemetry.attach(
+        handler_id,
+        [:finch, :queue, :start],
+        fn _, _, meta, _ ->
+          send(owner, {:model_checkout, self(), meta.pool})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      {server, endpoint} =
+        OpenAIStub.server(
+          fn _conn, body ->
+            send(owner, {:held_model, self()})
+
+            receive do
+              :release -> :ok
+            after
+              10_000 -> raise "model barrier not released"
+            end
+
+            {200, MultiAgentOpenAIStub.text_sse("ok", MultiAgentOpenAIStub.request_model(body))}
+          end,
+          owner
+        )
+
+      start_supervised!(server)
+
+      start_stream = fn ->
+        {:ok, response} =
+          ReqLLM.stream_text("openai:gpt-4.1-mini", "hello",
+            base_url: endpoint,
+            api_key: "test-key"
+          )
+
+        on_exit(fn -> response.cancel.() end)
+        response
+      end
+
+      [{first, first_worker} | occupied] =
+        for _ <- 1..@capacity do
+          response = start_stream.()
+          assert_receive {:held_model, worker}, 5_000
+          on_exit(fn -> send(worker, :release) end)
+          assert_receive {:model_checkout, _, _}, 5_000
+          {response, worker}
+        end
+
+      queued = start_stream.()
+      assert_receive {:model_checkout, http, pool}, 5_000
+      :erlang.trace(pool, true, [:receive, {:tracer, self()}])
+      on_exit(fn -> if Process.alive?(pool), do: :erlang.trace(pool, false, [:receive]) end)
+      # Synchronize with actual queuing rather than merely transport startup.
+      state = :sys.get_state(pool)
+
+      unless Enum.any?(state.requests, fn {_, request} -> elem(request, 0) == http end) do
+        assert_receive {:trace, ^pool, :receive, {:"$gen_call", {^http, _}, {:checkout, _, _}}},
+                       5_000
+      end
+
+      assert :queue.len(:sys.get_state(pool).queue) == 1
+      :erlang.trace(pool, false, [:receive])
+
+      assert :ok = first.cancel.()
+      assert_receive {:held_model, next_worker}, 5_000
+      send(next_worker, :release)
+      assert ReqLLM.StreamResponse.text(queued) == "ok"
+      send(first_worker, :release)
+
+      for {response, worker} <- occupied do
+        send(worker, :release)
+        assert ReqLLM.StreamResponse.text(response) == "ok"
+      end
+
+      reused = start_stream.()
+      assert_receive {:held_model, reuse_worker}, 5_000
+      send(reuse_worker, :release)
+      assert ReqLLM.StreamResponse.text(reused) == "ok"
+    end
+  end
+
+  defp start_transport_request(endpoint) do
+    Task.async(fn ->
+      Finch.build(:get, endpoint) |> Finch.request(ReqLLM.Finch, pool_timeout: 5_000)
+    end)
   end
 end

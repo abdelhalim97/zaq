@@ -20,6 +20,15 @@ if System.get_env("PHX_SERVER") do
   config :zaq, ZaqWeb.Endpoint, server: true
 end
 
+llm_pool_size =
+  System.get_env("REQ_LLM_POOL_SIZE") || System.get_env("REQ_LLM_POOL_COUNT") || "50"
+
+llm_pool_size =
+  case Integer.parse(llm_pool_size) do
+    {size, ""} when size > 0 -> size
+    _ -> raise "REQ_LLM_POOL_SIZE (or legacy REQ_LLM_POOL_COUNT) must be a positive integer"
+  end
+
 config :req_llm,
   finch: [
     name: ReqLLM.Finch,
@@ -28,8 +37,10 @@ config :req_llm,
         # ReqLLM recommends HTTP/1-only pools for broad provider compatibility and
         # to avoid Finch mixed-protocol ALPN issues with large LLM request bodies.
         protocols: [:http1],
-        size: 1,
-        count: String.to_integer(System.get_env("REQ_LLM_POOL_COUNT", "50"))
+        # One queue shares all capacity; random one-slot shards strand requests
+        # behind long-running streams even when other shards are idle.
+        size: llm_pool_size,
+        count: 1
       ]
     }
   ]

@@ -204,18 +204,13 @@ can take over. Mattermost currently declares complete snapshot support, not push
 event synchronization; provider event wiring remains separate. Both refresh and
 events use the same resource lock and preserve manual grants.
 
-Committed provider-grant removals also stage `HistoryRuntimeRemovalWorker` work
-in that transaction. `HistoryRuntimeRemoval` fans out the provider-neutral source,
-Person set and removal generation to discovered Agent nodes after top-level commit;
-an enclosing transaction defers effects to its committed job. Rollbacks, incomplete
-snapshots, stale events and surviving membership never cancel runtimes. The root's
-`membership_state` retains an Engine-owned removal generation across snapshots;
-authorized execution projections include each source's generation so delayed jobs
-cannot cancel a runtime admitted after that removal. This marker is not a grant.
-Discovery or acknowledgement failure returns `:runtime_removal_pending` while
-transactional work remains available for retry; acknowledgement does not guarantee
-delivery to partitioned or undiscovered nodes. Manual grants remain independently
-valid for ordinary restart authorization.
+Membership reconciliation changes provider grants and ordered membership evidence,
+not runtime lifecycle. Manual grants remain effective after provider removal; no
+removal job or Agent broadcast is produced. Previously stored removal-generation
+JSON remains inert. `HistoryRuntimeRemovalWorker` only acknowledges valid old queued
+jobs without Agent effects; invalid jobs are cancelled. Remove that adapter after
+persisted jobs drain. Runtime retirement is local and lazy, driven by Engine's
+verified effective-access denial at admission or a protected fresh history read.
 
 Replicated capture seeds an ordinary recipient read grant atomically with each new
 copy. Its resource is scoped by provider, connector, conversation and recipient;
@@ -948,6 +943,17 @@ Distributed server invalidation remains a later consumer integration.
 
 ### Conversations Context (`Zaq.Engine.Conversations`)
 
+`admit_execution/3` validates the exact input, content, capability and active Person
+under the admitted-input lock, reuses the effective transcript-read policy, and
+records write-once `ExecutionRecord.admitted_at`. Factual capture and provisional
+pending records do not authorize execution. Never-admitted denied roots fail while
+their factual input remains; denied replays cannot revoke earlier admissions.
+Ordinary changesets cannot set admission evidence and historical rows are not
+backfilled. Confidential `:admit_execution` is the execution gate; later public
+invocations must gate again. Queue/follow-up operations verify ownership, admission
+evidence and exact linkage without rereading grants for the accepted input. A
+recovery root inherits admission without changing its rejected receipt.
+
 `execution_history/2` verifies the admission token, conversation-backed input and
 literal active Person owner, then composes a sanitized canonical projection through
 `TranscriptHistory.list/3`. Engine API exposes it only as confidential
@@ -955,7 +961,10 @@ literal active Person owner, then composes a sanitized canonical projection thro
 retained root, up to 50 parent messages and up to 100 local messages; Replicated
 selects the admitted Person's exact placement. Canonical UUIDs deduplicate the root
 and current input is excluded. Every source uses fresh history grants. A missing
-root is not synthesized or fetched from a provider. Private legacy admissions
+root is not synthesized or fetched from a provider. Reads never record admission.
+Trusted internal reads can request a bounded effective-access denial coordinate
+only after binding/identity validation; ordinary reads retain sanitized errors.
+Private legacy admissions
 return a legacy marker only when no canonical placement exists; ambiguous replicas
 fail closed rather than selecting one arbitrarily.
 
@@ -1031,6 +1040,31 @@ injection after failed queue persistence.
 Agent automatic
 same-Person busy-input routing reuses this receipt path. Rejection/finalizing
 race coverage remains tracked in B3 (`zaq-emb.30.4`).
+
+Canonical admission bindings carry `execution_id` in addition to the stable input
+UUID. History, control, receipt operations and finalization select that exact
+input-bound execution. Input-only compatibility rejects ambiguous selection;
+private-storage detection uses an existence query. Legacy Message-only capabilities
+retain their existing finalization path.
+
+Confidential `:prepare_execution_followup` supports the live Agent handoff protocol,
+not a durable retry scheduler. It revalidates the original admission token, literal
+Person, exact content/transcript, current grants, rejected receipt linkage and
+completed prior root under the existing Message locks. One new root references the
+unchanged receipt through immutable `recovered_from_execution_id`; its independently
+minted token is hashed only on that root and returned only to the creating caller.
+Duplicate preparation returns `:already_prepared` without authority to execute.
+Receipt tokens cannot finalize a recovered root. Selected root status, not Message
+metadata, governs finalization replay and its unique public answer/accounting.
+The additive `20261009000000_add_execution_followup_identity` migration enforces
+one recovery per receipt and one answer root per input, fails conflicting-root
+preflight without repairing data, and refuses rollback of populated recovery evidence.
+This preparation foundation does not itself dispatch or resume execution; Agent's
+live completion session owns dispatch and reservation adoption. For live admission,
+`:queue_execution_input` can return a committed `:closed_before_accept` receipt
+disposition when root finalization precedes queueing. Ordinary/low-level callers
+retain `:terminal_request`. This is proof from that call, not inference from a
+historical receipt's rejection reason.
 
 - Public API for the full conversation/message/rating/share lifecycle.
 - Access from BO crosses `NodeRouter.dispatch/1` and the Engine role API. Some existing callers still use generic invoke helpers; new calls follow the domain-action dispatch contract above.

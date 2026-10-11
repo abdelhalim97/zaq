@@ -9,7 +9,7 @@ defmodule Zaq.Agent.IdleLifecycle do
   @impl true
   def handle_event(:idle_timeout, state) do
     server_id = state.id
-    send(Zaq.Agent.ServerManager, {:expire_server, server_id})
+    send(Zaq.Agent.ServerManager, {:expire_server, server_id, self()})
     {:cont, state}
   end
 
