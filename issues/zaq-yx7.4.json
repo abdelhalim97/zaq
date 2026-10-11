@@ -9,9 +9,15 @@
   "id": "zaq-yx7.4",
   "labels": [],
   "parent": "zaq-yx7",
+  "comments": [
+    {
+      "text": "Action reuse assessment: reuse existing BridgeSupervisor bootstrap/runtime replacement and Channels :channel_ingress_status event; reuse WidgetSettings.validate and upstream RuntimeBuilder status/installation. Concrete WidgetAdapter owns child specs, fixed config-bound ingress sink and closed BO projection. These are local-only transport/lifecycle details, not independently composable business Actions or new agent tools; inputs are trusted resolved connector/config opts, outputs OTP child specs or secret-free status/snippet, errors bounded. No new recovery machinery, verification inputs from browsers or direct BO service calls. Deleted Runtime/Readiness/SupervisedWidgetAdapter; downstream source references and owner docs updated. Desired-vs-installed comparison retained; package aggregate precedence is no longer duplicated. Validation: mix q clean, scoped 515 tests + 10 properties, lifecycle 27 tests + 1 property across seeds 940995/773882/41768, credential ingress 11 isolated tests clean. Existing browsers twice 200/201 with reproducible-in-suite WebKit goto timeout (isolated case passed), tracked zaq-yx7.5; broader all-Channels attempt incomplete with DB ownership/queue errors. No final approval/publication requested.",
+      "timestamp": "2026-10-11T09:02:50Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7.4] Remove widget readiness plumbing and unify adapter status",
   "type": "task",
-  "updated_at": "2026-10-11T08:20:26Z"
+  "updated_at": "2026-10-11T09:02:50Z"
 }
