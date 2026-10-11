@@ -1,6 +1,7 @@
 {
   "assignee": "",
   "blocked_by": [
+    "zaq-yx7.5",
     "zaq-yx7.6",
     "zaq-yx7.7"
   ],
@@ -24,5 +25,5 @@
   "status": "in_progress",
   "title": "[zaq-yx7.8] Integrate upstream process options adapter candidate and validate",
   "type": "task",
-  "updated_at": "2026-10-11T11:02:38Z"
+  "updated_at": "2026-10-11T11:02:39Z"
 }

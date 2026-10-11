@@ -2,7 +2,8 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [
-    "zaq-vrq"
+    "zaq-vrq",
+    "zaq-yx7.8"
   ],
   "created": "2026-10-11T09:02:33Z",
   "description": "Cleanup validation: existing 201-test Channels/System Configuration/BO Chat journey scope ran twice; both had 200 passes and the same journeys-webkit System Config Global saves timezone and persists after page reload beforeEach page.goto(/bo/system-config) timeout waiting for load (30000ms). Failed case passed alone (13.7s); trace has no network snapshot for stalled goto. No changes to assertions, retries or timeouts. Latest trace: test/e2e/test-results/system_config-System-Confi-c1519--persists-after-page-reload-journeys-webkit/trace.zip. Determine cause and obtain complete green existing browser regression before release finalization. Also broader all-Channels attempt had DB ownership/queue failures in person_credential_ingress_integration_test; that file passed alone (11 tests), and relevant widget/BO scope passed 515 tests + 10 properties. Do not claim full-suite success.",
@@ -19,5 +20,5 @@
   "status": "open",
   "title": "[zaq-yx7.5] Investigate recurring WebKit System Configuration navigation timeout",
   "type": "task",
-  "updated_at": "2026-10-11T10:42:56Z"
+  "updated_at": "2026-10-11T11:02:39Z"
 }
