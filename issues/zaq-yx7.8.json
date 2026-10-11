@@ -10,9 +10,15 @@
   "id": "zaq-yx7.8",
   "labels": [],
   "parent": "zaq-yx7",
+  "comments": [
+    {
+      "text": "Local-path public HostAdapter candidate integrated. Fresh compile after technical Secure/Partitioned cookie-claim binding; mix q clean; expanded 485 tests + 11 properties passed. Canonical identity_issuer/identity_audience/same_site required saved settings; upstream owns technical defaults/normalized readiness/install and derives presentation. Host fixtures use public callbacks, no endpoint widget config. Migrated disposable evaluation launcher to trusted Channels child process options; restarting E2E build for browser acceptance. Publication authorization already sent upstream; no merge/main switch, ZAQ remains uncommitted.",
+      "timestamp": "2026-10-11T10:33:08Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7.8] Integrate upstream process options adapter candidate and validate",
   "type": "task",
-  "updated_at": "2026-10-11T10:33:06Z"
+  "updated_at": "2026-10-11T10:33:08Z"
 }
