@@ -18,11 +18,15 @@
     {
       "text": "Correction to final validation evidence: after generic bootstrap extra-info acceptance was added, final run seed893691 had 516 tests +10 properties and ONE unpaused WebWidget.Supervisor root recovery failure. Even fresh independent fixtures do not eliminate the package failure; do not describe it as fully resolved by test isolation. Reported audit hypothesis and evidence upstream in issue23 comment6107439809; no upstream edits or host recovery. mix q at this final run also failed due ExDNA Task.Supervised.stream(5000) timeout; rerun needed, no Credo rule/timeouts changed. BO-only startup and git diff --check passed. Keep cleanup issue unclosed pending candidate recovery acceptance; initial515/10 passing run is historical, not final green.",
       "timestamp": "2026-10-11T09:09:27Z"
+    },
+    {
+      "text": "Final quality rerun passed with no issues (ExDNA internal timeout unchanged). 42 local documentation links/anchors passed; deleted-module references eliminated from active source/tests/owner docs; main Application/static Channels wiring restored exactly. BO-only process isolation passed. Evaluation restarted on original isolated database and host CA directory; health/login HTTP200 and existing Chromium BO helper successfully authenticated and opened widget config without page errors. Latest regression outcome remains516 tests+10properties with1 upstream root-recovery failure; browsers twice200/201. Candidate recovery blocks cleanup validation (zaq-yx7.6), browser regression blocks consolidated E2E (zaq-yx7.5). No final mix precommit, completed UX approval, source commit/push, upstream merge or switch to main.",
+      "timestamp": "2026-10-11T09:16:15Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7.4] Remove widget readiness plumbing and unify adapter status",
   "type": "task",
-  "updated_at": "2026-10-11T09:09:27Z"
+  "updated_at": "2026-10-11T09:16:15Z"
 }
