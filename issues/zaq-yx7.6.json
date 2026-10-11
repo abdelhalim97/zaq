@@ -10,9 +10,15 @@
   "id": "zaq-yx7.6",
   "labels": [],
   "parent": "zaq-yx7",
+  "comments": [
+    {
+      "text": "Fresh local-path HostAdapter candidate passes real ZAQ unpaused root-recovery integration in targeted 82-test/3-property run and expanded 485-test/11-property run, seed 893691. Upstream reports bounded named-child drain and 20 fresh ordinary DynamicSupervisor root-kill cycles under each of seeds 893691,123,76543 (60 additional kills), preserving Connector and unrelated Agent. Original root-cause hypothesis remains unproven. Await immutable published candidate pin and final-source acceptance before closing dependency gate.",
+      "timestamp": "2026-10-11T10:33:05Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-yx7.6] Resolve candidate root-kill recovery acceptance blocker",
   "type": "task",
-  "updated_at": "2026-10-11T10:03:43Z"
+  "updated_at": "2026-10-11T10:33:05Z"
 }
