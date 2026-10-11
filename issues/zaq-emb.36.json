@@ -9,9 +9,15 @@
   "id": "zaq-emb.36",
   "labels": [],
   "parent": "zaq-emb",
+  "comments": [
+    {
+      "text": "Julien explicitly authorized folding unconsumed migrations. Consolidated PR B receipts/recovery/admission columns into 20261008000000_add_execution_input_receipts.exs; deleted later two migrations. All final constraints/indexes preserved. Conflicting-root preflight now runs before adding receipt columns since baseline has roots only. Combined down checks recovery and receipt evidence before any destructive DDL. Consolidated existing migration tests, retaining root payload/UUID/token preservation, conflict rejection, destructive rollback guards and no fabricated admission. Fresh _fold database applied consolidated migration; targeted round-trip suite and final precommit passed (counts in .35). Engine guide updated; historical handoff unchanged. Only isolated test DBs used; user dev DB untouched. No commit/push.",
+      "timestamp": "2026-10-11T08:56:05Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[#768] Fold unconsumed PR B execution migrations",
   "type": "task",
-  "updated_at": "2026-10-11T08:34:38Z"
+  "updated_at": "2026-10-11T08:56:05Z"
 }
