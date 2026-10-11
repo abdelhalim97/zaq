@@ -722,8 +722,6 @@ defmodule Zaq.Agent.ServerManager do
   end
 
   @impl true
-  def handle_info({:expire_server, _server_id}, state), do: {:noreply, state}
-
   def handle_info({:expire_server, server_id, pid}, state) do
     if safe_whereis(server_id) == pid do
       expire_idle_incarnation(state, server_id, pid, state.history[server_id])

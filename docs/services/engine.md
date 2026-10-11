@@ -1056,7 +1056,8 @@ minted token is hashed only on that root and returned only to the creating calle
 Duplicate preparation returns `:already_prepared` without authority to execute.
 Receipt tokens cannot finalize a recovered root. Selected root status, not Message
 metadata, governs finalization replay and its unique public answer/accounting.
-The additive `20261009000000_add_execution_followup_identity` migration enforces
+The consolidated `20261008000000_add_execution_input_receipts` migration adds
+receipt/recovery links and nullable admission timestamps without backfilling admission. It enforces
 one recovery per receipt and one answer root per input, fails conflicting-root
 preflight without repairing data, and refuses rollback of populated recovery evidence.
 This preparation foundation does not itself dispatch or resume execution; Agent's

@@ -5,19 +5,11 @@ unless Code.ensure_loaded?(Zaq.Repo.Migrations.AddExecutionInputReceipts) do
   )
 end
 
-unless Code.ensure_loaded?(Zaq.Repo.Migrations.AddExecutionFollowupIdentity) do
-  Code.require_file(
-    "../../../../priv/repo/migrations/20261009000000_add_execution_followup_identity.exs",
-    __DIR__
-  )
-end
-
 defmodule Zaq.Engine.Conversations.ExecutionInputReceiptsMigrationTest do
   use Zaq.DataCase, async: false
 
   alias Zaq.Accounts.Person
   alias Zaq.Engine.Conversations.{ExecutionRecord, Message}
-  alias Zaq.Repo.Migrations.AddExecutionFollowupIdentity
   alias Zaq.Repo.Migrations.AddExecutionInputReceipts
 
   @version 20_261_008_000_000
@@ -32,6 +24,8 @@ defmodule Zaq.Engine.Conversations.ExecutionInputReceiptsMigrationTest do
 
     round_trip()
     assert Repo.get!(ExecutionRecord, root.id) == root
+    assert Repo.get!(Message, input.id) == input
+    assert is_nil(Repo.get!(ExecutionRecord, root.id).admitted_at)
 
     child =
       insert_execution(person, message("Child input"), %{
@@ -39,26 +33,66 @@ defmodule Zaq.Engine.Conversations.ExecutionInputReceiptsMigrationTest do
         status: "queued"
       })
 
-    assert :ok =
-             Ecto.Migrator.down(Repo, @version + 1_000_000, AddExecutionFollowupIdentity, @opts)
-
     assert_raise Postgrex.Error, ~r/Cannot remove populated execution input receipts/, fn ->
       Ecto.Migrator.down(Repo, @version, AddExecutionInputReceipts, @opts)
     end
-
-    assert :ok = Ecto.Migrator.up(Repo, @version + 1_000_000, AddExecutionFollowupIdentity, @opts)
 
     assert Repo.get!(ExecutionRecord, child.id) == child
     assert Repo.get!(ExecutionRecord, root.id) == root
   end
 
   defp round_trip do
-    assert :ok =
-             Ecto.Migrator.down(Repo, @version + 1_000_000, AddExecutionFollowupIdentity, @opts)
-
     assert :ok = Ecto.Migrator.down(Repo, @version, AddExecutionInputReceipts, @opts)
     assert :ok = Ecto.Migrator.up(Repo, @version, AddExecutionInputReceipts, @opts)
-    assert :ok = Ecto.Migrator.up(Repo, @version + 1_000_000, AddExecutionFollowupIdentity, @opts)
+  end
+
+  test "rollback refuses to discard recovery evidence" do
+    person = Repo.insert!(%Person{full_name: "Followup migration owner"})
+    root = insert_execution(person, message("Root"), %{})
+    input = message("Correction")
+    receipt = insert_execution(person, input, %{root_execution_id: root.id, status: "unconsumed"})
+    recovered = insert_execution(person, input, %{recovered_from_execution_id: receipt.id})
+
+    assert_raise Postgrex.Error, ~r/Cannot remove populated execution followup evidence/, fn ->
+      Ecto.Migrator.down(Repo, @version, AddExecutionInputReceipts, @opts)
+    end
+
+    assert Repo.get!(ExecutionRecord, root.id) == root
+    assert Repo.get!(ExecutionRecord, receipt.id) == receipt
+    assert Repo.get!(ExecutionRecord, recovered.id) == recovered
+  end
+
+  test "conflicting preexisting roots fail preflight without rewriting them" do
+    person = Repo.insert!(%Person{full_name: "Preflight owner"})
+    input = message("Input")
+    root = insert_execution(person, input, %{})
+    assert :ok = Ecto.Migrator.down(Repo, @version, AddExecutionInputReceipts, @opts)
+    duplicate = Ecto.UUID.generate()
+    {:ok, binary_id} = Ecto.UUID.dump(duplicate)
+    {:ok, input_id} = Ecto.UUID.dump(input.id)
+    hash = :crypto.hash(:sha256, duplicate) |> Base.encode64()
+
+    Repo.query!(
+      """
+      INSERT INTO execution_records (id, person_id, user_message_id, status, finalization_token_hash, inserted_at, updated_at)
+      VALUES ($1, $2, $3, 'pending', $4, NOW(), NOW())
+      """,
+      [binary_id, person.id, input_id, hash]
+    )
+
+    assert_raise Postgrex.Error, ~r/Conflicting execution roots require investigation/, fn ->
+      Ecto.Migrator.up(Repo, @version, AddExecutionInputReceipts, @opts)
+    end
+
+    assert %{rows: [[2]]} =
+             Repo.query!("SELECT count(*) FROM execution_records WHERE user_message_id = $1", [
+               input_id
+             ])
+
+    # Remove only this deliberately conflicting test fixture to restore the schema.
+    Repo.query!("DELETE FROM execution_records WHERE id = $1", [binary_id])
+    assert :ok = Ecto.Migrator.up(Repo, @version, AddExecutionInputReceipts, @opts)
+    assert Repo.get!(ExecutionRecord, root.id) == root
   end
 
   defp message(content) do
