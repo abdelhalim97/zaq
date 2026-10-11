@@ -14,11 +14,15 @@
     {
       "text": "Candidate host integration zaq-3px and scoped acceptance zaq-lbk completed. GO for adapter #20 -\u003e #19 -\u003e #22 at 4bd6929bb599ced0bc4a9c0536588fb8b7a002b9 in tested single-node/direct-TLS host; no adapter code edits or merges. Latest mix q and isolated suite passed (148 tests, 9 properties); existing 3-browser regression suite 201 passes; manual embedded authentication/reply/renew/reconnect/explicit durable restoration/backend disconnect passed. User explicitly deferred feature finalization: approval zaq-xfl and consolidated E2E zaq-vrq remain open, review/coverage/final precommit not completed. Current host dependency/config/router/endpoint/docs/tests edits are uncommitted in refactor/webbridge; previous feature commit remains published at PR836. Main uptake must wait for external stack merge + green CI, then change mix.exs ref to branch main, update mix.lock, rerun real-host checks; do not infer permission to merge upstream. Evaluation server running in shell sh_126b520cc0016by7WpbWhuVw9M at HTTP4002/HTTPS4003, E2E-only partition _widget_candidate_20261010; evaluation key/cert/CA in approved temp widget-candidate-tls. Disposable ignored manual probe tmp/widget-host-probe.cjs and screenshots tmp/widget-candidate-{form,ready,channels,embedded}.png; no keys captured in evidence.",
       "timestamp": "2026-10-10T17:56:22Z"
+    },
+    {
+      "text": "Supervised integration pinned at published 6c6df55e; migration issues zaq-yx7.1/.2 complete. Changes remain uncommitted. Evaluation left running on BO HTTP 4002 and test TLS reverse proxy 4003 in isolated _supervised_widget_e2e database. Run/restart/evidence notes: ignored tmp/widget-supervised-evaluation.md. No commit/push/upstream merge performed; final gates still deferred.",
+      "timestamp": "2026-10-11T07:21:55Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7] Define widget connector configuration and readiness contract",
   "type": "task",
-  "updated_at": "2026-10-10T17:56:22Z"
+  "updated_at": "2026-10-11T07:21:55Z"
 }
