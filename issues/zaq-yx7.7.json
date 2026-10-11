@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-11T10:03:23Z",
+  "description": "Approved five-review remediation. Reuse Bridge.provider_config/2, existing runtime lifecycle, channel_ingress_status and NodeRouter confidential events. Add typed optional infrastructure/runtime adapter contracts with explicit trusted init opts; API resolves bridge, bridge dynamically resolves registered adapter. WebBridge owns shared protocol constructors and config-bound ingress sink; upstream owns package policy/readiness/installation. Remove concrete ZAQ WidgetAdapter and widget env/global configuration. Lifecycle/construction/projection are local-only transport interfaces, not business Actions/tool exposure. Verify with two independent adapters, unsupported capability, confidentiality/provider scoping, opaque boot options and isolation tests. Existing uncommitted branch work is intended input; no application commit/push or final UX approval authorized.",
+  "id": "zaq-yx7.7",
+  "labels": [],
+  "parent": "zaq-yx7",
+  "priority": 2,
+  "status": "open",
+  "title": "Replace widget host implementation with dynamic bridge adapter contracts",
+  "type": "task",
+  "updated_at": "2026-10-11T10:03:23Z"
+}
