@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "zaq-emb.35"
+  ],
   "blocks": [],
   "created": "2026-10-11T08:31:54Z",
   "description": "Julien confirms PR B migrations are unconsumed and authorizes consolidation. Fold receipts, recovery identity and nullable admission timestamp into first migration. Preserve all constraints, root-conflict preflight, receipt/recovery evidence rollback guards; consolidate existing migration regressions and validate fresh isolated database plus rollback/reapply. Schema-only; Action reuse not applicable. Run mix q and final precommit after both cleanup tasks.",
@@ -11,5 +13,5 @@
   "status": "in_progress",
   "title": "[#768] Fold unconsumed PR B execution migrations",
   "type": "task",
-  "updated_at": "2026-10-11T08:34:34Z"
+  "updated_at": "2026-10-11T08:34:38Z"
 }
