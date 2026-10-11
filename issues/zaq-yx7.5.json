@@ -9,9 +9,15 @@
   "id": "zaq-yx7.5",
   "labels": [],
   "parent": "zaq-yx7",
+  "comments": [
+    {
+      "text": "Fresh evaluation rebuilt against HostAdapter process-owned configuration; unchanged existing channels/system_config/webbridge_chat suites again 200/201 pass in 5.8m. Same WebKit timezone test at system_config.spec.js:939 times out in global beforeEach -\u003e loginToBackOffice -\u003e page.goto(/bo/system-config), before test body. Trace has no network entries, only newPage and pending goto waiting for load; screenshot blank. No retries/timeout/assertion changes. Failure is still a validation blocker, not waived. Latest Chromium real-widget exploratory probe passes with WSS/auth/renewal/reconnect/restoration/disconnect and no browser errors.",
+      "timestamp": "2026-10-11T10:42:56Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-yx7.5] Investigate recurring WebKit System Configuration navigation timeout",
   "type": "task",
-  "updated_at": "2026-10-11T09:02:49Z"
+  "updated_at": "2026-10-11T10:42:56Z"
 }
