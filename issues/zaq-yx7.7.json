@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "zaq-yx7",
   "priority": 2,
-  "status": "open",
-  "title": "Replace widget host implementation with dynamic bridge adapter contracts",
+  "status": "in_progress",
+  "title": "[zaq-yx7.7] Replace widget host implementation with dynamic bridge adapter contracts",
   "type": "task",
-  "updated_at": "2026-10-11T10:03:23Z"
+  "updated_at": "2026-10-11T10:03:40Z"
 }
