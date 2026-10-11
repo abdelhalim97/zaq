@@ -1,7 +1,8 @@
 {
   "assignee": "",
   "blocked_by": [
-    "zaq-xfl"
+    "zaq-xfl",
+    "zaq-yx7.5"
   ],
   "blocks": [],
   "created": "2026-10-09T13:48:45Z",
@@ -26,5 +27,5 @@
   "status": "open",
   "title": "[zaq-vrq] Finalize widget settings and health feature E2E",
   "type": "task",
-  "updated_at": "2026-10-11T06:55:10Z"
+  "updated_at": "2026-10-11T09:02:49Z"
 }
