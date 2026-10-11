@@ -2,24 +2,31 @@ defmodule Zaq.Agent.RequestControl do
   @moduledoc """
   Shared authorized request-control boundary for explicit Agent API controls and
   execution admission while a runtime is busy. Engine owns canonical admission,
-  grants and durable receipts; this module owns registry/PID targeting and Jido
+  grants and durable receipts; this module owns authorized PID targeting and Jido
   control invocation. It never creates public answers or interprets provider data.
   """
 
-  alias Zaq.Agent.{Answering, Factory, RequestRegistry}
+  alias Zaq.Agent.{Answering, Factory, HistorySync, ServerManager}
   alias Zaq.Engine.Messages.Outgoing
   alias Zaq.Event
   alias Zaq.Identity.ActorNormalizer
   alias Zaq.Identity.ExecutionActor
 
+  @type handoff :: {:followup, map()}
+
   @doc "Returns private request state only to the same currently authorized principal."
   def authorize(event, request_id) do
-    with {:ok, state} when is_map(state) <- RequestRegistry.get(request_id),
+    with {:ok, state, identity} <- authorize_target(event, request_id),
+         :ok <- authorize_person(event, state, identity),
+         do: {:ok, state}
+  end
+
+  defp authorize_target(event, request_id) do
+    with {:ok, state} when is_map(state) <- ServerManager.request_observation(request_id),
          {:ok, identity} <- ExecutionActor.identity(event.actor),
          {:ok, ^identity} <- ExecutionActor.identity(state[:actor]),
-         :ok <- matching_scope(event.request, state),
-         :ok <- authorize_person(event, state, identity) do
-      {:ok, state}
+         :ok <- matching_scope(event.request, state) do
+      {:ok, state, identity}
     else
       {:error, reason} when reason in [:not_found, :scope_conflict] -> {:error, reason}
       _ -> {:error, :unauthorized}
@@ -27,16 +34,57 @@ defmodule Zaq.Agent.RequestControl do
   end
 
   @doc "Queues authorized canonical input before controlling the exact Jido incarnation."
-  def control(event, request_id, content, action, binding)
+  def control(event, request_id, content, action, binding, opts \\ [])
       when action in [:steer_request, :inject_request] do
+    if is_reference(Keyword.get(event.opts, :history_session)) do
+      do_control(event, request_id, content, action, binding, opts)
+    else
+      HistorySync.with_session(fn session ->
+        event = %{event | opts: Keyword.put(event.opts, :history_session, session)}
+        do_control(event, request_id, content, action, binding, opts)
+      end)
+    end
+  end
+
+  defp do_control(event, request_id, content, action, binding, opts) do
     factory = Keyword.get(event.opts, :factory_module, Factory)
 
-    with {:ok, state} <- authorize(event, request_id),
-         {:ok, runtime} <- runtime(state),
-         {:ok, opts} <- input_opts(event, state, content, request_id, binding) do
-      invoke_control(factory, runtime, content, action, opts)
-      |> retain_rejection(event, state, opts)
+    with {:ok, state} <- authorize_input(event, request_id, binding, content),
+         :ok <-
+           ServerManager.admitted_history_target(
+             state[:runtime_pid],
+             event.opts[:history_session]
+           ),
+         {:ok, runtime} <- runtime(state) do
+      followup? = opts[:followup?] == true
+
+      case input_opts(event, state, content, request_id, binding, followup?) do
+        {:ok, input_opts} ->
+          invoke_control(factory, runtime, content, action, input_opts)
+          |> retain_rejection(event, state, input_opts)
+          |> followup_disposition(
+            state,
+            request_id,
+            Keyword.get(input_opts, :extra_refs),
+            followup?
+          )
+
+        {:error, {:closed_before_accept, receipt}} when followup? ->
+          {:followup, followup_binding(state, request_id, receipt.refs)}
+
+        error ->
+          error
+      end
     end
+  end
+
+  defp authorize_input(event, request_id, nil, _content), do: authorize(event, request_id)
+
+  defp authorize_input(event, request_id, binding, content) do
+    with {:ok, state, _identity} <- authorize_target(event, request_id),
+         {:ok, _projection} <-
+           HistorySync.execution_admission(event.opts, binding, event.actor, content),
+         do: {:ok, state}
   end
 
   defp invoke_control(factory, runtime, content, :steer_request, opts) do
@@ -53,22 +101,24 @@ defmodule Zaq.Agent.RequestControl do
 
   defp retain_rejection({:error, reason} = result, event, state, opts) do
     case Keyword.get(opts, :extra_refs) do
-      %{message_id: id} -> persist_rejection(event, state, id, reason, result)
+      %{message_id: _} = refs -> persist_rejection(event, state, refs, reason, result)
       _ -> result
     end
   end
 
   defp retain_rejection(result, _event, _state, _opts), do: result
 
-  defp persist_rejection(event, state, input_id, reason, result) do
+  defp persist_rejection(event, state, refs, reason, result) do
     router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
 
     request =
       Event.new(
         %{
           root_user_message_id: state.execution_user_message_id,
-          user_message_id: input_id,
-          reason: reason
+          root_execution_id: refs[:root_execution_id] || state[:execution_id],
+          user_message_id: refs.message_id,
+          execution_id: refs[:execution_id],
+          reason: rejection_category(reason)
         },
         :engine,
         actor: event.actor,
@@ -94,9 +144,11 @@ defmodule Zaq.Agent.RequestControl do
     scope = "history:#{transcript_id}:person:#{ActorNormalizer.person_id(event.actor)}"
     agent_id = agent_id || Answering.answering_configured_agent().id
 
-    case RequestRegistry.find_active(scope, event.actor, %{agent_id: agent_id}) do
+    case find_native_request(scope, event.actor, %{agent_id: agent_id}) do
       {:ok, {request_id, _state}} ->
-        case control(event, request_id, incoming.content, :steer_request, binding) do
+        case control(event, request_id, incoming.content, :steer_request, binding,
+               followup?: true
+             ) do
           {:ok, _} ->
             {:queued,
              Outgoing.from_pipeline_result(incoming, %{
@@ -106,8 +158,14 @@ defmodule Zaq.Agent.RequestControl do
                root_request_id: request_id
              })}
 
+          {:error, :server_retiring} ->
+            :not_active
+
           {:error, _} = error ->
             error
+
+          {:followup, disposition} ->
+            {:followup, disposition}
         end
 
       {:error, :not_found} ->
@@ -120,8 +178,22 @@ defmodule Zaq.Agent.RequestControl do
 
   def queue_incoming(_event, _incoming, _projection, _binding, _agent_id), do: :not_active
 
-  defp runtime(%{status: status}) when status in [:completed, :failed, :cancelled],
-    do: {:error, :terminal_request}
+  @doc "Selects an exact native run from immutable bindings, not stream-derived phase labels."
+  @spec find_native_request(String.t(), map(), term()) ::
+          {:ok, {String.t(), map()}} | {:error, term()}
+  def find_native_request(scope, actor, runtime \\ nil) do
+    with {:ok, bindings} <- ServerManager.request_bindings(scope, actor, runtime) do
+      bindings
+      |> Enum.filter(fn {id, state} ->
+        match?({:ok, %{accepting?: true}}, Factory.request_state(state[:runtime_pid], id))
+      end)
+      |> case do
+        [request] -> {:ok, request}
+        [] -> {:error, :not_found}
+        _ -> {:error, :ambiguous_request}
+      end
+    end
+  end
 
   defp runtime(%{runtime_pid: pid}) when is_pid(pid),
     do: if(Process.alive?(pid), do: {:ok, pid}, else: {:error, :stale_runtime})
@@ -130,20 +202,42 @@ defmodule Zaq.Agent.RequestControl do
   defp runtime(%{server_id: id}) when not is_nil(id), do: {:ok, id}
   defp runtime(_state), do: {:error, :missing_server_id}
 
-  defp input_opts(_event, %{execution_user_message_id: id}, _content, _request_id, nil)
+  defp input_opts(
+         _event,
+         %{execution_user_message_id: id},
+         _content,
+         _request_id,
+         nil,
+         _followup?
+       )
        when is_binary(id), do: {:error, :admission_required}
 
-  defp input_opts(event, %{execution_user_message_id: id}, content, request_id, binding)
-       when is_binary(id), do: queue_input(event, id, binding, content, request_id)
+  defp input_opts(
+         event,
+         %{execution_user_message_id: id} = state,
+         content,
+         request_id,
+         binding,
+         followup?
+       )
+       when is_binary(id), do: queue_input(event, state, binding, content, request_id, followup?)
 
-  defp input_opts(_event, _state, _content, request_id, _binding),
+  defp input_opts(_event, _state, _content, request_id, _binding, _followup?),
     do: {:ok, [expected_request_id: request_id]}
 
-  defp queue_input(event, root_id, binding, content, request_id) do
+  defp queue_input(event, state, binding, content, request_id, followup?) do
     router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
 
     request =
-      Event.new(%{root_user_message_id: root_id, binding: binding, content: content}, :engine,
+      Event.new(
+        %{
+          root_user_message_id: state.execution_user_message_id,
+          binding: binding,
+          content: content,
+          root_execution_id: state[:execution_id],
+          closed_disposition: followup?
+        },
+        :engine,
         actor: event.actor,
         opts: [action: :queue_execution_input, confidential: true]
       )
@@ -174,7 +268,9 @@ defmodule Zaq.Agent.RequestControl do
     router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
 
     request =
-      Event.new(%{user_message_id: state[:execution_user_message_id]}, :engine,
+      Event.new(
+        %{user_message_id: state[:execution_user_message_id], execution_id: state[:execution_id]},
+        :engine,
         actor: event.actor,
         opts: [action: :authorize_execution_control, confidential: true]
       )
@@ -186,4 +282,26 @@ defmodule Zaq.Agent.RequestControl do
   end
 
   defp authorize_person(_event, _state, _identity), do: :ok
+
+  defp rejection_category({:rejected, reason}) when reason in [:idle, :closed],
+    do: :closed_before_accept
+
+  defp rejection_category(reason), do: reason
+
+  defp followup_disposition({:error, {:rejected, reason}}, state, id, refs, true)
+       when reason in [:idle, :closed] and is_map(refs),
+       do: {:followup, followup_binding(state, id, refs)}
+
+  defp followup_disposition(result, _state, _id, _refs, _followup?), do: result
+
+  defp followup_binding(state, id, refs) do
+    %{
+      root_request_id: id,
+      root_user_message_id: state.execution_user_message_id,
+      root_execution_id: refs.root_execution_id,
+      receipt_execution_id: refs.execution_id,
+      runtime_pid: state.runtime_pid,
+      disposition: :closed_before_accept
+    }
+  end
 end

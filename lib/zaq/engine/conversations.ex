@@ -62,18 +62,11 @@ defmodule Zaq.Engine.Conversations do
          token when is_binary(token) <- binding[:finalization_token],
          %Message{conversation_id: ^conversation_id, role: "user"} = input <-
            Repo.get(Message, input_id),
-         true <- valid_finalization_token?(input, token),
+         true <- valid_finalization_token?(input, token, binding[:execution_id]),
          %Conversation{} = conversation <- Repo.get(Conversation, conversation_id),
-         {:ok, person} <- execution_history_owner(conversation, actor) do
-      if Keyword.has_key?(opts, :after_cursors),
-        do:
-          ExecutionHistory.delta(
-            input,
-            conversation,
-            person,
-            Keyword.fetch!(opts, :after_cursors)
-          ),
-        else: ExecutionHistory.project(input, conversation, person)
+         {:ok, person} <- execution_history_owner(conversation, actor),
+         :ok <- ExecutionLifecycle.authorize(input, actor, binding[:execution_id]) do
+      project_execution_history(input, conversation, person, opts)
     else
       _ -> {:error, :unauthorized}
     end
@@ -84,13 +77,82 @@ defmodule Zaq.Engine.Conversations do
 
   def execution_history(_binding, _actor, _opts), do: {:error, :unauthorized}
 
+  defp project_execution_history(input, conversation, person, opts) do
+    result =
+      if Keyword.has_key?(opts, :after_cursors),
+        do: ExecutionHistory.delta_admission(input, conversation, person, opts[:after_cursors]),
+        else: ExecutionHistory.project_admission(input, conversation, person)
+
+    case result do
+      {:error, {:history_access_denied, _}} = denial ->
+        if opts[:trusted_access_denial], do: denial, else: {:error, :unauthorized}
+
+      other ->
+        other
+    end
+  end
+
+  @doc "Authorizes one input for execution and records that decision independently of native acceptance."
+  def admit_execution(binding, actor, content) when is_map(binding) and is_binary(content) do
+    case Ecto.UUID.cast(binding[:user_message_id]) do
+      {:ok, input_id} ->
+        Repo.transaction(fn -> admit_execution_locked(input_id, binding, actor, content) end)
+        |> complete_admission()
+
+      _ ->
+        {:error, :unauthorized}
+    end
+  rescue
+    _error in [Ecto.ConstraintError, Postgrex.Error, DBConnection.ConnectionError] ->
+      {:error, :history_unavailable}
+  end
+
+  def admit_execution(_binding, _actor, _content), do: {:error, :unauthorized}
+
+  defp admit_execution_locked(input_id, binding, actor, content) do
+    with %Message{role: "user"} = input <- lock_admitted_message(input_id),
+         true <- input.conversation_id == binding[:conversation_id],
+         token when is_binary(token) <- binding[:finalization_token],
+         true <-
+           valid_finalization_token?(input, token, binding[:execution_id]),
+         :ok <- matching_control_content(input, content: content),
+         %Conversation{} = conversation <- Repo.get(Conversation, input.conversation_id),
+         {:ok, person} <- execution_history_owner(conversation, actor),
+         :ok <- ExecutionLifecycle.authorize(input, actor, binding[:execution_id]) do
+      input
+      |> ExecutionHistory.project_admission(conversation, person)
+      |> record_admission(input, binding[:execution_id])
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp record_admission({:ok, projection}, input, execution_id) do
+    with :ok <- ExecutionLifecycle.accept_admission(input, execution_id),
+         do: {:ok, projection}
+  end
+
+  defp record_admission({:error, {:history_access_denied, _}} = denial, input, execution_id) do
+    case ExecutionLifecycle.deny_admission(input, execution_id) do
+      {:error, reason} -> Repo.rollback(reason)
+      _ -> denial
+    end
+  end
+
+  defp record_admission(error, _input, _execution_id), do: error
+
+  defp complete_admission({:ok, result}), do: result
+  defp complete_admission(error), do: error
+
   @doc "Revalidates Person request-control authority without exposing admission capabilities."
-  def authorize_execution_control(input_id, actor) when is_binary(input_id) do
+  def authorize_execution_control(input_id, actor, execution_id \\ nil)
+
+  def authorize_execution_control(input_id, actor, execution_id) when is_binary(input_id) do
     with {:ok, id} <- Ecto.UUID.cast(input_id),
          %Message{} = input <- Repo.get(Message, id),
          %Conversation{} = conversation <- Repo.get(Conversation, input.conversation_id),
          {:ok, person} <- execution_history_owner(conversation, actor),
-         :ok <- ExecutionLifecycle.authorize(input, actor),
+         :ok <- ExecutionLifecycle.authorize(input, actor, execution_id),
          {:ok, _projection} <- ExecutionHistory.project(input, conversation, person) do
       :ok
     else
@@ -98,7 +160,7 @@ defmodule Zaq.Engine.Conversations do
     end
   end
 
-  def authorize_execution_control(nil, actor) do
+  def authorize_execution_control(nil, actor, nil) do
     with {:ok, %{person: %{id: id}}} <- ExecutionActor.validate(actor),
          %Person{status: "active"} <- Repo.get(Person, id) do
       :ok
@@ -107,7 +169,7 @@ defmodule Zaq.Engine.Conversations do
     end
   end
 
-  def authorize_execution_control(_input_id, _actor), do: {:error, :unauthorized}
+  def authorize_execution_control(_input_id, _actor, _execution_id), do: {:error, :unauthorized}
 
   @doc "Queues a separately admitted input under the same authorized canonical root."
   def queue_execution_input(root_input_id, binding, actor, opts \\ [])
@@ -115,26 +177,36 @@ defmodule Zaq.Engine.Conversations do
   def queue_execution_input(root_input_id, binding, actor, opts) when is_map(binding) do
     execution_input_transaction(root_input_id, binding[:user_message_id], fn root, child ->
       with token when is_binary(token) <- binding[:finalization_token],
-           true <- valid_finalization_token?(child, token),
+           true <- valid_finalization_token?(child, token, binding[:execution_id]),
            :ok <- matching_control_content(child, opts),
-           {:ok, root_projection} <- control_projection(root, actor),
-           {:ok, child_projection} <- execution_history(binding, actor),
+           {:ok, root_projection} <- execution_scope(root, actor, opts[:root_execution_id]),
+           :ok <- ensure_input_admitted(child, binding),
+           {:ok, child_projection} <- execution_scope(child, actor, binding[:execution_id]),
            true <- root_projection[:transcript_id] == child_projection[:transcript_id],
-           {:ok, receipt} <- ExecutionLifecycle.queue(root, child) do
+           {:ok, receipt} <-
+             ExecutionLifecycle.queue(root, child,
+               root_execution_id: opts[:root_execution_id],
+               execution_id: binding[:execution_id]
+             ) do
         receipt
       else
-        {:rejected, reason} -> {:rejected, reason}
+        {:closed_before_accept, receipt} -> {:closed_before_accept, receipt}
         {:error, reason} -> Repo.rollback(reason)
         _ -> Repo.rollback(:unauthorized)
       end
     end)
-    |> committed_input_result()
+    |> committed_input_result(opts)
   end
 
   def queue_execution_input(_root_input_id, _binding, _actor, _opts), do: {:error, :unauthorized}
 
-  defp committed_input_result({:ok, {:rejected, reason}}), do: {:error, reason}
-  defp committed_input_result(result), do: result
+  defp committed_input_result({:ok, {:closed_before_accept, receipt}}, opts) do
+    if opts[:closed_disposition],
+      do: {:error, {:closed_before_accept, receipt}},
+      else: {:error, :terminal_request}
+  end
+
+  defp committed_input_result(result, _opts), do: result
 
   defp matching_control_content(child, opts) do
     case Keyword.fetch(opts, :content) do
@@ -145,9 +217,9 @@ defmodule Zaq.Engine.Conversations do
   end
 
   @doc "Records real Jido consumption of a queued input; acknowledgement alone is insufficient."
-  def consume_execution_input(root_input_id, child_input_id, actor) do
+  def consume_execution_input(root_input_id, child_input_id, actor, opts \\ []) do
     case execution_input_transaction(root_input_id, child_input_id, fn root, child ->
-           consume_locked_input(root, child, actor)
+           consume_locked_input(root, child, actor, opts)
          end) do
       {:ok, :ok} -> :ok
       {:error, _} = error -> error
@@ -155,44 +227,82 @@ defmodule Zaq.Engine.Conversations do
   end
 
   @doc "Retains rejected queued-input evidence without overwriting proven consumption."
-  def reject_execution_input(root_input_id, child_input_id, actor, reason) do
+  def reject_execution_input(root_input_id, child_input_id, actor, reason, opts \\ []) do
     case execution_input_transaction(root_input_id, child_input_id, fn root, child ->
-           reject_locked_input(root, child, actor, reason)
+           reject_locked_input(root, child, actor, reason, opts)
          end) do
       {:ok, :ok} -> :ok
       {:error, _} = error -> error
     end
   end
 
-  defp reject_locked_input(root, child, actor, reason) do
-    with :ok <- ExecutionLifecycle.authorize(root, actor),
-         :ok <- ExecutionLifecycle.authorize(child, actor),
-         :ok <- ExecutionLifecycle.reject(root, child, reason) do
+  defp reject_locked_input(root, child, actor, reason, opts) do
+    with :ok <- ExecutionLifecycle.authorize(root, actor, opts[:root_execution_id]),
+         :ok <- ExecutionLifecycle.authorize(child, actor, opts[:execution_id]),
+         :ok <- ExecutionLifecycle.reject(root, child, reason, opts) do
       :ok
     else
       {:error, reason} -> Repo.rollback(reason)
     end
   end
 
-  defp consume_locked_input(root, child, actor) do
-    with :ok <- ExecutionLifecycle.authorize(root, actor),
-         :ok <- ExecutionLifecycle.authorize(child, actor),
-         :ok <- ExecutionLifecycle.consume(root, child) do
+  defp consume_locked_input(root, child, actor, opts) do
+    with :ok <- ExecutionLifecycle.authorize(root, actor, opts[:root_execution_id]),
+         :ok <- ExecutionLifecycle.authorize(child, actor, opts[:execution_id]),
+         :ok <- ExecutionLifecycle.consume(root, child, opts) do
       :ok
     else
       {:error, reason} -> Repo.rollback(reason)
     end
   end
 
-  defp control_projection(input, actor) do
+  defp execution_scope(input, actor, execution_id) do
     with %Conversation{} = conversation <- Repo.get(Conversation, input.conversation_id),
          {:ok, person} <- execution_history_owner(conversation, actor),
-         :ok <- ExecutionLifecycle.authorize(input, actor) do
-      ExecutionHistory.project(input, conversation, person)
+         :ok <- ExecutionLifecycle.authorize(input, actor, execution_id) do
+      ExecutionHistory.scope(input, conversation, person)
     else
       _ -> {:error, :unauthorized}
     end
   end
+
+  defp ensure_input_admitted(input, binding) do
+    case ExecutionLifecycle.fetch(input, binding[:execution_id]) do
+      {:ok, %ExecutionRecord{admitted_at: %DateTime{}}} -> :ok
+      {:ok, _} -> {:error, :admission_required}
+      error -> error
+    end
+  end
+
+  @doc "Prepares one live followup from an authenticated, proven closed-before-accept disposition."
+  @spec prepare_execution_followup(map(), map()) ::
+          {:ok, map() | :already_prepared} | {:error, term()}
+  def prepare_execution_followup(
+        %{binding: binding, disposition: :closed_before_accept} = request,
+        actor
+      )
+      when is_map(binding) do
+    execution_input_transaction(
+      request[:root_user_message_id],
+      binding[:user_message_id],
+      fn root, input ->
+        with token when is_binary(token) <- binding[:finalization_token],
+             true <- valid_finalization_token?(input, token, request[:receipt_execution_id]),
+             :ok <- matching_control_content(input, content: request[:content]),
+             {:ok, prior} <- execution_scope(root, actor, request[:root_execution_id]),
+             {:ok, current} <- execution_scope(input, actor, request[:receipt_execution_id]),
+             true <- prior[:transcript_id] == current[:transcript_id],
+             {:ok, followup} <- ExecutionLifecycle.prepare_followup(input, request, actor) do
+          followup
+        else
+          {:error, reason} -> Repo.rollback(reason)
+          _ -> Repo.rollback(:unauthorized)
+        end
+      end
+    )
+  end
+
+  def prepare_execution_followup(_, _), do: {:error, :unauthorized}
 
   defp execution_input_transaction(root_id, child_id, operation) do
     with {:ok, root_id} <- Ecto.UUID.cast(root_id),
@@ -621,12 +731,13 @@ defmodule Zaq.Engine.Conversations do
          {:ok, conv} <- maybe_assign_person(conv, Incoming.person_id(msg)),
          {:ok, {user_message, admitted?, finalization_token}} <-
            get_or_insert_admitted_message(conv, msg, source),
-         {:ok, _execution} <-
+         {:ok, execution} <-
            ExecutionLifecycle.admit(conv, user_message, finalization_token, source) do
       {:ok,
        %{
          conversation_id: conv.id,
          user_message_id: user_message.id,
+         execution_id: execution && execution.id,
          admitted?: admitted?,
          finalization_token: finalization_token
        }}
@@ -1055,9 +1166,16 @@ defmodule Zaq.Engine.Conversations do
         Repo.rollback(:user_message_not_found)
 
       %Message{} = user_message ->
-        with true <- valid_finalization_token?(user_message, finalization_token),
+        execution_id = Keyword.get(opts, :execution_id)
+
+        with {:ok, _execution} <- ExecutionLifecycle.fetch(user_message, execution_id),
+             true <- valid_finalization_token?(user_message, finalization_token, execution_id),
              :ok <-
-               ExecutionLifecycle.authorize_finalization(user_message, Keyword.get(opts, :actor)) do
+               ExecutionLifecycle.authorize_finalization(
+                 user_message,
+                 Keyword.get(opts, :actor),
+                 execution_id
+               ) do
           finalize_locked_message(user_message, result, artifacts, opts)
         else
           false -> Repo.rollback(:invalid_finalization_token)
@@ -1069,9 +1187,18 @@ defmodule Zaq.Engine.Conversations do
   defp finalization_token_hash(token),
     do: token |> then(&:crypto.hash(:sha256, &1)) |> Base.encode64()
 
-  defp valid_finalization_token?(user_message, token) do
-    expected_hash = Map.get(user_message.metadata || %{}, "finalization_token_hash")
-    is_binary(expected_hash) and expected_hash == finalization_token_hash(token)
+  defp valid_finalization_token?(user_message, token, execution_id) do
+    case ExecutionLifecycle.fetch(user_message, execution_id) do
+      {:ok, nil} ->
+        Map.get(user_message.metadata || %{}, "finalization_token_hash") ==
+          finalization_token_hash(token)
+
+      {:ok, execution} ->
+        execution.finalization_token_hash == finalization_token_hash(token)
+
+      _ ->
+        false
+    end
   end
 
   defp lock_admitted_message(user_message_id) do
@@ -1083,9 +1210,16 @@ defmodule Zaq.Engine.Conversations do
   end
 
   defp finalize_locked_message(%Message{} = user_message, result, artifacts, opts) do
-    case Map.get(user_message.metadata || %{}, "execution_status") do
+    {:ok, execution} = ExecutionLifecycle.fetch(user_message, opts[:execution_id])
+
+    status =
+      if execution,
+        do: execution.status,
+        else: Map.get(user_message.metadata || %{}, "execution_status")
+
+    case status do
       status when status in ["completed", "failed"] ->
-        finalized_result(user_message)
+        finalized_result(user_message, execution)
 
       "pending" ->
         if failed_execution?(result) do
@@ -1123,7 +1257,8 @@ defmodule Zaq.Engine.Conversations do
              assistant_message.id,
              "completed",
              result,
-             artifacts
+             artifacts,
+             opts[:execution_id]
            ) do
       %{
         conversation_id: user_message.conversation_id,
@@ -1143,7 +1278,14 @@ defmodule Zaq.Engine.Conversations do
          {:ok, _artifacts} <-
            insert_trace_artifacts(Repo, user_message, artifacts, artifact_max_bytes(opts)),
          {:ok, _execution} <-
-           persist_private_execution(user_message, nil, "failed", result, artifacts) do
+           persist_private_execution(
+             user_message,
+             nil,
+             "failed",
+             result,
+             artifacts,
+             opts[:execution_id]
+           ) do
       %{
         conversation_id: user_message.conversation_id,
         user_message_id: user_message.id,
@@ -1179,7 +1321,7 @@ defmodule Zaq.Engine.Conversations do
     end
   end
 
-  defp persist_private_execution(input, answer_id, status, result, artifacts) do
+  defp persist_private_execution(input, answer_id, status, result, artifacts, execution_id) do
     usage =
       ~w(model prompt_tokens completion_tokens total_tokens)a
       |> Enum.reduce(%{}, fn key, usage ->
@@ -1195,7 +1337,8 @@ defmodule Zaq.Engine.Conversations do
       status,
       assistant_trace(result, artifacts),
       usage,
-      private_execution_metadata(result)
+      private_execution_metadata(result),
+      execution_id
     )
   end
 
@@ -1226,7 +1369,15 @@ defmodule Zaq.Engine.Conversations do
     map_get(result, "error") == true or map_get(result, "suppressed") == true
   end
 
-  defp finalized_result(user_message) do
+  defp finalized_result(user_message, execution) when not is_nil(execution) do
+    %{
+      conversation_id: user_message.conversation_id,
+      user_message_id: user_message.id,
+      assistant_message_id: execution.public_answer_message_id
+    }
+  end
+
+  defp finalized_result(user_message, nil) do
     assistant =
       Repo.one(
         from m in Message,

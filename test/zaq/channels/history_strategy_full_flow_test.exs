@@ -14,14 +14,16 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
   import Zaq.AccountsFixtures
   import Zaq.SystemConfigFixtures
 
+  alias Jido.AI.PendingInputServer
   alias Zaq.Accounts
   alias Zaq.Accounts.People
-  alias Zaq.Agent.RequestRegistry
+  alias Zaq.Agent.{Api, RequestControl}
   alias Zaq.Agent.ServerManager
   alias Zaq.Channels.EmailBridge
   alias Zaq.Channels.EmailBridge.ImapAdapter
   alias Zaq.Channels.JidoChatBridge
   alias Zaq.Engine.ChannelConfig
+  alias Zaq.Engine.ChannelHistoryMembership
   alias Zaq.Engine.Conversations
 
   alias Zaq.Engine.Conversations.{
@@ -33,9 +35,13 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
   }
 
   alias Zaq.Engine.IncomingMessageRouting
+  alias Zaq.Permissions
+  alias Zaq.Permissions.ChannelHistoryResource
   alias Zaq.Repo
 
   alias Zaq.TestSupport.{
+    DeliveryDiagnostics,
+    HistoryBrowser,
     MattermostHistoryFixture,
     MultiAgentOpenAIStub,
     OpenAIStub,
@@ -60,6 +66,8 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
 
   setup tags do
     Zaq.DataCase.isolate_event_registry()
+    diagnostics = start_supervised!({DeliveryDiagnostics, []})
+    Process.put(DeliveryDiagnostics, diagnostics)
     owner = self()
     previous = Map.new(@runtime_keys, &{&1, Application.fetch_env(:zaq, &1)})
     Enum.each(@runtime_keys, &Application.delete_env(:zaq, &1))
@@ -187,89 +195,108 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
     @tag :concurrent_people
     test "#{strategy} concurrent People retain separate runtimes, authority and answer owners",
          ctx do
-      {_replay, external_id} = ingress(ctx)
-      assert_receive {:concurrent_initial, "alice", alice_input, alice_worker}, 5_000
-      on_exit(fn -> send(alice_worker, :release_strategy_llm) end)
-      assert Jason.encode!(alice_input["input"]) =~ "history question"
-      bob_id = concurrent_bob_ingress(ctx)
-      assert_receive {:concurrent_initial, "bob", bob_input, bob_worker}, 5_000
-      on_exit(fn -> send(bob_worker, :release_strategy_llm) end)
-      refute Jason.encode!(bob_input["input"]) =~ "FORBIDDEN_RECIPIENT_ONLY"
+      concurrent_journey(ctx)
+    end
+  end
 
-      roots = Enum.map([external_id, bob_id], &Repo.get_by!(Message, external_message_id: &1))
+  defp concurrent_journey(ctx) do
+    {_replay, external_id} = ingress(ctx)
+    assert_receive {:concurrent_initial, "alice", alice_input, alice_worker}, 5_000
+    on_exit(fn -> send(alice_worker, :release_strategy_llm) end)
+    assert Jason.encode!(alice_input["input"]) =~ "history question"
+    bob_id = concurrent_bob_ingress(ctx)
+    assert_receive {:concurrent_initial, "bob", bob_input, bob_worker}, 5_000
+    on_exit(fn -> send(bob_worker, :release_strategy_llm) end)
+    refute Jason.encode!(bob_input["input"]) =~ "FORBIDDEN_RECIPIENT_ONLY"
 
-      [alice_execution, bob_execution] =
-        Enum.map(roots, &Repo.get_by!(ExecutionRecord, user_message_id: &1.id))
+    roots = Enum.map([external_id, bob_id], &Repo.get_by!(Message, external_message_id: &1))
 
-      refute alice_execution.person_id == bob_execution.person_id
-      refute alice_execution.id == bob_execution.id
+    [alice_execution, bob_execution] =
+      Enum.map(roots, &Repo.get_by!(ExecutionRecord, user_message_id: &1.id))
 
-      states =
-        Enum.zip(roots, [alice_execution, bob_execution])
-        |> Enum.map(fn {input, execution} ->
-          transcript = owner_transcript(input, execution.person_id)
-          scope = "history:#{transcript.id}:person:#{execution.person_id}"
-          actor = %{person: %{id: execution.person_id}}
-          assert {:ok, {request_id, state}} = RequestRegistry.find_active(scope, actor)
-          assert state.actor.person.id == execution.person_id
-          {request_id, state, transcript}
-        end)
+    refute alice_execution.person_id == bob_execution.person_id
+    refute alice_execution.id == bob_execution.id
 
-      [{alice_request, alice_state, alice_transcript}, {bob_request, bob_state, bob_transcript}] =
-        states
+    states =
+      Enum.zip(roots, [alice_execution, bob_execution])
+      |> Enum.map(fn {input, execution} ->
+        transcript = owner_transcript(input, execution.person_id)
+        scope = "history:#{transcript.id}:person:#{execution.person_id}"
+        actor = %{person: %{id: execution.person_id}}
 
-      refute alice_request == bob_request
-      refute alice_state.runtime_pid == bob_state.runtime_pid
+        assert {:ok, {request_id, state}} =
+                 RequestControl.find_native_request(scope, actor)
 
-      if ctx.strategy == :replicated do
-        refute alice_transcript.id == bob_transcript.id
+        assert state.actor.person.id == execution.person_id
+        {request_id, state, transcript}
+      end)
 
-        assert {:error, :unauthorized} =
-                 TranscriptHistory.list(
-                   People.get_person!(alice_execution.person_id),
-                   bob_transcript.id,
-                   []
-                 )
+    [{alice_request, alice_state, alice_transcript}, {bob_request, bob_state, bob_transcript}] =
+      states
 
-        recipient_only_ingress(ctx.config)
-      else
-        assert alice_transcript.id == bob_transcript.id
-      end
+    refute alice_request == bob_request
+    refute alice_state.runtime_pid == bob_state.runtime_pid
 
-      send(alice_worker, :release_strategy_llm)
-      send(bob_worker, :release_strategy_llm)
+    if ctx.strategy == :replicated do
+      refute alice_transcript.id == bob_transcript.id
 
-      for owner <- ["alice", "bob"] do
-        assert_receive {:concurrent_continuation, ^owner, request}, 5_000
-        refute Jason.encode!(request["input"]) =~ "FORBIDDEN_RECIPIENT_ONLY"
-        [result] = MultiAgentOpenAIStub.tool_results(request)
-        assert result.call_id == "concurrent-#{owner}"
-        assert result.output == %{"ok" => true, "result" => %{"result" => 5.0}}
-      end
+      assert {:error, :unauthorized} =
+               TranscriptHistory.list(
+                 People.get_person!(alice_execution.person_id),
+                 bob_transcript.id,
+                 []
+               )
 
-      await_committed_delivery()
-      await_committed_delivery()
+      recipient_only_ingress(ctx.config)
+    else
+      assert alice_transcript.id == bob_transcript.id
+    end
 
-      for {owner, execution} <- [{"alice", alice_execution}, {"bob", bob_execution}] do
-        completed = Repo.get!(ExecutionRecord, execution.id)
-        assert completed.status == "completed"
-        assert completed.person_id == execution.person_id
-        assert completed.root_execution_id == nil
+    send(alice_worker, :release_strategy_llm)
+    send(bob_worker, :release_strategy_llm)
 
-        assert Repo.get!(Message, completed.public_answer_message_id).content ==
-                 "History answer #{owner}"
-      end
+    for owner <- ["alice", "bob"] do
+      assert_receive {:concurrent_continuation, ^owner, request}, 5_000
+      refute Jason.encode!(request["input"]) =~ "FORBIDDEN_RECIPIENT_ONLY"
+      [result] = MultiAgentOpenAIStub.tool_results(request)
+      assert result.call_id == "concurrent-#{owner}"
+      assert result.output == %{"ok" => true, "result" => %{"result" => 5.0}}
+    end
 
-      answers =
-        Repo.all(
-          from e in ExecutionRecord,
-            where: e.status == "completed",
-            select: e.public_answer_message_id
-        )
+    await_committed_delivery()
+    await_committed_delivery()
 
-      assert length(Enum.uniq(answers)) == 2
-      refute_receive {:concurrent_initial, _, _, _}, 200
-      refute_received {:unexpected_history_http, _}
+    for {owner, execution} <- [{"alice", alice_execution}, {"bob", bob_execution}] do
+      completed = Repo.get!(ExecutionRecord, execution.id)
+      assert completed.status == "completed"
+      assert completed.person_id == execution.person_id
+      assert completed.root_execution_id == nil
+
+      assert Repo.get!(Message, completed.public_answer_message_id).content ==
+               "History answer #{owner}"
+    end
+
+    answers =
+      Repo.all(
+        from e in ExecutionRecord,
+          where: e.status == "completed",
+          select: e.public_answer_message_id
+      )
+
+    assert length(Enum.uniq(answers)) == 2
+    refute_receive {:concurrent_initial, _, _, _}, 200
+    refute_received {:unexpected_history_http, _}
+
+    for {input, execution, {_request, _native, transcript}} <-
+          Enum.zip([roots, [alice_execution, bob_execution], states]) do
+      completed = Repo.get!(ExecutionRecord, execution.id)
+
+      %{
+        input: input,
+        execution: completed,
+        transcript: transcript,
+        answer: Repo.get!(Message, completed.public_answer_message_id)
+      }
     end
   end
 
@@ -378,7 +405,10 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
       actor = %{person: %{id: person_id}}
       transcript = owner_transcript(root, person_id)
       scope = "history:#{transcript.id}:person:#{person_id}"
-      assert {:ok, {request_id, state}} = RequestRegistry.find_active(scope, actor)
+
+      assert {:ok, {request_id, state}} =
+               RequestControl.find_native_request(scope, actor)
+
       assert state.actor.person.id == person_id
       assert state.agent.id == ctx.agent.id
       assert Process.alive?(state.runtime_pid)
@@ -398,7 +428,9 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
         assert Repo.get_by(ExecutionRecord, user_message_id: update_message.id) == nil
       end
 
-      assert {:ok, {^request_id, current}} = RequestRegistry.find_active(scope, actor)
+      assert {:ok, {^request_id, current}} =
+               RequestControl.find_native_request(scope, actor)
+
       assert current.runtime_pid == state.runtime_pid
       assert current.actor.person.id == person_id
       send(worker, :release_strategy_llm)
@@ -463,12 +495,230 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
     end
   end
 
+  for strategy <- [:shared, :direct, :replicated], engine <- ~w(chromium firefox webkit) do
+    @tag :real_browser
+    @tag strategy: strategy, browser_engine: engine
+    @tag timeout: 180_000
+    test "#{engine}: #{strategy} real ingress, persisted inspection and staff denial in the browser",
+         ctx do
+      result = execute_journey(ctx)
+      assert_measurements(result)
+      HistoryBrowser.run!(browser_options(ctx, result, "persisted"))
+      refute_received {:llm_stub_error, _}
+      refute_received {:unexpected_history_http, _}
+    end
+  end
+
+  for strategy <- [:shared_refreshed, :replicated], engine <- ~w(chromium firefox webkit) do
+    @tag :real_browser
+    @tag strategy: strategy, concurrent_people: true, browser_engine: engine
+    @tag timeout: 180_000
+    test "#{engine}: #{strategy} concurrent Person-owned answers and isolated browser inspection",
+         ctx do
+      for result <- concurrent_journey(ctx) do
+        assert_measurements(result)
+        HistoryBrowser.run!(browser_options(ctx, result, "persisted"))
+      end
+
+      refute_received {:llm_stub_error, _}
+    end
+  end
+
+  defp browser_options(ctx, result, mode) do
+    admin = super_admin_fixture()
+    {:ok, admin} = Accounts.change_password(admin, %{password: "StrongPass1!"})
+    staff = staff_fixture()
+    {:ok, staff} = Accounts.change_password(staff, %{password: "StrongPass1!"})
+
+    Map.merge(
+      %{
+        engine: ctx.browser_engine,
+        strategy: ctx.strategy,
+        mode: mode,
+        username: admin.username,
+        staff_username: staff.username
+      },
+      browser_result(result)
+    )
+  end
+
+  for engine <- ~w(chromium firefox webkit) do
+    @tag :real_browser
+    @tag strategy: :shared, active_update: :owner_followup, browser_engine: engine
+    @tag timeout: 180_000
+    test "#{engine}: browser sees accepted steering complete after revocation without admitting new work",
+         ctx do
+      state =
+        HistoryBrowser.run!(browser_options(ctx, nil, "live"), fn
+          "ready", _ -> begin_browser_live(ctx)
+          "pending-visible", state -> finish_browser_live(ctx, state)
+        end)
+
+      assert state.completed.status == "completed"
+      refute_received :unexpected_active_model_turn
+      refute_received {:llm_stub_error, _}
+      refute_received {:unexpected_history_http, _}
+    end
+  end
+
+  defp begin_browser_live(ctx) do
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, nil, true, %{
+               "id" => "browser-root",
+               "channel_id" => @shared_room,
+               "message" => "@zaq history question",
+               "create_at" => System.system_time(:millisecond)
+             })
+
+    assert_receive {:strategy_llm, initial}, 5_000
+    assert_receive {:strategy_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_strategy_llm) end)
+    input = Repo.get_by!(Message, external_message_id: "browser-root")
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: input.id)
+    assert execution.status == "pending"
+    assert %DateTime{} = execution.admitted_at
+    transcript = owner_transcript(input, execution.person_id)
+    actor = %{person: %{id: execution.person_id}}
+    scope = "history:#{transcript.id}:person:#{execution.person_id}"
+    assert {:ok, {request_id, native}} = RequestControl.find_native_request(scope, actor)
+    assert native.actor.person.id == execution.person_id
+    observe_native_input(native.consumer_pid)
+    monitor = Process.monitor(native.runtime_pid)
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, nil, true, %{
+               "id" => "browser-steering",
+               "channel_id" => @shared_room,
+               "message" => "@zaq Active update evidence",
+               "create_at" => System.system_time(:millisecond)
+             })
+
+    assert_receive :strategy_input_queued, 5_000
+    update = Repo.get_by!(Message, external_message_id: "browser-steering")
+    receipt = Repo.get_by!(ExecutionRecord, user_message_id: update.id)
+    assert receipt.status == "queued"
+    assert %DateTime{} = receipt.admitted_at
+    assert receipt.root_execution_id == execution.id
+
+    {%{transcript_id: transcript.id, input: input.content},
+     %{
+       input: input,
+       execution: execution,
+       transcript: transcript,
+       initial: initial,
+       worker: worker,
+       native: native,
+       monitor: monitor,
+       request_id: request_id,
+       update: update
+     }}
+  end
+
+  defp finish_browser_live(ctx, state) do
+    resource = ChannelHistoryResource.for("mattermost", ctx.config.id, @shared_room)
+
+    assert {:ok, _} =
+             ChannelHistoryMembership.apply_event(%{
+               provider: "mattermost",
+               channel_config_id: ctx.config.id,
+               channel_id: @shared_room,
+               identity_platform: "mattermost",
+               member_id: "alice",
+               operation: :remove,
+               revision: 2
+             })
+
+    person = People.get_person!(state.execution.person_id)
+    refute Permissions.can?(person, "read", resource)
+    assert {:error, :unauthorized} = TranscriptHistory.list(person, state.transcript.id, [])
+
+    try do
+      assert {{:ok, _}, _} =
+               MattermostHistoryFixture.post(ctx.config, nil, true, %{
+                 "id" => "browser-denied",
+                 "channel_id" => @shared_room,
+                 "message" => "@zaq New input after revocation",
+                 "create_at" => System.system_time(:millisecond)
+               })
+
+      assert_receive {:strategy_input_denied, writer}, 5_000
+      monitor = Process.monitor(writer)
+      assert_receive {:DOWN, ^monitor, :process, ^writer, reason}, 5_000
+      assert reason in [:normal, :noproc]
+      denied_message = Repo.get_by!(Message, external_message_id: "browser-denied")
+      denied = Repo.get_by!(ExecutionRecord, user_message_id: denied_message.id)
+      assert denied.status == "failed"
+      assert denied.admitted_at == nil
+      assert denied.public_answer_message_id == nil
+    after
+      send(state.worker, :release_strategy_llm)
+    end
+
+    assert_receive {:strategy_llm, continuation}, 5_000
+    encoded = Jason.encode!(continuation["input"])
+    assert length(Regex.scan(~r/Active update evidence/, encoded)) == 1
+    refute encoded =~ "New input after revocation"
+    [tool] = MultiAgentOpenAIStub.tool_results(continuation)
+    assert tool.call_id == "active-history-call"
+    assert tool.output == %{"ok" => true, "result" => %{"result" => 5.0}}
+    await_committed_delivery()
+    completed = Repo.get!(ExecutionRecord, state.execution.id)
+    assert completed.status == "completed"
+    assert completed.admitted_at == state.execution.admitted_at
+    assert completed.person_id == state.execution.person_id
+    answer = Repo.get!(Message, completed.public_answer_message_id)
+    assert answer.content == "History answer"
+    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 1
+    receipt = Repo.get_by!(ExecutionRecord, user_message_id: state.update.id)
+    assert receipt.status == "consumed"
+    assert receipt.public_answer_message_id == nil
+    assert_native_consumption(state.native.consumer_pid, state.request_id, state.update.id)
+    assert_receive {:DOWN, monitor, :process, runtime, _}, 5_000
+    assert monitor == state.monitor
+    assert runtime == state.native.runtime_pid
+
+    result = %{
+      input: state.input,
+      answer: answer,
+      execution: completed,
+      transcript: state.transcript
+    }
+
+    assert_measurements(result)
+    {browser_result(result), Map.put(state, :completed, completed)}
+  end
+
+  defp browser_result(nil), do: %{}
+
+  defp browser_result(result) do
+    [tool] = result.execution.tool_results
+    measurements = Map.merge(result.execution.outcome["measurements"], result.execution.usage)
+
+    %{
+      transcript_id: result.transcript.id,
+      input: result.input.content,
+      answer: result.answer.content,
+      answer_id: result.answer.id,
+      tool_response: tool["response"],
+      measurements:
+        Map.take(measurements, [
+          "prompt_tokens",
+          "completion_tokens",
+          "total_tokens",
+          "turn_count",
+          "llm_call_count",
+          "tool_call_count",
+          "latency_ms"
+        ])
+    }
+  end
+
   for phase <- [:first_sleep, :second_sleep, :silent_model_wait, :reasoning_stream, :text_stream] do
     @tag strategy: :shared
     @tag active_update: :owner_followup
     @tag steering_phase: phase
     test "same-Person Spanish correction during #{phase} stays in one native execution", ctx do
-      registry = Process.whereis(RequestRegistry)
+      registry = Process.whereis(ServerManager)
       :erlang.trace(registry, true, [:receive, {:tracer, self()}])
 
       on_exit(fn ->
@@ -532,7 +782,7 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
 
       assert completed.outcome["measurements"]["tool_call_count"] == 2
       assert completed.outcome["measurements"]["llm_call_count"] == 3
-      assert {:error, :not_found} = RequestRegistry.find_active(scope, actor)
+      assert {:error, :not_found} = RequestControl.find_native_request(scope, actor)
       assert_transport(:shared, nil, "Hola")
       refute_receive {:strategy_llm, _}, 200
       refute_received {:unexpected_history_http, _}
@@ -551,7 +801,7 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
     actor = %{person: %{id: execution.person_id}}
     transcript = owner_transcript(root, execution.person_id)
     scope = "history:#{transcript.id}:person:#{execution.person_id}"
-    assert {:ok, {_id, state}} = RequestRegistry.find_active(scope, actor)
+    assert {:ok, {_id, state}} = RequestControl.find_native_request(scope, actor)
     send(worker, :release_steering_llm)
     assert_receive {:steering_final_model, _}, 5_000
     await_committed_delivery()
@@ -562,7 +812,7 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
                timeout: 5_000
              )
 
-    assert {:error, :not_found} = RequestRegistry.find_active(scope, actor)
+    assert {:error, :not_found} = RequestControl.find_native_request(scope, actor)
     assert_transport(:shared, nil, "こんにちは")
 
     spanish_correction(ctx.config)
@@ -596,6 +846,79 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
              })
   end
 
+  @tag strategy: :shared
+  @tag steering_phase: :sealing_race
+  test "native completion ahead of presentation preserves a late correction as a followup",
+       ctx do
+    registry = Process.whereis(ServerManager)
+    :erlang.trace(registry, true, [:receive, {:tracer, self()}])
+    on_exit(fn -> if Process.alive?(registry), do: :erlang.trace(registry, false, [:receive]) end)
+    steering_ingress(ctx.config)
+    assert_receive {:steering_llm_barrier, first_worker}, 5_000
+    on_exit(fn -> send(first_worker, :release_steering_llm) end)
+    root = Repo.get_by!(Message, external_message_id: "steering-root")
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: root.id)
+    actor = %{person: %{id: execution.person_id}}
+    transcript = owner_transcript(root, execution.person_id)
+    scope = "history:#{transcript.id}:person:#{execution.person_id}"
+    send(first_worker, :release_steering_llm)
+    assert_receive {:steering_llm_barrier, final_worker}, 5_000
+    on_exit(fn -> send(final_worker, :release_steering_llm) end)
+    await_registry_phase(registry, :tool_completed, "sleep-two")
+    :erlang.trace(registry, false, [:receive])
+    assert {:ok, {request_id, state}} = RequestControl.find_native_request(scope, actor)
+    assert state.status == :tool_completed
+
+    # Delay only the real stream consumer, not Jido's terminal transition. This
+    # exercises the native refusal with stale registry state, not a fabricated
+    # registry status or input_injected event.
+    assert :erlang.suspend_process(state.consumer_pid)
+
+    on_exit(fn ->
+      if Process.info(state.consumer_pid, :status) == {:status, :suspended},
+        do: :erlang.resume_process(state.consumer_pid)
+    end)
+
+    send(final_worker, :release_steering_llm)
+
+    assert {:ok, %{status: :completed}} =
+             Jido.AgentServer.await_completion(state.runtime_pid,
+               status_path: [:__strategy__, :status],
+               timeout: 5_000
+             )
+
+    # Native discovery must not mistake lagging presentation for acceptance.
+    assert {:error, :not_found} = RequestControl.find_native_request(scope, actor)
+    assert {:ok, retained} = ServerManager.request_observation(request_id)
+    assert retained.status == :tool_completed
+    assert retained.tool_calls == state.tool_calls
+
+    inspection =
+      Api.handle_event(
+        Zaq.Event.new(%{request_id: request_id}, :agent, actor: actor),
+        :inspect_request,
+        nil
+      )
+
+    assert {:ok, inspected} = inspection.response
+    assert inspected.status == :completed
+    assert Map.drop(inspected, [:status]) == Map.drop(retained, [:status])
+
+    spanish_correction(ctx.config)
+    refute_receive {:steering_followup_model, _}, 100
+    assert :erlang.resume_process(state.consumer_pid)
+    await_committed_delivery()
+    update = Repo.get_by!(Message, external_message_id: "spanish-correction")
+    receipt = Repo.get_by!(ExecutionRecord, user_message_id: update.id)
+
+    assert_receive {:steering_followup_model, _},
+                   5_000,
+                   "late correction did not become a followup; receipt status=#{receipt.status}"
+
+    await_committed_delivery()
+    assert_transport(:shared, nil, "Hola")
+  end
+
   defp spanish_correction(config) do
     assert {{:ok, _}, _} =
              MattermostHistoryFixture.post(config, nil, true, %{
@@ -603,6 +926,208 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
                "channel_id" => @shared_room,
                "message" => "@zaq actually in Spanish"
              })
+  end
+
+  for outcome <- [:recovered, :sealed, :retired] do
+    @tag strategy: :shared
+    @tag steering_phase: :sealing_race
+    @tag handoff_outcome: outcome
+    test "native closure after discovery and receipt queueing: #{outcome}", ctx do
+      assert_live_closure_handoff(ctx)
+    end
+  end
+
+  for engine <- ~w(chromium firefox webkit) do
+    @tag :real_browser
+    @tag strategy: :shared,
+         steering_phase: :sealing_race,
+         handoff_outcome: :retired,
+         browser_engine: engine
+    @tag timeout: 180_000
+    test "#{engine}: browser retains both answers after accepted late recovery and access loss",
+         ctx do
+      result = assert_live_closure_handoff(ctx)
+      opts = Map.merge(browser_options(ctx, nil, "recovery"), result)
+      HistoryBrowser.run!(opts)
+    end
+  end
+
+  defp assert_live_closure_handoff(ctx) do
+    manager = Process.whereis(ServerManager)
+    :erlang.trace(manager, true, [:receive, {:tracer, self()}])
+    on_exit(fn -> if Process.alive?(manager), do: :erlang.trace(manager, false, [:receive]) end)
+    steering_ingress(ctx.config)
+    assert_receive {:steering_llm_barrier, first_worker}, 5_000
+    on_exit(fn -> send(first_worker, :release_steering_llm) end)
+    root = Repo.get_by!(Message, external_message_id: "steering-root")
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: root.id)
+    actor = %{person: %{id: execution.person_id}}
+    transcript = owner_transcript(root, execution.person_id)
+    scope = "history:#{transcript.id}:person:#{execution.person_id}"
+    send(first_worker, :release_steering_llm)
+    assert_receive {:steering_llm_barrier, final_worker}, 5_000
+    on_exit(fn -> send(final_worker, :release_steering_llm) end)
+    await_registry_phase(manager, :tool_completed, "sleep-two")
+    assert {:ok, {_id, state}} = RequestControl.find_native_request(scope, actor)
+    assert :erlang.suspend_process(state.consumer_pid)
+
+    on_exit(fn ->
+      if Process.info(state.consumer_pid, :status) == {:status, :suspended},
+        do: :erlang.resume_process(state.consumer_pid)
+    end)
+
+    handler = {__MODULE__, make_ref()}
+
+    assert :ok =
+             :telemetry.attach(
+               handler,
+               [:zaq, :repo, :query],
+               &__MODULE__.pause_queued_receipt/4,
+               self()
+             )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+    spanish_correction(ctx.config)
+    assert_receive {:receipt_queued_before_native_control, caller}, 5_000
+    on_exit(fn -> send(caller, :release_receipt_queue) end)
+    close_before_control(ctx, state, final_worker, caller, manager)
+
+    update = Repo.get_by!(Message, external_message_id: "spanish-correction")
+    receipt = Repo.get_by!(ExecutionRecord, user_message_id: update.id)
+    assert receipt.status == "unconsumed"
+    assert receipt.root_execution_id == execution.id
+    assert receipt.public_answer_message_id == nil
+    refute_receive {:steering_followup_model, _}, 100
+    finish_live_handoff(ctx, state, execution, transcript, update, receipt)
+  end
+
+  defp finish_live_handoff(
+         %{handoff_outcome: :retired} = ctx,
+         state,
+         execution,
+         transcript,
+         update,
+         receipt
+       ) do
+    resource = ChannelHistoryResource.for("mattermost", ctx.config.id, @shared_room)
+
+    for grant <- Permissions.list_direct(resource),
+        do: assert(:ok = Permissions.revoke(resource, grant))
+
+    refute Permissions.can?(People.get_person!(execution.person_id), "read", resource)
+
+    assert :ok =
+             ServerManager.retire_history_scope(%{
+               transcript_id: transcript.id,
+               person_id: execution.person_id
+             })
+
+    monitor = Process.monitor(state.runtime_pid)
+    assert Process.alive?(state.runtime_pid)
+
+    result =
+      finish_live_handoff(
+        %{ctx | handoff_outcome: :recovered},
+        state,
+        execution,
+        transcript,
+        update,
+        receipt
+      )
+
+    assert_receive {:DOWN, ^monitor, :process, _, _}, 5_000
+    result
+  end
+
+  defp finish_live_handoff(
+         %{handoff_outcome: outcome},
+         state,
+         execution,
+         transcript,
+         update,
+         receipt
+       )
+       when outcome in [:recovered, :sealed] do
+    assert :erlang.resume_process(state.consumer_pid)
+    await_committed_delivery()
+    assert_receive {:steering_followup_model, request}, 5_000
+    assert Jason.encode!(request["input"]) =~ "actually in Spanish"
+    await_committed_delivery()
+    recovered = Repo.get_by!(ExecutionRecord, recovered_from_execution_id: receipt.id)
+    assert recovered.status == "completed"
+    assert recovered.root_execution_id == nil
+    assert recovered.user_message_id == update.id
+    assert recovered.public_answer_message_id != nil
+    assert Repo.get!(Message, recovered.public_answer_message_id).content == "Hola"
+    assert Repo.get!(ExecutionRecord, receipt.id) == receipt
+    assert_transport(:shared, nil, "Hola")
+    refute_receive {:steering_followup_model, _}, 100
+    root = Repo.get!(ExecutionRecord, execution.id)
+    first_answer = Repo.get!(Message, root.public_answer_message_id)
+
+    %{
+      transcript_id: transcript.id,
+      input: update.content,
+      answer: "Hola",
+      public_answers: [first_answer.content, "Hola"]
+    }
+  end
+
+  defp close_before_control(%{handoff_outcome: :sealed}, state, worker, caller, manager) do
+    assert {:ok, %{raw_state: %{__strategy__: %{pending_input_server: pending}}}} =
+             Jido.AgentServer.status(state.runtime_pid)
+
+    # Seal the actual native queue while the real model is still at its final boundary.
+    assert :ok = PendingInputServer.seal(pending)
+    send(caller, :release_receipt_queue)
+
+    assert_receive {:trace, ^manager, :receive,
+                    {:"$gen_call", {^caller, _}, {:reserve_history_request, _, _, _, _}}},
+                   5_000
+
+    assert {:ok, %{raw_state: %{__strategy__: %{last_pending_input_control: %{reason: :closed}}}}} =
+             Jido.AgentServer.status(state.runtime_pid)
+
+    send(worker, :release_steering_llm)
+
+    assert {:ok, %{status: :completed}} =
+             Jido.AgentServer.await_completion(state.runtime_pid,
+               status_path: [:__strategy__, :status],
+               timeout: 5_000
+             )
+  end
+
+  defp close_before_control(_ctx, state, worker, caller, manager) do
+    send(worker, :release_steering_llm)
+
+    assert {:ok, %{status: :completed}} =
+             Jido.AgentServer.await_completion(state.runtime_pid,
+               status_path: [:__strategy__, :status],
+               timeout: 5_000
+             )
+
+    send(caller, :release_receipt_queue)
+
+    assert_receive {:trace, ^manager, :receive,
+                    {:"$gen_call", {^caller, _}, {:reserve_history_request, _, _, _, _}}},
+                   5_000
+
+    assert {:ok, %{raw_state: %{__strategy__: %{last_pending_input_control: %{reason: :idle}}}}} =
+             Jido.AgentServer.status(state.runtime_pid)
+  end
+
+  @doc "Pauses the actual queue write before native steering, without replacing internal execution."
+  def pause_queued_receipt(_, _, metadata, owner) do
+    if String.starts_with?(metadata.query, "UPDATE \"execution_records\"") and
+         "queued" in (metadata[:params] || []) do
+      send(owner, {:receipt_queued_before_native_control, self()})
+
+      receive do
+        :release_receipt_queue -> :ok
+      after
+        10_000 -> raise "receipt queue barrier was not released"
+      end
+    end
   end
 
   defp await_steering_phase(phase, registry, scope, actor) do
@@ -628,20 +1153,21 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
 
     call_id = if phase == :second_sleep, do: "sleep-two", else: "sleep-one"
     await_registry_phase(registry, status, call_id)
-    assert {:ok, {id, state}} = RequestRegistry.find_active(scope, actor)
+    assert {:ok, {id, state}} = RequestControl.find_native_request(scope, actor)
     assert state.status == status
     {id, state, worker}
   end
 
   defp await_registry_phase(registry, status, call_id) do
     assert_receive {:trace, ^registry, :receive,
-                    {:"$gen_call", _, {:put, _id, %{status: ^status} = attrs}}},
+                    {:"$gen_call", _, {:observe_request, _id, %{status: ^status} = attrs}}},
                    15_000
 
     :sys.get_state(registry)
 
-    if status == :tool_running and not Enum.any?(attrs.tool_calls, &(&1["id"] == call_id)),
-      do: await_registry_phase(registry, status, call_id)
+    if status in [:tool_running, :tool_completed] and
+         not Enum.any?(attrs.tool_calls, &(&1["id"] == call_id)),
+       do: await_registry_phase(registry, status, call_id)
   end
 
   defp steering_llm_handler(owner, phase) do
@@ -654,7 +1180,7 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
   end
 
   defp steering_model_turn(1, conn, request, owner, phase) do
-    if phase == :terminal_followup, do: steering_model_barrier(owner)
+    if phase in [:terminal_followup, :sealing_race], do: steering_model_barrier(owner)
     duration = if phase == :first_sleep, do: 10_000, else: 1
 
     response =
@@ -679,8 +1205,9 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
      )}
   end
 
-  defp steering_model_turn(3, _conn, request, owner, _phase) do
+  defp steering_model_turn(3, _conn, request, owner, phase) do
     send(owner, {:steering_final_model, request})
+    if phase == :sealing_race, do: steering_model_barrier(owner)
 
     answer =
       if Jason.encode!(request["input"]) =~ "actually in Spanish", do: "Hola", else: "こんにちは"
@@ -688,7 +1215,8 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
     {200, MultiAgentOpenAIStub.text_sse(answer, request["model"])}
   end
 
-  defp steering_model_turn(4, _conn, request, owner, :terminal_followup) do
+  defp steering_model_turn(4, _conn, request, owner, phase)
+       when phase in [:terminal_followup, :sealing_race] do
     send(owner, {:steering_followup_model, request})
     {200, MultiAgentOpenAIStub.text_sse("Hola", request["model"])}
   end
@@ -796,6 +1324,17 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
       assert_receive {:DOWN, ^monitor, :process, ^writer, reason}, 5_000
       assert reason in [:normal, :noproc]
     end
+  rescue
+    error in ExUnit.AssertionError ->
+      evidence = DeliveryDiagnostics.snapshot(Process.get(DeliveryDiagnostics))
+
+      reraise %{
+                error
+                | message:
+                    "#{error.message}\nDelivery diagnostics (before sandbox teardown):\n" <>
+                      inspect(evidence, pretty: true, limit: :infinity, printable_limit: 20_000)
+              },
+              __STACKTRACE__
   end
 
   defp observe_native_input(consumer) do
@@ -1292,6 +1831,7 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
   defp observe_query(%{query: "commit"}, handler, owner) do
     if Process.delete(handler), do: send(owner, {:strategy_delivery_committed, self()})
     if Process.delete({handler, :queued}), do: send(owner, :strategy_input_queued)
+    if Process.delete({handler, :denied}), do: send(owner, {:strategy_input_denied, self()})
   end
 
   defp observe_query(%{source: "transcript_messages"} = metadata, handler, _owner) do
@@ -1304,6 +1844,10 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
     if String.starts_with?(metadata.query, "UPDATE") and
          "queued" in (metadata[:cast_params] || []),
        do: Process.put({handler, :queued}, true)
+
+    if String.starts_with?(metadata.query, "UPDATE") and
+         "failed" in (metadata[:cast_params] || []),
+       do: Process.put({handler, :denied}, true)
   end
 
   defp observe_query(_metadata, _handler, _owner), do: :ok

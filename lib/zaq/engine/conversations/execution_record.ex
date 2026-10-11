@@ -20,6 +20,7 @@ defmodule Zaq.Engine.Conversations.ExecutionRecord do
   schema "execution_records" do
     field :status, :string, default: "pending"
     field :finalization_token_hash, :string
+    field :admitted_at, :utc_datetime_usec
     field :trace_entries, {:array, :map}, default: []
     field :tool_results, {:array, :map}, default: []
     field :usage, :map, default: %{}
@@ -29,6 +30,7 @@ defmodule Zaq.Engine.Conversations.ExecutionRecord do
     belongs_to :user_message, Message
     belongs_to :public_answer_message, Message
     belongs_to :root_execution, __MODULE__
+    belongs_to :recovered_from_execution, __MODULE__
 
     timestamps(type: :utc_datetime_usec)
   end
@@ -47,6 +49,7 @@ defmodule Zaq.Engine.Conversations.ExecutionRecord do
       :user_message_id,
       :public_answer_message_id,
       :root_execution_id,
+      :recovered_from_execution_id,
       :status,
       :finalization_token_hash,
       :trace_entries,
@@ -63,10 +66,16 @@ defmodule Zaq.Engine.Conversations.ExecutionRecord do
     |> validate_immutable_identity()
     |> unique_constraint(:public_answer_message_id, name: :execution_records_public_answer_index)
     |> unique_constraint(:finalization_token_hash)
+    |> unique_constraint(:recovered_from_execution_id)
+    |> unique_constraint(:user_message_id, name: :execution_records_input_root_index)
     |> foreign_key_constraint(:person_id)
     |> foreign_key_constraint(:user_message_id)
     |> foreign_key_constraint(:public_answer_message_id)
     |> foreign_key_constraint(:root_execution_id)
+    |> foreign_key_constraint(:recovered_from_execution_id)
+    |> check_constraint(:recovered_from_execution_id,
+      name: :execution_records_recovery_root_check
+    )
     |> check_constraint(:root_execution_id, name: :execution_records_root_status_check)
     |> check_constraint(:status, name: :execution_records_status_check)
     |> check_constraint(:public_answer_message_id, name: :execution_records_answer_status_check)
@@ -85,7 +94,12 @@ defmodule Zaq.Engine.Conversations.ExecutionRecord do
 
   defp validate_immutable_identity(%{data: %{__meta__: %{state: :loaded}}} = changeset) do
     changeset
-    |> immutable_fields([:person_id, :user_message_id, :finalization_token_hash])
+    |> immutable_fields([
+      :person_id,
+      :user_message_id,
+      :finalization_token_hash,
+      :recovered_from_execution_id
+    ])
     |> immutable_root()
     |> immutable_answer()
     |> immutable_terminal_status()

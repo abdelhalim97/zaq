@@ -1,10 +1,10 @@
-defmodule Zaq.Contracts.HistoryRuntimeRemovalTest do
+defmodule Zaq.Engine.HistoryRuntimeRemovalWorkerTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias Zaq.Contracts.HistoryRuntimeRemoval
+  alias Zaq.Engine.HistoryRuntimeRemovalWorker
 
-  property "removal transport only accepts canonical references and positive stable Person IDs" do
+  property "obsolete jobs are inert only for canonical references and positive stable Person IDs" do
     check all(ids <- list_of(positive_integer(), min_length: 1, max_length: 30)) do
       payload = %{
         event_id: Ecto.UUID.generate(),
@@ -13,7 +13,7 @@ defmodule Zaq.Contracts.HistoryRuntimeRemovalTest do
         generation: 1
       }
 
-      assert :ok = HistoryRuntimeRemoval.validate(payload)
+      assert :ok = perform(payload)
 
       for invalid <- [
             Map.put(payload, :token, "untrusted"),
@@ -25,7 +25,7 @@ defmodule Zaq.Contracts.HistoryRuntimeRemovalTest do
             %{payload | generation: 0},
             %{payload | generation: nil}
           ] do
-        assert {:error, :invalid_history_removal} = HistoryRuntimeRemoval.validate(invalid)
+        assert {:cancel, :invalid_history_removal} = perform(invalid)
       end
     end
   end
@@ -42,7 +42,15 @@ defmodule Zaq.Contracts.HistoryRuntimeRemovalTest do
             person_ids: List.duplicate(1, 10_001)
           }
         ] do
-      assert {:error, :invalid_history_removal} = HistoryRuntimeRemoval.validate(value)
+      assert {:cancel, :invalid_history_removal} = perform(value)
     end
   end
+
+  defp perform(payload) when is_map(payload),
+    do:
+      HistoryRuntimeRemovalWorker.perform(%Oban.Job{
+        args: Map.new(payload, fn {key, value} -> {to_string(key), value} end)
+      })
+
+  defp perform(value), do: HistoryRuntimeRemovalWorker.perform(%Oban.Job{args: value})
 end

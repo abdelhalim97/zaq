@@ -9,15 +9,23 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
   alias Zaq.Agent
   alias Zaq.Agent.Answering
   alias Zaq.Agent.Executor
-  alias Zaq.Agent.RequestRegistry
+  alias Zaq.Agent.HistorySync
   alias Zaq.Agent.ServerManager
+  alias Zaq.Channels.CommunicationBridge
   alias Zaq.Contracts.Record
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Connect
   alias Zaq.Engine.Connect.{Credential, Grant}
+  alias Zaq.Engine.Conversations
+  alias Zaq.Engine.Conversations.{ExecutionRecord, Message}
+  alias Zaq.Engine.HistoryIngress
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Engine.Telemetry.Buffer
   alias Zaq.Engine.Telemetry.Point
-  alias Zaq.{Event, NodeRouter}
+  alias Zaq.Event
+  alias Zaq.NodeRouter
+  alias Zaq.Permissions
+  alias Zaq.Permissions.ChannelHistoryResource
   alias Zaq.Repo
   alias Zaq.System.AIProviderCredential
 
@@ -278,12 +286,208 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
     assert {:ok, state} = Jido.AgentServer.state(runtime)
     [request_id] = Map.keys(state.agent.state.requests)
     refute request_id == correlation_id
-    assert {:ok, registered} = RequestRegistry.get(request_id)
+    assert {:ok, registered} = ServerManager.request_observation(request_id)
     assert registered.runtime_pid == runtime
     assert registered.correlation_id == correlation_id
     assert registered.owner_node == node(runtime)
     assert registered.status == :completed
-    assert {:error, :not_found} = RequestRegistry.get(correlation_id)
+    assert {:error, :not_found} = ServerManager.request_observation(correlation_id)
+
+    # Presentation is retained independently of native request eviction/teardown.
+    assert :ok = ServerManager.stop_server(configured_agent)
+    assert {:ok, retained} = ServerManager.request_observation(request_id)
+    assert retained == registered
+    assert {:error, :not_found} = ServerManager.request_observation(correlation_id)
+  end
+
+  test "canonical admission survives access loss before the real configured runtime is created" do
+    {child, endpoint} =
+      OpenAIStub.server(
+        fn conn, _body ->
+          {200, streamed_reply(conn.request_path, "Accepted answer", "gpt-4.1-mini")}
+        end,
+        self()
+      )
+
+    start_supervised!(child)
+
+    credential =
+      ai_credential_fixture(%{provider: "openai", endpoint: endpoint, api_key: "test-key"})
+
+    {:ok, configured} =
+      Agent.create_agent(%{
+        name: "Admitted #{Ecto.UUID.generate()}",
+        job: "Answer briefly",
+        model: "gpt-4.1-mini",
+        credential_id: credential.id,
+        strategy: "react",
+        enabled_tool_keys: [],
+        active: true
+      })
+
+    {:ok, person} = People.create_person(%{full_name: "Admitted Person"})
+    actor = %{person: %{id: person.id}}
+
+    config =
+      %ChannelConfig{}
+      |> ChannelConfig.changeset(%{
+        name: "Admission",
+        provider: "mattermost",
+        kind: "retrieval",
+        enabled: true,
+        url: "https://history.example.test",
+        token: "test-token"
+      })
+      |> Repo.insert!()
+
+    incoming =
+      Incoming.new(%{
+        provider: :mattermost,
+        person: person,
+        author_id: "person",
+        content: "Accepted input",
+        channel_id: "room",
+        message_id: Ecto.UUID.generate(),
+        routing_context: %{channel_config_id: config.id, conversation_type: :room}
+      })
+      |> CommunicationBridge.put_conversation_identity()
+
+    assert {:ok, _} = HistoryIngress.capture(incoming)
+    assert {:ok, binding} = Conversations.admit_incoming(incoming)
+    resource = ChannelHistoryResource.for("mattermost", config.id, "room")
+
+    assert {:ok, grant} =
+             Permissions.grant(resource, %{person_id: person.id, access_rights: ["read"]})
+
+    HistorySync.with_session(fn session ->
+      opts = [
+        history_session: session,
+        conversation_binding: binding,
+        agent_id: configured.id,
+        person_id: person.id,
+        actor: actor
+      ]
+
+      assert {:ok, projection} =
+               HistorySync.execution_admission(opts, binding, actor, incoming.content)
+
+      scope = "history:#{projection.transcript_id}:person:#{person.id}"
+
+      assert Jido.AgentServer.whereis(
+               Jido.registry_name(Zaq.Agent.Jido),
+               "#{configured.name}:#{scope}"
+             ) == nil
+
+      assert :ok = Permissions.revoke(resource, grant)
+      outgoing = Executor.run(incoming, opts)
+      refute outgoing.metadata.error
+      assert outgoing.body == "Accepted answer"
+      assert_receive {:openai_request, "POST", _, _, _}, 5_000
+
+      assert {:ok, persisted} =
+               Conversations.finalize_incoming(
+                 binding.user_message_id,
+                 binding.finalization_token,
+                 %{answer: outgoing.body, usage: %{}, error: false},
+                 actor: actor,
+                 execution_id: binding.execution_id
+               )
+
+      assert :ok = HistorySync.complete(session, persisted, outgoing)
+      assert Repo.get!(ExecutionRecord, binding.execution_id).status == "completed"
+      assert Repo.get!(Message, persisted.assistant_message_id).content == "Accepted answer"
+
+      assert {:error, {:history_access_denied, _}} =
+               HistorySync.execution_admission(
+                 [history_session: make_ref()],
+                 binding,
+                 actor,
+                 incoming.content
+               )
+
+      assert :ok = ServerManager.stop_server(configured)
+    end)
+  end
+
+  test "revoked channel-history access before Executor admission is unauthorized without an LLM call" do
+    owner = self()
+
+    {child, endpoint} =
+      OpenAIStub.server(
+        fn conn, _body ->
+          send(owner, {:unexpected_llm_request, conn.request_path})
+          {200, streamed_reply(conn.request_path, "Unexpected answer", "gpt-4.1-mini")}
+        end,
+        self()
+      )
+
+    start_supervised!(child)
+
+    credential =
+      ai_credential_fixture(%{provider: "openai", endpoint: endpoint, api_key: "test-key"})
+
+    {:ok, configured} =
+      Agent.create_agent(%{
+        name: "Revoked admission #{Ecto.UUID.generate()}",
+        job: "Answer briefly",
+        model: "gpt-4.1-mini",
+        credential_id: credential.id,
+        strategy: "react",
+        enabled_tool_keys: [],
+        active: true
+      })
+
+    on_exit(fn -> _ = ServerManager.stop_server(configured) end)
+
+    {:ok, person} = People.create_person(%{full_name: "Revoked Admission Person"})
+    actor = %{person: %{id: person.id}}
+
+    config =
+      %ChannelConfig{}
+      |> ChannelConfig.changeset(%{
+        name: "Revoked Admission",
+        provider: "mattermost",
+        kind: "retrieval",
+        enabled: true,
+        url: "https://history.example.test",
+        token: "test-token"
+      })
+      |> Repo.insert!()
+
+    incoming =
+      Incoming.new(%{
+        provider: :mattermost,
+        person: person,
+        author_id: "person",
+        content: "Must not execute",
+        channel_id: "room",
+        message_id: Ecto.UUID.generate(),
+        routing_context: %{channel_config_id: config.id, conversation_type: :room}
+      })
+      |> CommunicationBridge.put_conversation_identity()
+
+    assert {:ok, _} = HistoryIngress.capture(incoming)
+    assert {:ok, binding} = Conversations.admit_incoming(incoming)
+    resource = ChannelHistoryResource.for("mattermost", config.id, "room")
+
+    assert {:ok, grant} =
+             Permissions.grant(resource, %{person_id: person.id, access_rights: ["read"]})
+
+    assert :ok = Permissions.revoke(resource, grant)
+
+    outgoing =
+      Executor.run(incoming,
+        conversation_binding: binding,
+        agent_id: configured.id,
+        person_id: person.id,
+        actor: actor
+      )
+
+    assert outgoing.metadata.error
+    assert outgoing.metadata.reason == ":unauthorized"
+    assert Repo.get!(ExecutionRecord, binding.execution_id).status != "completed"
+    refute_receive {:openai_request, _, _, _, _}, 100
+    refute_received {:unexpected_llm_request, _}
   end
 
   test "a real busy rejection cannot stop the request already running in Jido" do

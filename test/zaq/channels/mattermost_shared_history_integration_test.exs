@@ -6,7 +6,9 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   alias Ecto.Adapters.SQL
 
   alias Zaq.Accounts.People
-  alias Zaq.Agent.RequestRegistry
+  alias Zaq.Agent.Executor
+  alias Zaq.Agent.HistorySync
+  alias Zaq.Agent.RequestControl
   alias Zaq.Agent.ServerManager
   alias Zaq.Channels.CommunicationBridge
   alias Zaq.Channels.JidoChatBridge
@@ -25,7 +27,6 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   }
 
   alias Zaq.Engine.HistoryIngress
-  alias Zaq.Engine.HistoryRuntimeRemovalWorker
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Engine.Messages.Outgoing
@@ -259,7 +260,10 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         "history:#{Repo.get_by!(Transcript, external_thread_id: "root-human").id}:person:#{ctx.person.id}"
 
       actor = %{person: %{id: ctx.person.id}}
-      assert {:ok, {request_id, state}} = RequestRegistry.find_active(scope, actor)
+
+      assert {:ok, {request_id, state}} =
+               RequestControl.find_native_request(scope, actor)
+
       assert state.actor.person.id == ctx.person.id
       assert state.execution_scope == scope
       assert state.agent.id == ctx.agent.id
@@ -643,7 +647,9 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     transcript = Repo.get_by!(Transcript, external_thread_id: "root-human")
     actor = %{person: %{id: ctx.person.id}}
     scope = "history:#{transcript.id}:person:#{ctx.person.id}"
-    assert {:ok, {request_id, _state}} = RequestRegistry.find_active(scope, actor)
+
+    assert {:ok, {request_id, _state}} =
+             RequestControl.find_native_request(scope, actor)
 
     receipts =
       for index <- 1..65 do
@@ -719,7 +725,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     transcript = Repo.get_by!(Transcript, external_thread_id: "root-human")
     actor = %{person: %{id: ctx.person.id}}
     scope = "history:#{transcript.id}:person:#{ctx.person.id}"
-    assert {:ok, {request_id, _}} = RequestRegistry.find_active(scope, actor)
+    assert {:ok, {request_id, _}} = RequestControl.find_native_request(scope, actor)
 
     receipts =
       for index <- 1..2 do
@@ -775,8 +781,22 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
   @tag :membership_removal
   @tag :authorized_execution
-  test "provider removal stops native execution and local output while manual access permits a fresh run",
+  test "provider removal with manual access preserves accepted execution and the same warm runtime",
        ctx do
+    owner = self()
+    handler = {__MODULE__, :removal_http, self()}
+
+    :telemetry.attach(
+      handler,
+      [:finch, :queue, :start],
+      fn _, _, metadata, _ ->
+        if metadata.name == ReqLLM.Finch, do: send(owner, {:removal_http, self()})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
     assert {{:ok, _}, _} =
              MattermostHistoryFixture.post(ctx.config, "human", false, %{
                "id" => "removal-seed",
@@ -822,28 +842,40 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     owner_monitor = Process.monitor(ledger.lease.owner)
 
     {:ok, {request_id, _}} =
-      RequestRegistry.find_active(scope, %{person: %{id: ctx.person.id}}, ledger.pid)
+      RequestControl.find_native_request(
+        scope,
+        %{person: %{id: ctx.person.id}},
+        ledger.pid
+      )
 
     removal = %{event | operation: :remove, revision: 2}
-    assert {:ok, %{status: :applied}} = ChannelHistoryMembership.apply_event(removal)
-    acknowledged_at = DateTime.utc_now()
-    assert_receive {:DOWN, ^runtime_monitor, :process, _, _}, 5_000
-    send(worker, :release_history_llm)
-    assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 5_000
-    assert {:ok, request} = RequestRegistry.get(request_id)
-    assert request.history_removed
-    assert request.status == :cancelled
-    assert Repo.get_by!(ExecutionRecord, user_message_id: input.id).status == "failed"
-    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 0
+    assert_receive {:removal_http, http}, 5_000
+    http_monitor = Process.monitor(http)
+    {:ok, %{raw_state: %{__strategy__: native}}} = Jido.AgentServer.status(ledger.pid)
 
-    for output_event <- collect_output_events() do
-      refute output_event.opts[:action] == :deliver_outgoing
-      assert DateTime.compare(output_event.next_hop.timestamp, acknowledged_at) != :gt
-    end
+    {:ok, %{raw_state: %{__strategy__: native_worker}}} =
+      Jido.AgentServer.status(native.react_worker_pid)
+
+    runner_monitor = Process.monitor(native_worker.runtime_task)
+
+    assert {:ok, %{status: :applied}} = ChannelHistoryMembership.apply_event(removal)
+    refute_receive {:DOWN, ^runtime_monitor, :process, _, _}, 1_600
+    assert Process.alive?(native_worker.runtime_task)
+    assert Process.alive?(http)
+    send(worker, :release_history_llm)
+    assert await_delivery_event().body == "History answer"
+    assert_receive {:DOWN, ^runner_monitor, :process, _, _}, 5_000
+    assert_receive {:DOWN, ^http_monitor, :process, ^http, _}, 5_000
+    assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 5_000
+    assert {:ok, request} = ServerManager.request_observation(request_id)
+    refute Map.has_key?(request, :history_removed)
+    assert request.status == :completed
+    assert Repo.get_by!(ExecutionRecord, user_message_id: input.id).status == "completed"
+    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 1
 
     assert Enum.map(Zaq.Permissions.list_direct(resource), & &1.source_key) == ["manual"]
-    assert :sys.get_state(ServerManager).history[server_id] == nil
-    assert Repo.get!(Transcript, membership_source).membership_state["removal_generation"] == 1
+    assert :sys.get_state(ServerManager).history[server_id].pid == ledger.pid
+    assert Repo.get!(Transcript, membership_source).membership_state["removal_generation"] == nil
 
     assert {{:ok, _}, _} =
              MattermostHistoryFixture.post(ctx.config, "human", true, %{
@@ -855,15 +887,13 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert_receive {:history_llm_barrier, next_worker}, 5_000
     on_exit(fn -> send(next_worker, :release_history_llm) end)
     next = :sys.get_state(ServerManager).history[server_id]
-    refute next.pid == ledger.pid
-    assert next.generations[membership_source] == 1
+    assert next.pid == ledger.pid
 
-    assert [removal_job] =
+    assert [] =
              Repo.all(
                from j in Oban.Job, where: j.worker == "Zaq.Engine.HistoryRuntimeRemovalWorker"
              )
 
-    assert :ok = HistoryRuntimeRemovalWorker.perform(removal_job)
     assert Process.alive?(next.pid)
     assert {:ok, %{status: :stale}} = ChannelHistoryMembership.apply_event(removal)
     assert Process.alive?(next.pid)
@@ -871,6 +901,111 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     send(next_worker, :release_history_llm)
     assert await_delivery_event().body == "History answer"
     assert_receive {:DOWN, ^delivery_monitor, :process, _, _}, 5_000
+  end
+
+  @tag :membership_removal
+  @tag :authorized_execution
+  @tag :accepted_busy_waiter
+  test "a standalone accepted Executor waiting on a busy lease finishes after root closure and access loss",
+       ctx do
+    resource = ChannelHistoryResource.for("mattermost", ctx.config.id, "shared-room")
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", true, %{
+               "id" => "busy-wait-root",
+               "message" => "@zaq Finish only while a member"
+             })
+
+    assert_receive {:history_llm, _initial}, 5_000
+    assert_receive {:history_llm_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_history_llm) end)
+
+    transcript =
+      Repo.get_by!(Transcript, external_thread_id: "root-human", channel_config_id: ctx.config.id)
+
+    server_id = "#{ctx.agent.name}:history:#{transcript.id}:person:#{ctx.person.id}"
+    assert %{pid: pid} = :sys.get_state(ServerManager).history[server_id]
+    assert Process.alive?(pid)
+    manager = Process.whereis(ServerManager)
+    :erlang.trace(manager, true, [:receive, {:tracer, self()}])
+    on_exit(fn -> if Process.alive?(manager), do: :erlang.trace(manager, false, [:receive]) end)
+
+    input =
+      Incoming.new(%{
+        provider: :mattermost,
+        person: ctx.person,
+        author_id: "alice",
+        content: "@zaq Accepted waiting input",
+        channel_id: "shared-room",
+        message_id: "busy-wait-child",
+        thread_id: "root-human",
+        routing_context: %{channel_config_id: ctx.config.id, conversation_type: :room}
+      })
+      |> CommunicationBridge.put_conversation_identity()
+
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, binding} = Conversations.admit_incoming(input)
+    actor = %{person: %{id: ctx.person.id}}
+    parent = self()
+
+    waiter =
+      Task.async(fn ->
+        HistorySync.with_session(fn session ->
+          opts = [
+            history_session: session,
+            conversation_binding: binding,
+            agent_id: ctx.agent.id,
+            person_id: ctx.person.id,
+            event: Zaq.Event.new(input, :agent, actor: actor)
+          ]
+
+          assert {:ok, _} =
+                   HistorySync.execution_admission(opts, binding, actor, input.content)
+
+          send(parent, {:busy_input_admitted, self()})
+          outgoing = Executor.run(input, opts)
+          refute outgoing.metadata.error
+
+          assert {:ok, persisted} =
+                   Conversations.finalize_incoming(
+                     binding.user_message_id,
+                     binding.finalization_token,
+                     %{answer: outgoing.body, error: false},
+                     actor: actor,
+                     execution_id: binding.execution_id
+                   )
+
+          assert :ok = HistorySync.complete(session, persisted, outgoing)
+          outgoing
+        end)
+      end)
+
+    waiter_pid = waiter.pid
+    assert_receive {:busy_input_admitted, ^waiter_pid}, 5_000
+
+    assert_receive {:trace, ^manager, :receive,
+                    {:"$gen_call", {^waiter_pid, _}, {:begin_history_request, ^server_id, _, _}}},
+                   5_000
+
+    ledger = :sys.get_state(manager).history[server_id]
+    assert length(ledger.waiters) == 1
+    assert map_size(ledger.pins) == 2
+    permission = actual_provider_permission(resource, ctx.person)
+    assert :ok = Zaq.Permissions.revoke(resource, permission)
+    monitor = Process.monitor(ledger.pid)
+    send(worker, :release_history_llm)
+    assert await_delivery_event().body == "History answer"
+    assert_receive {:history_llm, next_turn}, 5_000
+    assert MultiAgentOpenAIStub.latest_user_message(next_turn) =~ "Accepted waiting input"
+    assert_receive {:history_llm_barrier, next_worker}, 5_000
+    on_exit(fn -> send(next_worker, :release_history_llm) end)
+    send(next_worker, :release_history_llm)
+    assert %Outgoing{body: "History answer"} = Task.await(waiter, 5_000)
+    assert Repo.get!(ExecutionRecord, binding.execution_id).status == "completed"
+    root = Repo.get_by!(Message, external_message_id: "busy-wait-root")
+    assert Repo.get_by!(ExecutionRecord, user_message_id: root.id).status == "completed"
+    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 2
+    assert_receive {:DOWN, ^monitor, :process, _, _}, 5_000
   end
 
   @tag :boundary_persistence
@@ -941,7 +1076,11 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
     refute match?(
              {:ok, _},
-             RequestRegistry.find_active(scope, %{person: %{id: ctx.person.id}}, ledger.pid)
+             RequestControl.find_native_request(
+               scope,
+               %{person: %{id: ctx.person.id}},
+               ledger.pid
+             )
            )
 
     manager = Process.whereis(ServerManager)
@@ -1003,12 +1142,6 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
        ctx do
     resource = ChannelHistoryResource.for("mattermost", ctx.config.id, "shared-room")
 
-    assert {:ok, permission} =
-             Zaq.Permissions.grant(
-               resource,
-               %{person_id: ctx.person.id, access_rights: ["read"]}
-             )
-
     assert {{:ok, _}, _} =
              MattermostHistoryFixture.post(ctx.config, "human", true, %{
                "id" => "boundary-revoked-root",
@@ -1025,7 +1158,9 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert is_pid(ledger.pid)
     monitor = Process.monitor(ledger.pid)
     delivery_monitor = Process.monitor(ledger.lease.owner)
+    permission = actual_provider_permission(resource, ctx.person)
     assert :ok = Zaq.Permissions.revoke(resource, permission)
+    refute Zaq.Permissions.can?(ctx.person, "read", resource)
     send(worker, :release_history_llm)
     delivered = await_delivery_event()
     assert delivered.body == "History answer"
@@ -1426,15 +1561,10 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
   @tag :refresh_revocation
   @tag :authorized_execution
-  @tag :input_consumption
-  test "revoked grants stop the next real internal model turn without a public answer", ctx do
+  @tag :per_turn_refresh
+  test "revoked grants deny fresh history while the accepted real model/tool loop completes",
+       ctx do
     resource = ChannelHistoryResource.for("mattermost", ctx.config.id, "shared-room")
-
-    assert {:ok, permission} =
-             Zaq.Permissions.grant(
-               resource,
-               %{person_id: ctx.person.id, access_rights: ["read"]}
-             )
 
     assert {{:ok, _}, _} =
              MattermostHistoryFixture.post(ctx.config, "human", true, %{
@@ -1445,19 +1575,61 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert_receive {:history_llm, _initial}, 5_000
     assert_receive {:history_llm_barrier, worker}, 5_000
     on_exit(fn -> send(worker, :release_history_llm) end)
-    assert :ok = Zaq.Permissions.revoke(resource, permission)
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, "human", false, %{
+               "id" => "authorized-delta",
+               "message" => "Already authorized addition"
+             })
+
     send(worker, :release_history_llm)
-    assert_receive {:history_execution_failed, writer}, 5_000
+    assert_receive {:history_llm, second}, 5_000
+    assert Jason.encode!(second["input"]) =~ "Already authorized addition"
+    assert_receive {:history_llm_barrier, next_worker}, 5_000
+    on_exit(fn -> send(next_worker, :release_history_llm) end)
+    permission = actual_provider_permission(resource, ctx.person)
+    assert :ok = Zaq.Permissions.revoke(resource, permission)
+    refute Zaq.Permissions.can?(ctx.person, "read", resource)
+
+    assert {{:ok, _}, _} =
+             MattermostHistoryFixture.post(ctx.config, nil, false, %{
+               "id" => "forbidden-delta",
+               "message" => "Forbidden fresh addition"
+             })
+
+    send(next_worker, :release_history_llm)
+    assert_receive {:history_llm, next_turn}, 5_000
+    assert length(MultiAgentOpenAIStub.tool_results(next_turn)) == 2
+
+    assert length(Regex.scan(~r/Already authorized addition/, Jason.encode!(next_turn["input"]))) ==
+             1
+
+    refute Jason.encode!(next_turn["input"]) =~ "Forbidden fresh addition"
+    assert_receive {:history_execution_completed, writer}, 5_000
     monitor = Process.monitor(writer)
     assert_receive {:DOWN, ^monitor, :process, ^writer, reason}, 5_000
     assert reason in [:normal, :noproc]
     refute_receive {:history_llm, _}, 0
     input = Repo.get_by!(Message, external_message_id: "revoked-refresh-root")
     execution = Repo.get_by!(ExecutionRecord, user_message_id: input.id)
-    assert execution.status == "failed"
-    assert execution.public_answer_message_id == nil
-    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 0
+    assert execution.status == "completed"
+    assert %DateTime{} = execution.admitted_at
+    answer = Repo.get!(Message, execution.public_answer_message_id)
+    assert answer.content == "Cumulative history answer"
+    assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 1
     assert Repo.get!(Message, input.id).content == "@zaq history question"
+  end
+
+  defp actual_provider_permission(resource, person) do
+    permission =
+      Enum.find(Zaq.Permissions.list_direct(resource), fn permission ->
+        permission.person_id == person.id and
+          permission.source_key == "channel_history:provider:mattermost"
+      end)
+
+    assert permission, "real ingress must establish provider-derived sender access"
+    assert Zaq.Permissions.can?(person, "read", resource)
+    permission
   end
 
   defp terminal_boundary?(tags),
@@ -1512,7 +1684,12 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
     assert {:ok, _} = HistoryIngress.capture(input)
     assert {:ok, binding} = Conversations.admit_incoming(input)
-    before = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
+    provisional = Repo.get!(ExecutionRecord, binding.execution_id)
+    assert provisional.admitted_at == nil
+    assert {:ok, _} = Conversations.admit_execution(binding, actor, input.content)
+    before = Repo.get!(ExecutionRecord, binding.execution_id)
+    assert %DateTime{} = before.admitted_at
+    assert %{before | admitted_at: nil, updated_at: provisional.updated_at} == provisional
     # A real, UUID-scoped database failure. This file is serial and the blocked
     # external LLM owns no transaction; no runtime/persistence mocks are involved.
     SQL.query!(Repo, """
@@ -1546,7 +1723,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     # Exercise the queue -> runtime rejection -> receipt persistence path without
     # substituting Factory, RequestControl, NodeRouter or the execution store.
     stale_id = "stale-control-#{System.unique_integer([:positive])}"
-    assert :ok = RequestRegistry.put(stale_id, state)
+    assert :ok = ServerManager.observe_request(stale_id, state)
 
     input =
       Incoming.new(%{
@@ -1576,7 +1753,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert receipt.status == "unconsumed"
     assert receipt.outcome["reason"] == "runtime_rejected"
     assert receipt.public_answer_message_id == nil
-    assert :ok = RequestRegistry.delete(stale_id)
+    assert :ok = ServerManager.forget_request(stale_id)
   end
 
   defp consumption_llm_handler(owner) do
@@ -1640,15 +1817,6 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         if opts[:action] == :deliver_outgoing, do: outgoing, else: await_delivery_event()
     after
       5_000 -> flunk("no real Engine delivery event was observed")
-    end
-  end
-
-  defp collect_output_events do
-    receive do
-      {:node_router_event, %Zaq.Event{request: %Outgoing{}} = event} ->
-        [event | collect_output_events()]
-    after
-      0 -> []
     end
   end
 

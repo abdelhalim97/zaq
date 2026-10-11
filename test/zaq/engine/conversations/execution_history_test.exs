@@ -4,7 +4,8 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
 
   alias Zaq.Accounts.People
   alias Zaq.Agent.Api, as: AgentApi
-  alias Zaq.Agent.RequestRegistry
+  alias Zaq.Agent.HistorySync
+  alias Zaq.Agent.ServerManager
   alias Zaq.Agent.StreamEvents
   alias Zaq.Channels.CommunicationBridge
   alias Zaq.Engine.{ChannelConfig, Conversations, HistoryIngress}
@@ -45,6 +46,76 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     %{config: config, alice: alice, bob: bob}
   end
 
+  test "execution admission records authorization once without making history reads admissions",
+       ctx do
+    {binding, _} = admitted(ctx)
+    grant(ctx)
+    assert {:ok, _} = Conversations.execution_history(binding, actor(ctx.alice))
+    assert is_nil(Repo.get!(ExecutionRecord, binding.execution_id).admitted_at)
+
+    assert {:ok, projection} =
+             Conversations.admit_execution(binding, actor(ctx.alice), "Current input")
+
+    assert projection.kind == :canonical
+    first = Repo.get!(ExecutionRecord, binding.execution_id)
+    assert %DateTime{} = first.admitted_at
+
+    assert {:ok, ^projection} =
+             Conversations.admit_execution(binding, actor(ctx.alice), "Current input")
+
+    assert Repo.get!(ExecutionRecord, binding.execution_id) == first
+  end
+
+  test "denial closes only a never-authorized provisional execution and preserves factual input",
+       ctx do
+    {binding, _} = admitted(ctx)
+    message = Repo.get!(Message, binding.user_message_id)
+
+    assert {:error, {:history_access_denied, denial}} =
+             Conversations.admit_execution(binding, actor(ctx.alice), "Current input")
+
+    assert denial.person_id == ctx.alice.id
+    assert is_binary(denial.transcript_id)
+    execution = Repo.get!(ExecutionRecord, binding.execution_id)
+    assert execution.status == "failed"
+    assert is_nil(execution.admitted_at)
+    assert Repo.get!(Message, binding.user_message_id) == message
+  end
+
+  test "a denied replay cannot revoke an earlier accepted execution", ctx do
+    {binding, _} = admitted(ctx)
+    {:ok, permission} = grant(ctx)
+
+    assert {:ok, _} =
+             Conversations.admit_execution(binding, actor(ctx.alice), "Current input")
+
+    accepted = Repo.get!(ExecutionRecord, binding.execution_id)
+    assert :ok = Permissions.revoke(resource(ctx), permission)
+
+    assert {:error, {:history_access_denied, _}} =
+             Conversations.admit_execution(binding, actor(ctx.alice), "Current input")
+
+    assert Repo.get!(ExecutionRecord, binding.execution_id) == accepted
+    assert {:error, :unauthorized} = Conversations.execution_history(binding, actor(ctx.alice))
+  end
+
+  test "invalid admission cannot authorize or select another Person's runtime for retirement",
+       ctx do
+    {binding, _} = admitted(ctx)
+    before = Repo.get!(ExecutionRecord, binding.execution_id)
+
+    for {candidate, principal, content} <- [
+          {binding, actor(ctx.bob), "Current input"},
+          {%{binding | finalization_token: "forged"}, actor(ctx.alice), "Current input"},
+          {binding, actor(ctx.alice), "Altered input"}
+        ] do
+      assert {:error, :unauthorized} =
+               Conversations.admit_execution(candidate, principal, content)
+    end
+
+    assert Repo.get!(ExecutionRecord, binding.execution_id) == before
+  end
+
   test "projects attributed root and local history once without current input or siblings", ctx do
     root = incoming(ctx, ctx.bob, "root", nil, "Project root")
     assert {:ok, _} = HistoryIngress.capture(root)
@@ -65,6 +136,100 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert Enum.all?(projection.messages, &(&1.author_name == "Bob"))
     assert map_size(projection.cursors) == 2
     assert Enum.all?(projection.messages, &(not Map.has_key?(&1, :metadata)))
+  end
+
+  test "Engine admission requires a confidential event and ordinary changesets cannot forge evidence",
+       ctx do
+    {binding, _} = admitted(ctx)
+    grant(ctx)
+    execution = Repo.get!(ExecutionRecord, binding.execution_id)
+
+    assert ExecutionRecord.changeset(execution, %{admitted_at: DateTime.utc_now()}).changes == %{}
+
+    request = %{binding: binding, content: "Current input"}
+    event = Event.new(request, :engine, actor: actor(ctx.alice))
+
+    assert %{response: {:error, :confidential_event_required}} =
+             Zaq.Engine.Api.handle_event(event, :admit_execution, nil)
+
+    assert is_nil(Repo.get!(ExecutionRecord, binding.execution_id).admitted_at)
+    event = %{event | opts: [confidential: true]}
+
+    assert %{response: {:ok, %{kind: :canonical}}} =
+             Zaq.Engine.Api.handle_event(event, :admit_execution, nil)
+  end
+
+  test "a terminal provisional root is not reopened by later permission", ctx do
+    {binding, _} = admitted(ctx)
+
+    assert {:error, {:history_access_denied, _}} =
+             Conversations.admit_execution(binding, actor(ctx.alice), "Current input")
+
+    grant(ctx)
+
+    assert {:error, :terminal_request} =
+             Conversations.admit_execution(binding, actor(ctx.alice), "Current input")
+
+    assert is_nil(Repo.get!(ExecutionRecord, binding.execution_id).admitted_at)
+  end
+
+  test "only the live admission session can carry its accepted projection past grant loss", ctx do
+    {binding, _} = admitted(ctx)
+    {:ok, permission} = grant(ctx)
+
+    HistorySync.with_session(fn session ->
+      opts = [history_session: session]
+
+      assert {:ok, initial} =
+               HistorySync.execution_admission(
+                 opts,
+                 binding,
+                 actor(ctx.alice),
+                 "Current input"
+               )
+
+      assert :ok = Permissions.revoke(resource(ctx), permission)
+
+      assert {:ok, ^initial} =
+               HistorySync.execution_admission(
+                 opts,
+                 binding,
+                 actor(ctx.alice),
+                 "Current input"
+               )
+
+      assert {:error, :unauthorized} =
+               HistorySync.execution_admission(
+                 opts,
+                 binding,
+                 actor(ctx.bob),
+                 "Current input"
+               )
+
+      assert {:error, :unauthorized} =
+               HistorySync.execution_admission(
+                 opts,
+                 binding,
+                 actor(ctx.alice),
+                 "Changed after authorization"
+               )
+
+      assert {:error, {:history_access_denied, _}} =
+               HistorySync.execution_admission(
+                 [history_session: make_ref()],
+                 binding,
+                 actor(ctx.alice),
+                 "Current input"
+               )
+    end)
+
+    assert {:error, {:history_access_denied, _}} =
+             HistorySync.execution_admission(
+               [history_session: make_ref()],
+               binding,
+               actor(ctx.alice),
+               "Current input"
+             )
   end
 
   test "validates owner, literal active Person and admission capability before projection", ctx do
@@ -104,6 +269,16 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
 
     assert Conversations.get_conversation!(binding.conversation_id).channel_config_id ==
              ctx.config.id
+
+    HistorySync.with_session(fn session ->
+      assert {:ok, %{kind: :legacy}} =
+               HistorySync.execution_admission(
+                 [history_session: session],
+                 binding,
+                 actor(ctx.alice),
+                 incoming.content
+               )
+    end)
 
     assert {:ok, %{kind: :legacy}} = Conversations.execution_history(binding, actor(ctx.alice))
     assert {:error, :unauthorized} = Conversations.execution_history(binding, actor(ctx.bob))
@@ -211,6 +386,11 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
         ] do
       assert {:error, :invalid_history_cursor} =
                Conversations.execution_history(binding, actor(ctx.alice), after_cursors: cursors)
+    end
+
+    for cursor <- [nil, []] do
+      assert {:error, :invalid_history_cursor} =
+               Conversations.execution_history(binding, actor(ctx.alice), after_cursors: cursor)
     end
 
     assert :ok = Permissions.revoke(resource(ctx), permission)
@@ -549,7 +729,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
       server_id: "private"
     }
 
-    assert :ok = RequestRegistry.put(request_id, state)
+    assert :ok = ServerManager.observe_request(request_id, state)
     event = Event.new(%{request_id: request_id}, :agent, actor: actor(ctx.alice))
     assert %{response: {:ok, ^state}} = AgentApi.handle_event(event, :inspect_request, nil)
     unadmitted = %{event | request: %{request_id: request_id, content: "Unadmitted input"}}
@@ -565,7 +745,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert %{response: {:error, :unauthorized}} =
              AgentApi.handle_event(event, :inspect_request, nil)
 
-    assert :ok = RequestRegistry.delete(request_id)
+    assert :ok = ServerManager.forget_request(request_id)
   end
 
   test "queued input is not consumption proof and root termination seals outstanding receipts",
@@ -575,6 +755,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     child_input = incoming(ctx, ctx.alice, "steering", nil, "Use this correction")
     assert {:ok, _} = HistoryIngress.capture(child_input)
     assert {:ok, child} = Conversations.admit_incoming(child_input)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), child_input.content)
 
     assert {:ok, receipt} =
              Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
@@ -614,6 +795,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     input = incoming(ctx, ctx.alice, "consumed", nil, "Correction")
     assert {:ok, _} = HistoryIngress.capture(input)
     assert {:ok, child} = Conversations.admit_incoming(input)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), input.content)
 
     assert {:ok, receipt} =
              Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
@@ -665,6 +847,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     incoming = incoming(ctx, ctx.alice, "late-input", nil, "Late correction")
     assert {:ok, _} = HistoryIngress.capture(incoming)
     assert {:ok, child} = Conversations.admit_incoming(incoming)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), incoming.content)
 
     assert {:error, :terminal_request} =
              Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
@@ -719,6 +902,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     input = incoming(ctx, ctx.alice, "rejected-control", nil, "Correction")
     assert {:ok, _} = HistoryIngress.capture(input)
     assert {:ok, child} = Conversations.admit_incoming(input)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), input.content)
 
     assert {:ok, receipt} =
              Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
@@ -752,6 +936,9 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert {:ok, _} = HistoryIngress.capture(consumed_input)
     assert {:ok, consumed} = Conversations.admit_incoming(consumed_input)
 
+    assert {:ok, _} =
+             Conversations.admit_execution(consumed, actor(ctx.alice), consumed_input.content)
+
     assert {:ok, other} =
              Conversations.queue_execution_input(root.user_message_id, consumed, actor(ctx.alice))
 
@@ -781,6 +968,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
         input = incoming(ctx, ctx.alice, id, nil, "Correction #{id}")
         assert {:ok, _} = HistoryIngress.capture(input)
         assert {:ok, binding} = Conversations.admit_incoming(input)
+        assert {:ok, _} = Conversations.admit_execution(binding, actor(ctx.alice), input.content)
 
         assert {:ok, receipt} =
                  Conversations.queue_execution_input(
@@ -836,6 +1024,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     input = incoming(ctx, ctx.alice, "child-finalization", nil, "Correction")
     assert {:ok, _} = HistoryIngress.capture(input)
     assert {:ok, binding} = Conversations.admit_incoming(input)
+    assert {:ok, _} = Conversations.admit_execution(binding, actor(ctx.alice), input.content)
 
     assert {:ok, receipt} =
              Conversations.queue_execution_input(root.user_message_id, binding, actor(ctx.alice))
@@ -918,6 +1107,479 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert {:ok, capture} = HistoryIngress.capture(input)
     assert {:ok, binding} = Conversations.admit_incoming(input)
     {binding, capture}
+  end
+
+  test "an accepted correction queues after access loss without reauthorizing its root", ctx do
+    {root, _} = admitted(ctx)
+    {:ok, permission} = grant(ctx)
+    input = incoming(ctx, ctx.alice, "admitted-correction", nil, "Accepted correction")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, child} = Conversations.admit_incoming(input)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), input.content)
+    assert :ok = Permissions.revoke(resource(ctx), permission)
+
+    assert {:ok, receipt} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice),
+               content: input.content
+             )
+
+    assert Repo.get!(ExecutionRecord, receipt.execution_id).status == "queued"
+
+    assert {:error, :unauthorized} =
+             Conversations.authorize_execution_control(root.user_message_id, actor(ctx.alice))
+  end
+
+  test "requeueing an already pending receipt is rejected without changing it", ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    input = incoming(ctx, ctx.alice, "pending-requeue", nil, "Pending correction")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, child} = Conversations.admit_incoming(input)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), input.content)
+
+    assert {:ok, receipt} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
+
+    before = Repo.get!(ExecutionRecord, receipt.execution_id)
+
+    assert :ok =
+             Conversations.consume_execution_input(
+               root.user_message_id,
+               child.user_message_id,
+               actor(ctx.alice)
+             )
+
+    assert {:error, :input_consumed} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
+
+    consumed = Repo.get!(ExecutionRecord, receipt.execution_id)
+    assert consumed.status == "consumed"
+    assert consumed.root_execution_id == before.root_execution_id
+  end
+
+  test "a pending receipt cannot be queued under another root", ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    second_input = incoming(ctx, ctx.alice, "second-root", nil, "Second root")
+    assert {:ok, _} = HistoryIngress.capture(second_input)
+    assert {:ok, second_root} = Conversations.admit_incoming(second_input)
+    input = incoming(ctx, ctx.alice, "root-conflict", nil, "Correction")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, child} = Conversations.admit_incoming(input)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), input.content)
+
+    assert {:ok, receipt} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
+
+    before = Repo.get!(ExecutionRecord, receipt.execution_id)
+
+    assert {:error, :input_conflict} =
+             Conversations.queue_execution_input(
+               second_root.user_message_id,
+               child,
+               actor(ctx.alice)
+             )
+
+    assert Repo.get!(ExecutionRecord, receipt.execution_id) == before
+    assert before.status == "queued"
+    assert before.root_execution_id == root.execution_id
+  end
+
+  test "followup preparation rejects a still-queued receipt without creating another execution",
+       ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    input = incoming(ctx, ctx.alice, "queued-followup", nil, "Queued correction")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, child} = Conversations.admit_incoming(input)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), input.content)
+
+    assert {:ok, receipt} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
+
+    before = Repo.get!(ExecutionRecord, receipt.execution_id)
+
+    request = %{
+      root_user_message_id: root.user_message_id,
+      root_execution_id: root.execution_id,
+      receipt_execution_id: receipt.execution_id,
+      binding: child,
+      content: input.content,
+      disposition: :closed_before_accept
+    }
+
+    assert {:error, :input_conflict} =
+             Conversations.prepare_execution_followup(request, actor(ctx.alice))
+
+    assert Repo.get!(ExecutionRecord, receipt.execution_id) == before
+    assert Repo.aggregate(ExecutionRecord, :count) == 2
+  end
+
+  test "an admitted but unqueued child cannot consume an execution input", ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    input = incoming(ctx, ctx.alice, "unlinked-consume", nil, "Correction")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, child} = Conversations.admit_incoming(input)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), input.content)
+    before = Repo.get_by!(ExecutionRecord, user_message_id: child.user_message_id)
+
+    assert {:error, :input_conflict} =
+             Conversations.consume_execution_input(
+               root.user_message_id,
+               child.user_message_id,
+               actor(ctx.alice)
+             )
+
+    assert Repo.get!(ExecutionRecord, before.id) == before
+
+    assert Repo.get_by!(ExecutionRecord, user_message_id: root.user_message_id).status ==
+             "pending"
+  end
+
+  test "a captured canonical input cannot authorize consumption against a different root", ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    canonical = incoming(ctx, ctx.alice, "canonical-unlinked", nil, "Canonical input")
+    assert {:ok, canonical_capture} = HistoryIngress.capture(canonical)
+    separate = incoming(ctx, ctx.alice, "separate-child", nil, "Separate child")
+    assert {:ok, _} = HistoryIngress.capture(separate)
+    assert {:ok, child} = Conversations.admit_incoming(separate)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), separate.content)
+    before = Repo.get_by!(ExecutionRecord, user_message_id: child.user_message_id)
+
+    assert {:error, :unauthorized} =
+             Conversations.consume_execution_input(
+               root.user_message_id,
+               canonical_capture.message_id,
+               actor(ctx.alice)
+             )
+
+    assert Repo.get!(ExecutionRecord, before.id) == before
+  end
+
+  test "rejecting an unlinked pending child conflicts without changing either record", ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+
+    inputs =
+      for {id, content} <- [{"reject-first", "First"}, {"reject-second", "Second"}] do
+        input = incoming(ctx, ctx.alice, id, nil, content)
+        assert {:ok, _} = HistoryIngress.capture(input)
+        assert {:ok, child} = Conversations.admit_incoming(input)
+        assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), content)
+        {child, content}
+      end
+
+    [{first, first_content}, {second, second_content}] = inputs
+    first_before = Repo.get_by!(ExecutionRecord, user_message_id: first.user_message_id)
+    second_before = Repo.get_by!(ExecutionRecord, user_message_id: second.user_message_id)
+    assert first_content != second_content
+
+    assert {:error, :input_conflict} =
+             Conversations.reject_execution_input(
+               root.user_message_id,
+               second.user_message_id,
+               actor(ctx.alice),
+               :stale_runtime
+             )
+
+    assert Repo.get!(ExecutionRecord, first_before.id) == first_before
+    assert Repo.get!(ExecutionRecord, second_before.id) == second_before
+  end
+
+  test "queueing cannot turn a captured provisional input or its capability into admission",
+       ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    input = incoming(ctx, ctx.alice, "not-admitted", nil, "Not yet accepted")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, child} = Conversations.admit_incoming(input)
+    before = Repo.get!(ExecutionRecord, child.execution_id)
+    assert before.admitted_at == nil
+
+    assert {:error, :admission_required} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice),
+               content: input.content
+             )
+
+    assert Repo.get!(ExecutionRecord, child.execution_id) == before
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), input.content)
+
+    assert {:ok, _} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice),
+               content: input.content
+             )
+  end
+
+  for revoked? <- [false, true] do
+    @recovery_revoked revoked?
+    test "closed input creates one execution-addressed followup without changing its receipt (revoked #{@recovery_revoked})",
+         ctx do
+      {root, _} = admitted(ctx)
+      {:ok, permission} = grant(ctx)
+      input = incoming(ctx, ctx.alice, "recoverable-input", nil, "Late correction")
+      assert {:ok, _} = HistoryIngress.capture(input)
+      assert {:ok, child} = Conversations.admit_incoming(input)
+      assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), input.content)
+
+      HistorySync.with_session(fn session ->
+        opts = [history_session: session]
+
+        assert {:ok, _} =
+                 HistorySync.execution_admission(opts, child, actor(ctx.alice), input.content)
+
+        assert {:ok, receipt} =
+                 Conversations.queue_execution_input(
+                   root.user_message_id,
+                   child,
+                   actor(ctx.alice)
+                 )
+
+        assert :ok =
+                 Conversations.reject_execution_input(
+                   root.user_message_id,
+                   child.user_message_id,
+                   actor(ctx.alice),
+                   :closed_before_accept
+                 )
+
+        before = Repo.get!(ExecutionRecord, receipt.execution_id)
+        message = Repo.get!(Message, child.user_message_id)
+
+        request = %{
+          root_user_message_id: root.user_message_id,
+          root_execution_id: receipt.root_execution_id,
+          receipt_execution_id: receipt.execution_id,
+          binding: child,
+          content: input.content,
+          disposition: :closed_before_accept
+        }
+
+        assert {:error, :prior_execution_not_completed} =
+                 Conversations.prepare_execution_followup(request, actor(ctx.alice))
+
+        assert {:ok, _} =
+                 Conversations.finalize_incoming(
+                   root.user_message_id,
+                   root.finalization_token,
+                   %{answer: "Prior answer"},
+                   actor: actor(ctx.alice)
+                 )
+
+        if @recovery_revoked, do: assert(:ok = Permissions.revoke(resource(ctx), permission))
+
+        assert {:ok, recovered} =
+                 Conversations.prepare_execution_followup(request, actor(ctx.alice))
+
+        assert {:error, :unauthorized} =
+                 Conversations.authorize_execution_control(
+                   child.user_message_id,
+                   actor(ctx.alice)
+                 )
+
+        assert {:error, :admission_required} =
+                 HistorySync.inherit_admission(
+                   opts,
+                   child,
+                   recovered,
+                   actor(ctx.alice),
+                   "Changed content"
+                 )
+
+        assert :ok =
+                 HistorySync.inherit_admission(
+                   opts,
+                   child,
+                   recovered,
+                   actor(ctx.alice),
+                   input.content
+                 )
+
+        assert {:ok, first} =
+                 HistorySync.execution_admission(opts, recovered, actor(ctx.alice), input.content)
+
+        assert {:ok, second} =
+                 HistorySync.execution_admission(opts, recovered, actor(ctx.alice), input.content)
+
+        assert first == second
+        assert recovered.user_message_id == child.user_message_id
+        refute recovered.execution_id == receipt.execution_id
+        refute recovered.finalization_token == child.finalization_token
+        assert Repo.get!(ExecutionRecord, receipt.execution_id) == before
+        assert Repo.get!(Message, child.user_message_id) == message
+
+        assert Repo.get!(ExecutionRecord, recovered.execution_id).admitted_at ==
+                 before.admitted_at
+
+        assert %DateTime{} = before.admitted_at
+
+        if @recovery_revoked do
+          assert {:error, :unauthorized} =
+                   Conversations.execution_history(recovered, actor(ctx.alice))
+        else
+          assert {:ok, _} = Conversations.execution_history(recovered, actor(ctx.alice))
+        end
+
+        assert {:error, :unauthorized} =
+                 Conversations.execution_history(
+                   %{recovered | finalization_token: child.finalization_token},
+                   actor(ctx.alice)
+                 )
+
+        assert {:error, :ambiguous_execution} =
+                 Conversations.finalize_incoming(
+                   child.user_message_id,
+                   child.finalization_token,
+                   %{answer: "Wrong"},
+                   actor: actor(ctx.alice)
+                 )
+
+        assert {:ok, :already_prepared} =
+                 Conversations.prepare_execution_followup(request, actor(ctx.alice))
+
+        assert {:ok, answer} =
+                 Conversations.finalize_incoming(
+                   recovered.user_message_id,
+                   recovered.finalization_token,
+                   %{
+                     answer: "Hola",
+                     total_tokens: 7,
+                     trace: [%{"type" => "tool_call", "response" => "private"}]
+                   },
+                   actor: actor(ctx.alice),
+                   execution_id: recovered.execution_id
+                 )
+
+        assert {:ok, ^answer} =
+                 Conversations.finalize_incoming(
+                   recovered.user_message_id,
+                   recovered.finalization_token,
+                   %{answer: "Duplicate"},
+                   actor: actor(ctx.alice),
+                   execution_id: recovered.execution_id
+                 )
+
+        owner = Repo.get!(ExecutionRecord, recovered.execution_id)
+        assert owner.recovered_from_execution_id == receipt.execution_id
+        assert owner.root_execution_id == nil
+        assert owner.status == "completed"
+        assert owner.usage["total_tokens"] == 7
+        assert owner.public_answer_message_id == answer.assistant_message_id
+        assert Repo.get!(ExecutionRecord, receipt.execution_id) == before
+        assert Repo.aggregate(Message, :count) == 4
+      end)
+    end
+  end
+
+  test "finalization before queue supplies a committed disposition only to live admission", ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    input = incoming(ctx, ctx.alice, "closed-before-queue", nil, "Late correction")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, child} = Conversations.admit_incoming(input)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), input.content)
+
+    assert {:ok, _} =
+             Conversations.finalize_incoming(
+               root.user_message_id,
+               root.finalization_token,
+               %{answer: "Prior answer"},
+               actor: actor(ctx.alice),
+               execution_id: root.execution_id
+             )
+
+    opts = [
+      root_execution_id: root.execution_id,
+      closed_disposition: true,
+      content: input.content
+    ]
+
+    assert {:error, {:closed_before_accept, receipt}} =
+             Conversations.queue_execution_input(
+               root.user_message_id,
+               child,
+               actor(ctx.alice),
+               opts
+             )
+
+    assert receipt.execution_id == child.execution_id
+    assert receipt.root_execution_id == root.execution_id
+    before = Repo.get!(ExecutionRecord, receipt.execution_id)
+    assert before.status == "unconsumed"
+
+    assert {:error, :terminal_request} =
+             Conversations.queue_execution_input(
+               root.user_message_id,
+               child,
+               actor(ctx.alice),
+               Keyword.delete(opts, :closed_disposition)
+             )
+
+    assert Repo.get!(ExecutionRecord, receipt.execution_id) == before
+
+    request = %{
+      root_user_message_id: root.user_message_id,
+      root_execution_id: root.execution_id,
+      receipt_execution_id: receipt.execution_id,
+      binding: child,
+      content: input.content,
+      disposition: :closed_before_accept
+    }
+
+    assert {:ok, recovered} = Conversations.prepare_execution_followup(request, actor(ctx.alice))
+    assert recovered.user_message_id == child.user_message_id
+    assert Repo.get!(ExecutionRecord, receipt.execution_id) == before
+  end
+
+  test "followup preparation rejects foreign principals, invalid admission and consumed evidence",
+       ctx do
+    {root, _} = admitted(ctx)
+    grant(ctx)
+    input = incoming(ctx, ctx.alice, "consumed-recovery", nil, "Correction")
+    assert {:ok, _} = HistoryIngress.capture(input)
+    assert {:ok, child} = Conversations.admit_incoming(input)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), input.content)
+
+    assert {:ok, receipt} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
+
+    assert :ok =
+             Conversations.consume_execution_input(
+               root.user_message_id,
+               child.user_message_id,
+               actor(ctx.alice)
+             )
+
+    assert {:ok, _} =
+             Conversations.finalize_incoming(
+               root.user_message_id,
+               root.finalization_token,
+               %{answer: "Done"},
+               actor: actor(ctx.alice)
+             )
+
+    request = %{
+      root_user_message_id: root.user_message_id,
+      root_execution_id: receipt.root_execution_id,
+      receipt_execution_id: receipt.execution_id,
+      binding: child,
+      content: input.content,
+      disposition: :closed_before_accept
+    }
+
+    assert {:error, :input_consumed} =
+             Conversations.prepare_execution_followup(request, actor(ctx.alice))
+
+    assert {:error, :unauthorized} =
+             Conversations.prepare_execution_followup(request, actor(ctx.bob))
+
+    forged = %{request | binding: %{child | finalization_token: "forged"}}
+
+    assert {:error, :unauthorized} =
+             Conversations.prepare_execution_followup(forged, actor(ctx.alice))
+
+    assert Repo.aggregate(ExecutionRecord, :count) == 2
   end
 
   test "recipient-owned canonical replies bind admission to each sender, not the email thread's first owner",

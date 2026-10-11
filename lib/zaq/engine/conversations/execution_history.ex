@@ -17,8 +17,26 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
   @local_limit 100
   @parent_limit 50
 
+  @doc "Resolves a verified input's canonical scope without granting fresh history access."
+  def scope(input, conversation, %Person{id: person_id}) do
+    case input_transcript(input, conversation, person_id) do
+      %Transcript{id: id} -> {:ok, %{kind: :canonical, transcript_id: id}}
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  def scope(_input, _conversation, _person), do: {:error, :unauthorized}
+
   @doc "Projects verified admission history; use Conversations.execution_history/2 at boundaries."
-  def project(%{source_provider: nil} = input, _conversation, _person) do
+  def project(input, conversation, person) do
+    case project_admission(input, conversation, person) do
+      {:error, {:history_access_denied, _}} -> {:error, :unauthorized}
+      result -> result
+    end
+  end
+
+  @doc "Projects history with a trusted access-denial coordinate after caller identity validation."
+  def project_admission(%{source_provider: nil} = input, _conversation, _person) do
     canonical? =
       Repo.exists?(
         from p in TranscriptMessage,
@@ -30,7 +48,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
     if canonical?, do: {:error, :unauthorized}, else: {:ok, %{kind: :legacy}}
   end
 
-  def project(input, conversation, %Person{id: person_id} = person) do
+  def project_admission(input, conversation, %Person{id: person_id} = person) do
     with %Transcript{} = transcript <- input_transcript(input, conversation, person_id),
          {:ok, local} <- read(person, transcript, @local_limit),
          {:ok, parent, root, cursors} <- parent_context(person, transcript) do
@@ -44,8 +62,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
          kind: :canonical,
          transcript_id: transcript.id,
          cursors: Map.put(cursors, transcript.id, transcript.next_position),
-         messages: messages,
-         removal_generations: removal_generations(transcript)
+         messages: messages
        }}
     else
       nil -> {:error, :unauthorized}
@@ -53,24 +70,21 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
     end
   end
 
-  def project(_input, _conversation, _person), do: {:error, :unauthorized}
-
-  defp removal_generations(transcript) do
-    sources =
-      if transcript.parent_id,
-        do: [Repo.get!(Transcript, transcript.parent_id), transcript],
-        else: [transcript]
-
-    Map.new(sources, fn source ->
-      {source.id, source.membership_state["removal_generation"] || 0}
-    end)
-  end
+  def project_admission(_input, _conversation, _person), do: {:error, :unauthorized}
 
   @doc "Reads bounded cumulative association additions without advancing a runtime cursor."
-  def delta(%{source_provider: nil}, _conversation, _person, _cursors),
+  def delta(input, conversation, person, cursors) do
+    case delta_admission(input, conversation, person, cursors) do
+      {:error, {:history_access_denied, _}} -> {:error, :unauthorized}
+      result -> result
+    end
+  end
+
+  @doc "Reads fresh history with a trusted denial after caller binding validation."
+  def delta_admission(%{source_provider: nil}, _conversation, _person, _cursors),
     do: {:error, :unauthorized}
 
-  def delta(input, conversation, %Person{id: person_id} = person, cursors) do
+  def delta_admission(input, conversation, %Person{id: person_id} = person, cursors) do
     with %Transcript{} = transcript <- input_transcript(input, conversation, person_id),
          {:ok, sources} <- delta_sources(transcript),
          :ok <- validate_cursors(cursors, sources) do
@@ -81,7 +95,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
     end
   end
 
-  def delta(_input, _conversation, _person, _cursors), do: {:error, :unauthorized}
+  def delta_admission(_input, _conversation, _person, _cursors), do: {:error, :unauthorized}
 
   defp delta_sources(%{parent_id: nil} = transcript), do: {:ok, [{transcript, @local_limit}]}
 
@@ -117,6 +131,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
 
     Enum.reduce_while(sources, {:ok, initial}, fn {source, limit}, {:ok, projection} ->
       case TranscriptHistory.list(person, source.id,
+             trusted_access_denial: true,
              after_position: cursors[source.id],
              up_to_position: source.next_position,
              limit: limit
@@ -174,6 +189,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
   defp read(person, transcript, limit) do
     with {:ok, messages} <-
            TranscriptHistory.list(person, transcript.id,
+             trusted_access_denial: true,
              after_position: max(0, transcript.next_position - limit),
              up_to_position: transcript.next_position,
              limit: limit
@@ -189,6 +205,7 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
          {:ok, background} <- read(person, parent, @parent_limit),
          {:ok, root} <-
            TranscriptHistory.list(person, parent.id,
+             trusted_access_denial: true,
              limit: 1,
              up_to_position: parent.next_position,
              external_message_id: transcript.external_thread_id

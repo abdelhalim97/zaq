@@ -33,6 +33,10 @@ config :zaq, Zaq.Repo,
   hostname: "localhost",
   database: test_database,
   pool: Ecto.Adapters.SQL.Sandbox,
+  # Shared sandbox cases serialize real concurrent actors on one connection.
+  # Avoid CoDel dropping legitimate short transactions at the production-sized
+  # 50 ms queue target; query deadlines and explicit completion assertions remain.
+  queue_target: 1_000,
   pool_size: System.schedulers_online() * 2
 
 config :zaq, Oban,

@@ -14,6 +14,7 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
   alias Jido.AI.Reasoning.ReAct.Config
   alias Zaq.Agent.ContextWindow.RequestEstimator
   alias Zaq.Agent.HistoryLoader
+  alias Zaq.Agent.ServerManager
   alias Zaq.Event
 
   @default_safety_margin 0.05
@@ -32,23 +33,30 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
   defp refresh_history(
          request,
          state,
-         %{execution_history: %{binding: binding, cursors: cursors, scope: scope}} =
+         %{execution_history: %{binding: binding, cursors: cursors, scope: scope} = history} =
            runtime_context
        ) do
     event =
       Event.new(Map.put(binding, :after_cursors, cursors), :engine,
         actor: runtime_context[:actor],
-        opts: [action: :execution_history, confidential: true]
+        opts: [action: :execution_history, confidential: true, trusted_access_denial: true]
       )
 
     router = Map.get(runtime_context, :node_router, Zaq.NodeRouter)
 
     case router.dispatch(event) do
-      %{response: {:ok, %{kind: :canonical, messages: messages}}} ->
-        context =
-          HistoryLoader.merge_projection(state.context, messages, opaque_alias_scope: scope)
+      %{response: {:ok, %{kind: :canonical} = projection}} ->
+        with {:ok, projection} <- retain_projection(history, runtime_context[:actor], projection) do
+          project_request(request, state.context, projection, scope)
+        end
 
-        {:ok, %{request | messages: AIContext.to_messages(context)}}
+      %{response: {:error, {:history_access_denied, denial}}} ->
+        :ok = ServerManager.retire_history_scope(denial)
+
+        with {:ok, projection} <-
+               ServerManager.history_projection(history, runtime_context[:actor]) do
+          project_request(request, state.context, projection, scope)
+        end
 
       %{response: {:error, reason}} ->
         {:error, reason}
@@ -59,6 +67,18 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
   end
 
   defp refresh_history(request, _state, _runtime_context), do: {:ok, request}
+
+  defp retain_projection(%{lease_ref: _} = history, actor, projection),
+    do: ServerManager.history_projection(history, actor, projection)
+
+  defp retain_projection(_history, _actor, projection), do: {:ok, projection}
+
+  defp project_request(request, context, projection, scope) do
+    context =
+      HistoryLoader.merge_projection(context, projection.messages, opaque_alias_scope: scope)
+
+    {:ok, %{request | messages: AIContext.to_messages(context)}}
+  end
 
   defp input_budget(window, %Config{} = config) do
     max_context_tokens = positive_int(Map.get(window, :max_context_tokens))

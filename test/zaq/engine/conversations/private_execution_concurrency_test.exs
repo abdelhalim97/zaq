@@ -142,6 +142,75 @@ defmodule Zaq.Engine.Conversations.PrivateExecutionConcurrencyTest do
 
   defp prepare_contender(_contender, _fixture), do: :ok
 
+  test "concurrent followup preparation returns one capability on independent connections",
+       fixture do
+    request =
+      Sandbox.unboxed_run(Repo, fn ->
+        assert {:ok, receipt} =
+                 Conversations.queue_execution_input(
+                   fixture.root.user_message_id,
+                   fixture.child,
+                   fixture.actor
+                 )
+
+        assert :ok =
+                 Conversations.reject_execution_input(
+                   fixture.root.user_message_id,
+                   fixture.child.user_message_id,
+                   fixture.actor,
+                   :closed_before_accept
+                 )
+
+        assert {:ok, _} = finalize(fixture)
+
+        %{
+          root_user_message_id: fixture.root.user_message_id,
+          root_execution_id: receipt.root_execution_id,
+          receipt_execution_id: receipt.execution_id,
+          binding: fixture.child,
+          content: "Correction",
+          disposition: :closed_before_accept
+        }
+      end)
+
+    parent = self()
+
+    tasks =
+      for _ <- 1..4 do
+        Task.async(fn ->
+          Sandbox.unboxed_run(Repo, fn ->
+            send(parent, {:followup_ready, self()})
+
+            receive do
+              :prepare_followup ->
+                Conversations.prepare_execution_followup(request, fixture.actor)
+            end
+          end)
+        end)
+      end
+
+    for task <- tasks do
+      pid = task.pid
+      assert_receive {:followup_ready, ^pid}, 5_000
+    end
+
+    Enum.each(tasks, &send(&1.pid, :prepare_followup))
+    results = Enum.map(tasks, &Task.await(&1, 5_000))
+    assert Enum.count(results, &match?({:ok, %{finalization_token: _}}, &1)) == 1
+    assert Enum.count(results, &(&1 == {:ok, :already_prepared})) == 3
+
+    Sandbox.unboxed_run(Repo, fn ->
+      assert Repo.aggregate(
+               from(e in ExecutionRecord,
+                 where: e.recovered_from_execution_id == ^request.receipt_execution_id
+               ),
+               :count
+             ) == 1
+
+      assert Repo.get!(ExecutionRecord, request.receipt_execution_id).status == "unconsumed"
+    end)
+  end
+
   test "a real unavailable history read returns a safe error and leaves its fixed cursor reusable",
        fixture do
     initial =
@@ -357,11 +426,17 @@ defmodule Zaq.Engine.Conversations.PrivateExecutionConcurrencyTest do
 
     assert {:ok, _} = HistoryIngress.capture(input)
     assert {:ok, binding} = Conversations.admit_incoming(input)
+    assert {:ok, _} = Conversations.admit_execution(binding, fixture.actor, input.content)
     binding
   end
 
   defp cleanup(fixture) do
     ids = [fixture.root.user_message_id, fixture.child.user_message_id]
+
+    Repo.delete_all(
+      from e in ExecutionRecord,
+        where: e.user_message_id in ^ids and not is_nil(e.recovered_from_execution_id)
+    )
 
     Repo.delete_all(
       from e in ExecutionRecord,

@@ -4,7 +4,7 @@ defmodule Zaq.Agent.ApiTest do
 
   alias Zaq.Agent.Api
   alias Zaq.Agent.MCP
-  alias Zaq.Agent.RequestRegistry
+  alias Zaq.Agent.ServerManager
   alias Zaq.Contracts.Record
   alias Zaq.Engine.Messages.{Incoming, Outgoing}
   alias Zaq.Engine.Messages.Incoming.RoutingContext
@@ -113,7 +113,7 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule SpyNodeRouter do
-    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+    def dispatch(%{opts: [action: :admit_execution, confidential: true]} = event),
       do: %{event | response: {:ok, %{kind: :legacy}}}
 
     def dispatch(event) do
@@ -123,7 +123,7 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule NilPersonNodeRouter do
-    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+    def dispatch(%{opts: [action: :admit_execution, confidential: true]} = event),
       do: %{event | response: {:ok, %{kind: :legacy}}}
 
     def dispatch(event) do
@@ -152,7 +152,7 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule ConfigurablePersistFailNodeRouter do
-    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+    def dispatch(%{opts: [action: :admit_execution, confidential: true]} = event),
       do: %{event | response: {:ok, %{kind: :legacy}}}
 
     def dispatch(event) do
@@ -183,7 +183,7 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule PersistInvalidResponseNodeRouter do
-    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+    def dispatch(%{opts: [action: :admit_execution, confidential: true]} = event),
       do: %{event | response: {:ok, %{kind: :legacy}}}
 
     def dispatch(event) do
@@ -198,7 +198,7 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule PersistOkTupleNodeRouter do
-    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+    def dispatch(%{opts: [action: :admit_execution, confidential: true]} = event),
       do: %{event | response: {:ok, %{kind: :legacy}}}
 
     def dispatch(event) do
@@ -213,7 +213,7 @@ defmodule Zaq.Agent.ApiTest do
   end
 
   defmodule PersistOkNonMapNodeRouter do
-    def dispatch(%{opts: [action: :execution_history, confidential: true]} = event),
+    def dispatch(%{opts: [action: :admit_execution, confidential: true]} = event),
       do: %{event | response: {:ok, %{kind: :legacy}}}
 
     def dispatch(event) do
@@ -503,7 +503,7 @@ defmodule Zaq.Agent.ApiTest do
   test "inspect_request returns in-flight request state" do
     request_id = "req-api-#{System.unique_integer([:positive])}"
 
-    RequestRegistry.put(request_id, %{
+    ServerManager.observe_request(request_id, %{
       status: :streaming,
       server_id: "server-1",
       actor: @control_actor
@@ -525,7 +525,7 @@ defmodule Zaq.Agent.ApiTest do
     actor = %{kind: :system, subject: "request-owner"}
 
     assert :ok =
-             RequestRegistry.put(request_id, %{
+             ServerManager.observe_request(request_id, %{
                actor: actor,
                execution_scope: "owner-scope",
                status: :streaming,
@@ -580,10 +580,34 @@ defmodule Zaq.Agent.ApiTest do
     assert result.response == {:error, {:invalid_request, :missing_request_id}}
   end
 
+  test "steer and inject reject non-map requests before factory calls" do
+    for action <- [:steer_request, :inject_request] do
+      for {request, expected} <- [
+            {:bad, {:error, :missing_request_id}},
+            {%{request_id: "malformed-#{action}"}, {:error, :missing_content}}
+          ] do
+        result =
+          Api.handle_event(
+            Event.new(request, :agent,
+              actor: @control_actor,
+              opts: [action: action, factory_module: StubFactory]
+            ),
+            action,
+            nil
+          )
+
+        assert result.response == expected
+      end
+    end
+
+    refute_received {:steer_called, _, _, _}
+    refute_received {:inject_called, _, _, _}
+  end
+
   test "steer_request routes to active server through factory" do
     request_id = "req-steer-#{System.unique_integer([:positive])}"
 
-    RequestRegistry.put(request_id, %{
+    ServerManager.observe_request(request_id, %{
       status: :streaming,
       server_id: "server-steer",
       actor: @control_actor
@@ -604,7 +628,7 @@ defmodule Zaq.Agent.ApiTest do
   test "inject_request routes to active server through factory" do
     request_id = "req-inject-#{System.unique_integer([:positive])}"
 
-    RequestRegistry.put(request_id, %{
+    ServerManager.observe_request(request_id, %{
       status: :streaming,
       server_id: "server-inject",
       actor: @control_actor
@@ -628,7 +652,7 @@ defmodule Zaq.Agent.ApiTest do
     request_id = "req-pid-#{System.unique_integer([:positive])}"
     owner = self()
 
-    RequestRegistry.put(request_id, %{
+    ServerManager.observe_request(request_id, %{
       status: :streaming,
       server_id: "reusable-name",
       actor: @control_actor,
@@ -645,14 +669,14 @@ defmodule Zaq.Agent.ApiTest do
     assert_received {:steer_called, ^owner, "adjust", [expected_request_id: ^request_id]}
   end
 
-  test "request control rejects a dead incarnation and terminal requests before factory calls" do
+  test "request control rejects a dead incarnation regardless of presentation before factory calls" do
     {runtime, monitor} = spawn_monitor(fn -> :ok end)
     assert_receive {:DOWN, ^monitor, :process, ^runtime, :normal}
 
-    for {status, expected} <- [{:streaming, :stale_runtime}, {:completed, :terminal_request}] do
+    for {status, expected} <- [{:streaming, :stale_runtime}, {:completed, :stale_runtime}] do
       request_id = "req-stale-#{System.unique_integer([:positive])}"
 
-      RequestRegistry.put(request_id, %{
+      ServerManager.observe_request(request_id, %{
         status: status,
         server_id: "replacement-name",
         actor: @control_actor,
@@ -672,7 +696,7 @@ defmodule Zaq.Agent.ApiTest do
 
   test "steer_request returns missing_server_id when registry state lacks server_id" do
     request_id = "req-steer-missing-server-#{System.unique_integer([:positive])}"
-    RequestRegistry.put(request_id, %{status: :streaming, actor: @control_actor})
+    ServerManager.observe_request(request_id, %{status: :streaming, actor: @control_actor})
 
     event =
       Event.new(%{request_id: request_id, content: "adjust"}, :agent,
@@ -814,7 +838,7 @@ defmodule Zaq.Agent.ApiTest do
 
   test "steer_request returns missing_content when request content is empty" do
     request_id = "req-steer-missing-content-#{System.unique_integer([:positive])}"
-    RequestRegistry.put(request_id, %{status: :streaming, server_id: "server-steer"})
+    ServerManager.observe_request(request_id, %{status: :streaming, server_id: "server-steer"})
 
     event =
       Event.new(%{request_id: request_id, content: ""}, :agent,
@@ -826,11 +850,13 @@ defmodule Zaq.Agent.ApiTest do
     assert result.response == {:error, :missing_content}
   end
 
-  test "inject_request denies non-map registry state without exposing it" do
+  test "request observations cannot be corrupted outside their lifecycle owner" do
     request_id = "req-inject-bad-state-#{System.unique_integer([:positive])}"
 
     try do
-      :ets.insert(:zaq_agent_request_registry, {request_id, :bad_state})
+      assert_raise ArgumentError, fn ->
+        :ets.insert(:zaq_agent_request_observations, {request_id, :bad_state})
+      end
 
       event =
         Event.new(%{request_id: request_id, content: "tool result"}, :agent,
@@ -839,9 +865,9 @@ defmodule Zaq.Agent.ApiTest do
 
       result = Api.handle_event(event, :inject_request, nil)
 
-      assert result.response == {:error, :unauthorized}
+      assert result.response == {:error, :not_found}
     after
-      RequestRegistry.delete(request_id)
+      ServerManager.forget_request(request_id)
     end
   end
 

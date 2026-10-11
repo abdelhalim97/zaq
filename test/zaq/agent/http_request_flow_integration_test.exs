@@ -6,7 +6,8 @@ defmodule Zaq.Agent.HttpRequestFlowIntegrationTest do
   """
   use Zaq.DataCase, async: false
 
-  alias Zaq.Agent.Executor
+  alias Zaq.Accounts.People
+  alias Zaq.Agent.{Executor, Factory, ServerManager}
   alias Zaq.Engine.Connect
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.System, as: ZaqSystem
@@ -21,10 +22,10 @@ defmodule Zaq.Agent.HttpRequestFlowIntegrationTest do
   @wire_query %{"term" => "blue sky", "page" => "2", "active" => "true"}
   @body %{"message" => "API flow café", "count" => 3}
 
-  setup do
+  setup tags do
     id = "http-flow-#{Ecto.UUID.generate()}"
     secret = "test-only-key-#{Ecto.UUID.generate()}"
-    target = api_server(secret)
+    target = api_server(secret, tags)
     port = URI.parse(target).port
 
     {:ok, _policy} =
@@ -82,6 +83,75 @@ defmodule Zaq.Agent.HttpRequestFlowIntegrationTest do
     refute_received {:llm_tool_call, _, _}
     refute_received {:llm_tool_result, _, _}
     refute_received {:llm_stub_error, _}
+  end
+
+  @tag :cancel_pending_http
+  @tag :graceful_http_retirement
+  test "retirement lets an accepted real HTTP tool finish beyond the old forced deadline",
+       context do
+    owner = self()
+    port = URI.parse(context.target).port
+    handler = {__MODULE__, :retirement, self()}
+
+    assert :ok =
+             :telemetry.attach(
+               handler,
+               [:finch, :queue, :stop],
+               fn _, _, metadata, _ ->
+                 if metadata.request.port == port, do: send(owner, {:retiring_http, self()})
+               end,
+               nil
+             )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+    {:ok, person} = People.create_person(%{full_name: "HTTP retirement owner"})
+    actor = %{person: %{id: person.id}}
+    transcript = Ecto.UUID.generate()
+    cursors = %{transcript => 1}
+
+    assert {:ok, server} =
+             ServerManager.ensure_server(context.agent, context.id, nil,
+               actor: actor,
+               history_cursors: cursors
+             )
+
+    pid = GenServer.whereis(server)
+    assert {:ok, lease} = ServerManager.begin_history_request(context.id, pid, actor)
+
+    assert {:ok, %{request: request, events: events}} =
+             Factory.ask_with_config(pid, "Send GET to the test API", context.agent,
+               tool_context: %{actor: actor, person_id: person.id}
+             )
+
+    assert_receive {:tool_http_barrier, worker}, 5_000
+    on_exit(fn -> send(worker, :release_tool_http) end)
+    assert_receive {:retiring_http, http}, 5_000
+    monitor = Process.monitor(pid)
+    http_monitor = Process.monitor(http)
+
+    assert :ok =
+             ServerManager.retire_history_scope(%{
+               transcript_id: transcript,
+               person_id: person.id
+             })
+
+    refute_receive {:DOWN, ^monitor, :process, _, _}, 1_600
+    assert Process.alive?(http)
+    send(worker, :release_tool_http)
+    assert Enum.any?(Enum.to_list(events), &(&1.kind == :request_completed))
+    assert {:ok, _} = Factory.await(request, timeout: 5_000)
+    assert_receive {:llm_tool_result, "http_request", result}, 5_000
+    assert result["ok"] == true
+    assert result["result"]["status"] == 200
+    assert_receive {:DOWN, ^http_monitor, :process, ^http, _}, 5_000
+
+    assert {:ok, %{raw_state: %{__strategy__: %{context: completed}}}} =
+             Jido.AgentServer.status(pid)
+
+    assert :ok =
+             ServerManager.complete_history_request(context.id, lease.token, completed, cursors)
+
+    assert_receive {:DOWN, ^monitor, :process, ^pid, _}, 5_000
   end
 
   defp assert_response(context, message, arguments, status, authenticated?) do
@@ -156,10 +226,20 @@ defmodule Zaq.Agent.HttpRequestFlowIntegrationTest do
     end
   end
 
-  defp api_server(secret) do
+  defp api_server(secret, tags) do
     parent = self()
 
     handler = fn conn, body ->
+      if tags[:cancel_pending_http] do
+        send(parent, {:tool_http_barrier, self()})
+
+        receive do
+          :release_tool_http -> :ok
+        after
+          10_000 -> raise "tool HTTP barrier not released"
+        end
+      end
+
       method = conn.method
       expected_path = "/v1/" <> String.downcase(method)
 

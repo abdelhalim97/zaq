@@ -23,12 +23,12 @@ defmodule Zaq.Agent.Api do
   alias Zaq.Agent.{
     ErrorMessage,
     Executor,
+    Factory,
     HistorySync,
     MCP,
     Pipeline,
     PromptGuard,
     RequestControl,
-    RequestRegistry,
     RuntimeSync,
     ServerManager,
     Status
@@ -36,7 +36,6 @@ defmodule Zaq.Agent.Api do
 
   alias Zaq.Channels.EventNames
   alias Zaq.Contracts.CredentialMutation
-  alias Zaq.Contracts.HistoryRuntimeRemoval
   alias Zaq.Engine.Messages.{Incoming, Outgoing}
   alias Zaq.Event
   alias Zaq.EventHop
@@ -86,12 +85,7 @@ defmodule Zaq.Agent.Api do
   def handle_event(%Event{} = event, :run_pipeline, _context) do
     case event.request do
       %Incoming{} = incoming ->
-        with {:ok, actor} <- ExecutionActor.from_event_request(event),
-             {:ok, projection} <- validate_admission(%{event | actor: actor}, incoming) do
-          run_pipeline(%{event | actor: actor}, incoming, projection)
-        else
-          {:error, reason} -> %{event | response: {:error, reason}, next_hop: nil}
-        end
+        with_history_session(event, &admit_pipeline(&1, incoming))
 
       other ->
         invalid_request_response(event, other)
@@ -101,7 +95,7 @@ defmodule Zaq.Agent.Api do
   def handle_event(%Event{} = event, :inspect_request, _context) do
     with {:ok, request_id} <- request_id_request(event.request),
          {:ok, state} <- RequestControl.authorize(event, request_id) do
-      %{event | response: {:ok, state}}
+      %{event | response: {:ok, Factory.inspect_request(request_id, state)}}
     else
       {:error, :missing_request_id} ->
         %{event | response: {:error, {:invalid_request, :missing_request_id}}}
@@ -111,43 +105,9 @@ defmodule Zaq.Agent.Api do
     end
   end
 
-  def handle_event(%Event{request: payload} = event, :history_membership_removed, _context) do
-    response =
-      with {:ok, {:system, "engine:history-membership"}} <- ExecutionActor.identity(event.actor),
-           true <- Keyword.get(event.opts, :confidential) == true,
-           :ok <- HistoryRuntimeRemoval.validate(payload) do
-        ServerManager.stop_history_runtimes(
-          payload.transcript_id,
-          payload.person_ids,
-          payload.event_id,
-          payload.generation
-        )
-      else
-        _ -> {:error, :unauthorized}
-      end
-
-    %{event | response: response, next_hop: nil}
-  end
-
   def handle_event(%Event{} = event, action, _context)
       when action in [:steer_request, :inject_request] do
-    with {:ok, request_id} <- request_id_request(event.request),
-         {:ok, content} <- content_request(event.request) do
-      response =
-        RequestControl.control(
-          event,
-          request_id,
-          content,
-          action,
-          conversation_binding(event.request)
-        )
-
-      %{event | response: response}
-    else
-      {:ok, state} when is_map(state) -> %{event | response: {:error, :missing_server_id}}
-      {:error, reason} -> %{event | response: {:error, reason}}
-      other -> %{event | response: {:error, other}}
-    end
+    with_history_session(event, &control_input(&1, action))
   end
 
   def handle_event(%Event{} = event, :invoke, _context),
@@ -417,42 +377,84 @@ defmodule Zaq.Agent.Api do
           {:queued, outgoing} ->
             %{event | response: outgoing, next_hop: nil}
 
+          {:followup, disposition} ->
+            dispatch_followup_session(event, incoming, disposition)
+
           {:error, reason} ->
             %{event | response: {:error, reason}, next_hop: nil}
         end
     end
   end
 
+  defp control_input(event, action) do
+    with {:ok, request_id} <- request_id_request(event.request),
+         {:ok, content} <- content_request(event.request) do
+      response =
+        RequestControl.control(
+          event,
+          request_id,
+          content,
+          action,
+          conversation_binding(event.request)
+        )
+
+      %{event | response: sanitize_admission_response(response)}
+    else
+      {:ok, state} when is_map(state) -> %{event | response: {:error, :missing_server_id}}
+      {:error, reason} -> %{event | response: {:error, reason}}
+      other -> %{event | response: {:error, other}}
+    end
+  end
+
+  defp sanitize_admission_response({:error, reason}), do: {:error, admission_error(reason)}
+  defp sanitize_admission_response(response), do: response
+
+  defp admit_pipeline(event, incoming) do
+    with {:ok, actor} <- ExecutionActor.from_event_request(event),
+         {:ok, projection} <- validate_admission(%{event | actor: actor}, incoming) do
+      run_pipeline(%{event | actor: actor}, incoming, projection)
+    else
+      {:error, reason} -> %{event | response: {:error, admission_error(reason)}, next_hop: nil}
+    end
+  end
+
+  defp admission_error({:history_access_denied, _}), do: :unauthorized
+  defp admission_error(reason), do: reason
+
   defp validate_admission(_event, %Incoming{provider: nil}), do: {:ok, %{kind: :legacy}}
 
-  defp validate_admission(event, _incoming) do
+  defp validate_admission(event, incoming) do
     case conversation_binding(event.assigns) do
       nil ->
         {:error, :invalid_conversation_binding}
 
       binding ->
-        router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
-
-        request =
-          Event.new(binding, :engine,
-            actor: event.actor,
-            trace_id: event.trace_id,
-            opts: [action: :execution_history, confidential: true]
-          )
-
-        case router.dispatch(request) do
-          %{response: {:ok, projection}} -> {:ok, projection}
-          %{response: {:error, reason}} -> {:error, reason}
-          _ -> {:error, :history_unavailable}
-        end
+        HistorySync.execution_admission(event.opts, binding, event.actor, incoming.content)
     end
   end
 
   defp dispatch_pipeline(event, incoming) do
+    do_dispatch_pipeline(event, incoming)
+  end
+
+  defp dispatch_followup_session(event, incoming, disposition) do
+    dispatch_followup(event, incoming, disposition)
+  end
+
+  defp with_history_session(event, fun) do
     HistorySync.with_session(fn session ->
       event = %{event | opts: Keyword.put(event.opts, :history_session, session)}
-      result = do_dispatch_pipeline(event, incoming)
-      %{result | opts: Keyword.delete(result.opts, :history_session)}
+      result = fun.(event)
+
+      %{
+        result
+        | opts:
+            Keyword.drop(result.opts, [
+              :history_session,
+              :history_reservation,
+              :followup_attempted
+            ])
+      }
     end)
   end
 
@@ -471,6 +473,8 @@ defmodule Zaq.Agent.Api do
       |> Keyword.put_new(:telemetry_dimensions, incoming_dims)
       |> Keyword.put(:conversation_binding, conversation_binding(event.assigns))
       |> Keyword.put(:history_session, Keyword.fetch!(event.opts, :history_session))
+      |> Keyword.put(:history_reservation, Keyword.get(event.opts, :history_reservation))
+      |> Keyword.put(:live_followup, not Keyword.get(event.opts, :followup_attempted, false))
 
     outgoing =
       case selected_agent_id(event.assigns) do
@@ -495,11 +499,97 @@ defmodule Zaq.Agent.Api do
             context: Keyword.get(pipeline_opts, :context),
             telemetry_dimensions: Keyword.get(pipeline_opts, :telemetry_dimensions, %{}),
             event: event,
+            live_followup: not Keyword.get(event.opts, :followup_attempted, false),
+            history_reservation: Keyword.get(event.opts, :history_reservation),
             history_session: Keyword.fetch!(event.opts, :history_session)
           )
       end
 
-    maybe_dispatch_return_hop(event, incoming, outgoing)
+    case outgoing do
+      {:followup, disposition} -> dispatch_followup(event, incoming, disposition)
+      outgoing -> maybe_dispatch_return_hop(event, incoming, outgoing)
+    end
+  end
+
+  defp dispatch_followup(event, incoming, disposition) do
+    binding = conversation_binding(event.assigns)
+    session = Keyword.fetch!(event.opts, :history_session)
+    router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
+    request = Map.merge(disposition, %{binding: binding, content: incoming.content})
+
+    with false <- Keyword.get(event.opts, :followup_attempted, false),
+         :ok <- live_handoff_deadline(event),
+         {:ok, reservation} <-
+           HistorySync.reserve_followup(
+             session,
+             disposition,
+             event.actor,
+             binding.user_message_id,
+             handoff_timeout(event)
+           ),
+         %{response: {:ok, recovered}} when is_map(recovered) <-
+           router.dispatch(
+             Event.new(request, :engine,
+               actor: event.actor,
+               opts: [action: :prepare_execution_followup, confidential: true]
+             )
+           ),
+         :ok <-
+           HistorySync.inherit_admission(
+             event.opts,
+             binding,
+             recovered,
+             event.actor,
+             incoming.content
+           ) do
+      assigns =
+        event.assigns
+        |> Map.delete("conversation_binding")
+        |> Map.put(:conversation_binding, recovered)
+
+      opts =
+        event.opts
+        |> Keyword.put(:history_reservation, reservation)
+        |> Keyword.put(:followup_attempted, true)
+
+      event = %{event | assigns: assigns, opts: opts}
+
+      do_dispatch_pipeline(event, incoming)
+    else
+      %{response: {:ok, :already_prepared}} ->
+        %{event | response: {:error, :followup_already_prepared}, next_hop: nil}
+
+      %{response: {:error, reason}} ->
+        %{event | response: {:error, reason}, next_hop: nil}
+
+      {:error, reason} ->
+        %{event | response: {:error, reason}, next_hop: nil}
+
+      _ ->
+        %{event | response: {:error, :history_handoff_unavailable}, next_hop: nil}
+    end
+  end
+
+  defp handoff_timeout(event) do
+    case Keyword.get(event.opts, :deadline) do
+      deadline when is_integer(deadline) ->
+        max(min(deadline - System.monotonic_time(:millisecond), 60_000), 1)
+
+      _ ->
+        60_000
+    end
+  end
+
+  defp live_handoff_deadline(event) do
+    case Keyword.get(event.opts, :deadline) do
+      deadline when is_integer(deadline) ->
+        if deadline <= System.monotonic_time(:millisecond),
+          do: {:error, :history_handoff_timeout},
+          else: :ok
+
+      _ ->
+        :ok
+    end
   end
 
   defp conversation_binding(assigns) when is_map(assigns) do
@@ -508,10 +598,11 @@ defmodule Zaq.Agent.Api do
         "conversation_id" => <<_, _::binary>> = conversation_id,
         "user_message_id" => <<_, _::binary>> = user_message_id,
         "finalization_token" => <<_, _::binary>> = finalization_token
-      } ->
+      } = binding ->
         %{
           conversation_id: conversation_id,
           user_message_id: user_message_id,
+          execution_id: Map.get(binding, "execution_id"),
           finalization_token: finalization_token
         }
 
@@ -519,10 +610,11 @@ defmodule Zaq.Agent.Api do
         conversation_id: <<_, _::binary>> = conversation_id,
         user_message_id: <<_, _::binary>> = user_message_id,
         finalization_token: <<_, _::binary>> = finalization_token
-      } ->
+      } = binding ->
         %{
           conversation_id: conversation_id,
           user_message_id: user_message_id,
+          execution_id: Map.get(binding, :execution_id),
           finalization_token: finalization_token
         }
 
@@ -542,8 +634,6 @@ defmodule Zaq.Agent.Api do
        do: %{event | response: outgoing, next_hop: nil}
 
   defp maybe_dispatch_return_hop(%Event{} = event, %Incoming{} = incoming, %Outgoing{} = outgoing) do
-    outgoing = fence_removed_outgoing(event, outgoing)
-
     if delivery_through_channels?(outgoing.provider) do
       node_router_mod = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
 
@@ -555,7 +645,7 @@ defmodule Zaq.Agent.Api do
             outgoing
           )
 
-          schedule_persisted_outgoing(event, fence_removed_outgoing(event, outgoing), persisted)
+          schedule_persisted_outgoing(event, outgoing, persisted)
 
         {:error, reason} ->
           log_persist_failure(event, reason)
@@ -569,33 +659,6 @@ defmodule Zaq.Agent.Api do
 
   defp maybe_dispatch_return_hop(%Event{} = event, _incoming, other),
     do: %{event | response: other}
-
-  defp fence_removed_outgoing(event, outgoing) do
-    binding = conversation_binding(event.assigns) || %{}
-
-    if RequestRegistry.history_removed?(binding[:user_message_id], event.actor) do
-      %{
-        outgoing
-        | body: "",
-          metadata:
-            Map.merge(outgoing.metadata, %{
-              answer: "",
-              error: true,
-              execution_disposition: "removed",
-              termination_reason: "history_membership_removed"
-            })
-      }
-    else
-      outgoing
-    end
-  end
-
-  defp schedule_persisted_outgoing(
-         event,
-         %{metadata: %{execution_disposition: "removed"}} = outgoing,
-         _persisted
-       ),
-       do: %{event | response: outgoing, next_hop: nil}
 
   defp schedule_persisted_outgoing(event, outgoing, persisted),
     do: schedule_return_hop(event, enrich_outgoing_with_persistence(outgoing, persisted))
@@ -680,6 +743,7 @@ defmodule Zaq.Agent.Api do
            %{
              user_message_id: user_message_id,
              finalization_token: finalization_token,
+             execution_id: conversation_binding(event.assigns)[:execution_id],
              outcome: outgoing.metadata
            },
            :engine,

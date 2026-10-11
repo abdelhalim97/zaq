@@ -92,6 +92,19 @@ defmodule Zaq.Agent.PipelineTest do
     end
   end
 
+  defmodule HaltingRetrievalHook do
+    @behaviour Zaq.Hooks.Handler
+
+    @impl true
+    def handle(:retrieval, payload, _ctx), do: {:halt, payload}
+
+    @impl true
+    def handle(:pipeline_complete, _payload, _ctx) do
+      send(:pipeline_test_pid, :pipeline_complete_seen)
+      :ok
+    end
+  end
+
   defmodule StubRetrieval do
     def ask(_content, _opts) do
       {:ok,
@@ -333,6 +346,50 @@ defmodule Zaq.Agent.PipelineTest do
   end
 
   describe "run/2 return type" do
+    test "retrieval hook halt returns an error outgoing without pipeline completion" do
+      previous_registry_name = Application.fetch_env(:zaq, :hooks_registry_name)
+
+      registry_name =
+        String.to_atom("pipeline_hooks_registry_#{System.unique_integer([:positive])}")
+
+      on_exit(fn ->
+        case previous_registry_name do
+          {:ok, name} -> Application.put_env(:zaq, :hooks_registry_name, name)
+          :error -> Application.delete_env(:zaq, :hooks_registry_name)
+        end
+      end)
+
+      Application.put_env(:zaq, :hooks_registry_name, registry_name)
+      start_supervised!({Zaq.Hooks.Registry, name: registry_name})
+
+      :ok =
+        Zaq.Hooks.Registry.register(%Zaq.Hooks.Hook{
+          handler: HaltingRetrievalHook,
+          events: [:retrieval, :pipeline_complete],
+          mode: :sync
+        })
+
+      incoming = %{
+        @incoming
+        | author_id: "author-1",
+          author_name: "Author",
+          thread_id: "thread-1"
+      }
+
+      opts = Keyword.delete(@base_opts, :hooks)
+      outgoing = Pipeline.run(incoming, opts)
+
+      assert %Outgoing{} = outgoing
+      assert outgoing.body == "Request was halted by a pipeline hook."
+      assert outgoing.metadata.error == true
+      assert outgoing.channel_id == incoming.channel_id
+      assert outgoing.provider == incoming.provider
+      assert outgoing.author_id == incoming.author_id
+      assert outgoing.author_name == incoming.author_name
+      assert outgoing.thread_id == incoming.thread_id
+      refute_receive :pipeline_complete_seen
+    end
+
     test "returns %Outgoing{} with body from pipeline answer" do
       result = Pipeline.run(@incoming, @base_opts)
 

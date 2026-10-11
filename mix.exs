@@ -87,6 +87,12 @@ defmodule Zaq.MixProject do
       {:swoosh, "~> 1.16"},
       {:gen_smtp, "~> 1.2"},
       {:req, "~> 0.6", override: true},
+      # Wake queued Finch callers after borrower cancellation (upstream PR #54).
+      # Replace this pin with a Hex release containing the fix when available.
+      {:nimble_pool,
+       github: "dashbitco/nimble_pool",
+       ref: "23326be3b9742d22ad11774a408b830e4b882a43",
+       override: true},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 1.0"},
@@ -109,7 +115,7 @@ defmodule Zaq.MixProject do
 
       # Jido Ecosystem
       {:llm_db, "~> 2026.5", runtime: false, override: true},
-      {:jido, "~> 2.3"},
+      {:jido, "~> 2.4"},
       {:jido_action, github: "agentjido/jido_action", branch: "main", override: true},
       {:lua, "~> 1.0.2"},
       # {:jido_chat, "~> 1.0"},
@@ -129,7 +135,7 @@ defmodule Zaq.MixProject do
       {:jido_ai, github: "agentjido/jido_ai", branch: "main", override: true},
       # {:jido_ai, path: "/Users/julien/Documents/Repos/Github/OSS/jido/jido_ai", override: true},
       # Bump zoi to avoid conflicts with deps using the old 0.17.1 (jido_connect)
-      {:zoi, "~> 0.18", override: true},
+      {:zoi, "~> 0.18.11", override: true},
       {:jido_mcp, "~> 1.1.0"},
       {:jido_studio, github: "agentjido/jido_studio"},
       {:jido_runic, github: "agentjido/jido_runic", branch: "main"},

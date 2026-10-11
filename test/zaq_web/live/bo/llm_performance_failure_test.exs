@@ -1,6 +1,7 @@
 defmodule ZaqWeb.Live.BO.LLMPerformanceFailureTest do
   use ExUnit.Case, async: false
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Phoenix.LiveView.Socket
   alias Zaq.Engine.Telemetry.Contracts.DashboardChart
   alias ZaqWeb.Live.BO.EngineDispatch
@@ -8,6 +9,12 @@ defmodule ZaqWeb.Live.BO.LLMPerformanceFailureTest do
 
   @filters %{range: "7d", model_sort: "tokens", people_sort: "tokens", agent_id: nil}
   @labels ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00"]
+
+  setup do
+    # This scenario deliberately has no database owner. Clear any prior shared
+    # owner's pool mode so failure does not depend on its teardown timing.
+    :ok = Sandbox.mode(Zaq.Repo, :manual)
+  end
 
   test "rescues telemetry database failures and renders empty 24h defaults" do
     assert Process.whereis(Zaq.Engine.Supervisor)

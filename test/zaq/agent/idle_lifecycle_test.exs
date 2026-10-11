@@ -29,6 +29,16 @@ defmodule Zaq.Agent.IdleLifecycleTest do
     :erlang.cancel_timer(new_ref)
   end
 
+  test "handle_event(:touch, ...) starts a timer when none is set" do
+    state = %{id: "server-1", lifecycle: %{idle_timeout: 60_000, idle_timer: nil}}
+
+    assert {:cont, updated_state} = IdleLifecycle.handle_event(:touch, state)
+    assert updated_state.id == state.id
+    assert updated_state.lifecycle.idle_timeout == state.lifecycle.idle_timeout
+    assert is_reference(updated_state.lifecycle.idle_timer)
+    :erlang.cancel_timer(updated_state.lifecycle.idle_timer)
+  end
+
   test "handle_event(:idle_timeout, ...) returns cont without crashing" do
     state = %{id: "server-42", lifecycle: %{idle_timeout: 1000, idle_timer: nil}}
 

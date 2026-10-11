@@ -8,7 +8,7 @@ defmodule Zaq.Agent.StreamEvents do
 
   alias ReqLLM.Message.ContentPart
   alias ReqLLM.ToolResult
-  alias Zaq.Agent.RequestRegistry
+  alias Zaq.Agent.ServerManager
   alias Zaq.Agent.Status
   alias Zaq.Contracts.Record
   alias Zaq.Engine.Messages.Incoming
@@ -47,18 +47,11 @@ defmodule Zaq.Agent.StreamEvents do
 
     final_state =
       Enum.reduce_while(events, state, fn event, state ->
-        state = if removed?(state), do: removed_state(state), else: handle_event(event, state)
+        state = handle_event(event, state)
 
-        cond do
-          state.error == :history_membership_removed ->
-            {:halt, state}
-
-          terminal_kind?(kind(event)) ->
-            {:halt, flush(state, force?: true, now: field(event, :at_ms))}
-
-          true ->
-            {:cont, state}
-        end
+        if terminal_kind?(kind(event)),
+          do: {:halt, flush(state, force?: true, now: field(event, :at_ms))},
+          else: {:cont, state}
       end)
 
     final_state = flush(final_state, force?: true)
@@ -83,6 +76,7 @@ defmodule Zaq.Agent.StreamEvents do
       actor: Keyword.get(opts, :actor),
       execution_scope: Keyword.get(opts, :execution_scope),
       execution_user_message_id: Keyword.get(opts, :execution_user_message_id),
+      execution_id: Keyword.get(opts, :execution_id),
       server_id: Keyword.get(opts, :server_id),
       runtime_pid: Keyword.get(opts, :runtime_pid),
       agent: Keyword.get(opts, :agent),
@@ -142,7 +136,12 @@ defmodule Zaq.Agent.StreamEvents do
     if is_binary(input_id) and is_binary(state.execution_user_message_id) do
       request =
         Event.new(
-          %{root_user_message_id: state.execution_user_message_id, user_message_id: input_id},
+          %{
+            root_user_message_id: state.execution_user_message_id,
+            user_message_id: input_id,
+            root_execution_id: data_get(refs, :root_execution_id) || state.execution_id,
+            execution_id: data_get(refs, :execution_id)
+          },
           :engine,
           actor: state.actor,
           opts: [action: :consume_execution_input, confidential: true]
@@ -464,13 +463,8 @@ defmodule Zaq.Agent.StreamEvents do
   end
 
   defp flush(%{buffer: ""} = state, _opts), do: state
-  defp flush(%{error: :history_membership_removed} = state, _opts), do: state
 
   defp flush(state, opts) do
-    if removed?(state), do: removed_state(state), else: do_flush(state, opts)
-  end
-
-  defp do_flush(state, opts) do
     now = Keyword.get(opts, :now) || System.monotonic_time(:millisecond)
 
     incoming =
@@ -483,16 +477,10 @@ defmodule Zaq.Agent.StreamEvents do
       )
 
     %{state | incoming: incoming, buffer: "", last_flush_ms: now}
-    |> register(:streaming)
+    |> register(nil)
   end
 
   defp broadcast_tool(state, tool_call, status) do
-    if removed?(state),
-      do: removed_state(state),
-      else: do_broadcast_tool(state, tool_call, status)
-  end
-
-  defp do_broadcast_tool(state, tool_call, status) do
     name = Map.get(tool_call, "name") || "tool"
     message = if status == :completed, do: "Finished #{name}", else: "Using #{name}"
 
@@ -503,17 +491,6 @@ defmodule Zaq.Agent.StreamEvents do
 
     %{state | incoming: incoming}
   end
-
-  defp removed?(state),
-    do: RequestRegistry.history_runtime_removed?(state.runtime_pid, state.actor)
-
-  defp removed_state(state),
-    do: %{
-      state
-      | error: :history_membership_removed,
-        buffer: "",
-        termination_reason: "history_membership_removed"
-    }
 
   defp result(state) do
     %{
@@ -565,8 +542,7 @@ defmodule Zaq.Agent.StreamEvents do
   end
 
   defp register(%{request_id: request_id} = state, status) do
-    RequestRegistry.put(request_id, %{
-      status: status,
+    attrs = %{
       server_id: state.server_id,
       runtime_pid: state.runtime_pid,
       consumer_pid: self(),
@@ -575,6 +551,7 @@ defmodule Zaq.Agent.StreamEvents do
       actor: state.actor,
       execution_scope: state.execution_scope,
       execution_user_message_id: state.execution_user_message_id,
+      execution_id: state.execution_id,
       agent: sanitize_agent(state.agent),
       current_stage: state.current_stage,
       current_intent: state.current_intent,
@@ -583,7 +560,10 @@ defmodule Zaq.Agent.StreamEvents do
       tool_calls: state.tool_calls |> Map.values(),
       termination_reason: state.termination_reason,
       updated_at_ms: System.system_time(:millisecond)
-    })
+    }
+
+    attrs = if is_nil(status), do: attrs, else: Map.put(attrs, :status, status)
+    ServerManager.observe_request(request_id, attrs)
 
     state
   end

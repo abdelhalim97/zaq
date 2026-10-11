@@ -298,7 +298,9 @@ defmodule Zaq.Engine.History.StrategyTest do
   end
 
   property "recipient permutations never change a replicated target set or reveal a prior recipient" do
-    check all(recipients <- uniq_list_of(integer(1..30), max_length: 15), max_runs: 60) do
+    # Duplicate recipient evidence is valid input; avoid rejection sampling in a
+    # finite ID space and check the same invariant for repeated IDs as well.
+    check all(recipients <- list_of(integer(1..30), max_length: 15), max_runs: 60) do
       assert {:ok, mail} =
                facts(%{
                  provider: "email:imap",
@@ -310,6 +312,16 @@ defmodule Zaq.Engine.History.StrategyTest do
       assert {:ok, targets} = Strategy.association_targets(mail)
       assert Enum.map(targets, & &1.owner_person_id) == Enum.sort(Enum.uniq([5 | recipients]))
       assert Enum.all?(targets, &(&1.channel_config_id == 12))
+
+      assert {:ok, permuted_mail} =
+               facts(%{
+                 provider: "email:imap",
+                 kind: :replicated,
+                 channel_id: "mail-thread",
+                 recipient_person_ids: Enum.reverse(recipients)
+               })
+
+      assert {:ok, ^targets} = Strategy.association_targets(permuted_mail)
     end
   end
 end

@@ -45,17 +45,18 @@ defmodule Zaq.Agent.ServerManager do
     HistoryLifecycle,
     OpaqueAliases,
     ProviderSpec,
-    RequestRegistry,
     RuntimeSync
   }
 
-  alias Zaq.Contracts.HistoryRuntimeRemoval
   alias Zaq.Identity.ExecutionActor
 
   @dynamic_supervisor Zaq.Agent.AgentServerSupervisor
   @lifecycle_call_timeout 60_000
   @jido_instance Zaq.Agent.Jido
   @jido_registry Jido.registry_name(@jido_instance)
+  @requests :zaq_agent_request_observations
+  @request_identity ~w(agent runtime_pid consumer_pid server_id owner_node actor execution_scope execution_user_message_id execution_id)a
+  @terminal_observations [:completed, :failed, :cancelled]
 
   @type state :: %{
           fingerprints: %{optional(String.t()) => binary()},
@@ -127,11 +128,32 @@ defmodule Zaq.Agent.ServerManager do
   def ensure_server(%ConfiguredAgent{} = configured_agent, server_id, context, opts)
       when is_binary(server_id) and (is_nil(context) or is_struct(context, AIContext)) and
              is_list(opts) do
-    GenServer.call(
-      __MODULE__,
-      {:ensure_server, configured_agent, server_id, context, opts},
-      @lifecycle_call_timeout
-    )
+    deadline = System.monotonic_time(:millisecond) + @lifecycle_call_timeout
+    ensure_server_until(configured_agent, server_id, context, opts, deadline)
+  end
+
+  defp ensure_server_until(configured_agent, server_id, context, opts, deadline) do
+    case GenServer.call(
+           __MODULE__,
+           {:ensure_server, configured_agent, server_id, context, opts},
+           @lifecycle_call_timeout
+         ) do
+      {:error, {:server_retiring, pid}} ->
+        ref = Process.monitor(pid)
+        remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _} ->
+            ensure_server_until(configured_agent, server_id, context, opts, deadline)
+        after
+          remaining ->
+            Process.demonitor(ref, [:flush])
+            {:error, :server_retiring}
+        end
+
+      other ->
+        other
+    end
   end
 
   @spec stop_server(ConfiguredAgent.t()) :: :ok
@@ -181,9 +203,73 @@ defmodule Zaq.Agent.ServerManager do
     GenServer.call(__MODULE__, {:credential_dependency, server_id}, @lifecycle_call_timeout)
   end
 
+  @doc "Stores immutable request targeting and sanitized presentation, never native admission authority."
+  @spec observe_request(String.t(), map()) :: :ok | {:error, term()}
+  def observe_request(id, attrs) when is_binary(id) and is_map(attrs),
+    do: GenServer.call(__MODULE__, {:observe_request, id, attrs})
+
+  def observe_request(_, _), do: :ok
+
+  @doc "Reads retained request-specific presentation without consulting or mutating a runtime."
+  @spec request_observation(term()) :: {:ok, map()} | {:error, :not_found}
+  def request_observation(id) when is_binary(id) do
+    case request_lookup(id) do
+      [{^id, observation}] -> {:ok, observation}
+      _ -> {:error, :not_found}
+    end
+  end
+
+  def request_observation(_), do: {:error, :not_found}
+
+  @doc "Returns exact ownership bindings; completed presentation is not an activity filter."
+  @spec request_bindings(String.t(), map(), term()) :: {:ok, list()} | {:error, term()}
+  def request_bindings(scope, actor, runtime \\ nil) do
+    case ExecutionActor.identity(actor) do
+      {:ok, identity} ->
+        matches =
+          request_entries()
+          |> Enum.filter(fn {id, request} ->
+            is_binary(id) and request[:execution_scope] == scope and
+              ExecutionActor.identity(request[:actor]) == {:ok, identity} and
+              matching_request_runtime?(request, runtime)
+          end)
+
+        {:ok, matches}
+
+      _ ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc "Forgets an explicitly selected observation; runtime cleanup does not evict inspection."
+  @spec forget_request(term()) :: :ok
+  def forget_request(id) when is_binary(id),
+    do: GenServer.call(__MODULE__, {:forget_request, id})
+
+  def forget_request(_), do: :ok
+
   @doc "Claims exclusive history admission on an exact actor-bound runtime incarnation."
   def begin_history_request(server_id, pid, actor) when is_binary(server_id) and is_pid(pid),
     do: GenServer.call(__MODULE__, {:begin_history_request, server_id, pid, actor}, :infinity)
+
+  @doc "Reserves the exact incarnation's next lease with a bounded live handoff deadline."
+  @spec reserve_history_request(pid(), map(), String.t(), pos_integer()) ::
+          {:ok, map()} | {:error, term()}
+  def reserve_history_request(pid, actor, input_id, timeout \\ 60_000)
+      when is_pid(pid) and is_binary(input_id) and is_integer(timeout) and timeout > 0 do
+    deadline = System.monotonic_time(:millisecond) + min(timeout, 60_000)
+
+    GenServer.call(
+      __MODULE__,
+      {:reserve_history_request, pid, actor, input_id, deadline},
+      :infinity
+    )
+  end
+
+  @doc "Adopts this caller/session's reservation for the same input, without reacquiring its lease."
+  @spec adopt_history_request(String.t(), pid(), reference(), map()) :: :ok | {:error, term()}
+  def adopt_history_request(server_id, pid, token, details),
+    do: GenServer.call(__MODULE__, {:adopt_history_request, server_id, pid, token, details})
 
   @doc "Publishes incorporated cursors only after the lease's idle context operation is confirmed."
   def complete_history_request(server_id, token, %AIContext{} = context, cursors),
@@ -201,22 +287,38 @@ defmodule Zaq.Agent.ServerManager do
   @doc "Returns only this caller's leases belonging to its internal completion session."
   def history_requests(session), do: GenServer.call(__MODULE__, {:history_requests, session})
 
-  @doc "Stops local exact-incarnation history runtimes selected by their trusted principal/source binding."
-  def stop_history_runtimes(transcript_id, person_ids, event_id, generation \\ 1) do
-    with :ok <-
-           HistoryRuntimeRemoval.validate(%{
-             transcript_id: transcript_id,
-             person_ids: person_ids,
-             event_id: event_id,
-             generation: generation
-           }) do
-      GenServer.call(
-        __MODULE__,
-        {:stop_history_runtimes, transcript_id, person_ids, event_id, generation},
-        @lifecycle_call_timeout
-      )
-    end
-  end
+  @doc "Pins existing matching incarnations for a privately admitted caller/session."
+  def pin_history_scope(transcript_id, actor, session),
+    do: GenServer.call(__MODULE__, {:pin_history_scope, transcript_id, actor, session})
+
+  @doc "Releases only this caller's pins, leaving native/root work and other waiters intact."
+  def release_history_pins(session),
+    do: GenServer.call(__MODULE__, {:release_history_pins, session})
+
+  @doc "Checks a native target against this caller's existing admission pin during retirement."
+  def admitted_history_target(pid, session),
+    do: GenServer.call(__MODULE__, {:admitted_history_target, pid, session})
+
+  @doc "Requests soft retirement from an Engine-verified effective history-access denial."
+  def retire_history_scope(%{transcript_id: id, person_id: person_id})
+      when is_binary(id) and is_integer(person_id),
+      do: GenServer.call(__MODULE__, {:retire_history_scope, id, person_id})
+
+  @doc "Reads or replaces bounded authorized history for an exact live lease, not inspection."
+  def history_projection(history, actor, projection \\ nil)
+
+  def history_projection(
+        %{lease_ref: {server_id, pid, token}, binding: binding},
+        actor,
+        projection
+      ),
+      do:
+        GenServer.call(
+          __MODULE__,
+          {:history_projection, server_id, pid, token, binding, actor, projection}
+        )
+
+  def history_projection(_history, _actor, _projection), do: {:error, :stale_history_lease}
 
   @doc "Disposes an owned lease and its exact runtime after an unhandled or failed outcome."
   def abort_history_request(server_id, token),
@@ -230,6 +332,7 @@ defmodule Zaq.Agent.ServerManager do
   @impl true
   def init(_opts) do
     stop_surviving_servers()
+    :ets.new(@requests, [:named_table, :protected, :set, read_concurrency: true])
 
     {:ok,
      %{
@@ -244,6 +347,31 @@ defmodule Zaq.Agent.ServerManager do
   end
 
   @impl true
+  def handle_call({:observe_request, id, attrs}, _from, state) do
+    current =
+      case request_observation(id) do
+        {:ok, observation} -> observation
+        _ -> %{}
+      end
+
+    result =
+      case observation_conflict(current, attrs) do
+        :ok ->
+          :ets.insert(@requests, {id, Map.merge(current, attrs)})
+          :ok
+
+        error ->
+          error
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:forget_request, id}, _from, state) do
+    :ets.delete(@requests, id)
+    {:reply, :ok, state}
+  end
+
   def handle_call(
         {:ensure_server, %ConfiguredAgent{}, _server_id},
         _from,
@@ -262,31 +390,40 @@ defmodule Zaq.Agent.ServerManager do
 
   def handle_call(
         {:ensure_server, %ConfiguredAgent{} = configured_agent, server_id, context, opts},
-        _from,
+        {owner, _},
         state
       ) do
     result =
       with {:ok, actor} <- ExecutionActor.validate(Keyword.get(opts, :actor)),
            :ok <- HistoryLifecycle.validate_initial(Keyword.get(opts, :history_cursors)),
-           :ok <-
-             HistoryLifecycle.validate_generations(
-               Keyword.get(opts, :history_cursors),
-               Keyword.get(opts, :history_removal_generations)
-             ),
            {:ok, history_binding} <- validate_history_binding(Keyword.get(opts, :history_binding)),
            :ok <- validate_binding(safe_whereis(server_id), actor, history_binding) do
         next_state = clear_stale_drain(state, server_id)
         opts = Keyword.put(opts, :history_binding, history_binding)
 
-        if draining?(next_state, server_id) do
-          {:error, :server_draining, next_state}
-        else
-          do_ensure_server(configured_agent, next_state, server_id, context, actor, opts)
+        cond do
+          draining?(next_state, server_id) ->
+            {:error, :server_draining, next_state}
+
+          retiring_for_caller?(next_state, server_id, owner, opts[:history_session]) ->
+            {:error, {:server_retiring, safe_whereis(server_id)}, next_state}
+
+          true ->
+            do_ensure_server(configured_agent, next_state, server_id, context, actor, opts)
         end
       end
 
     case result do
       {:ok, server_id, next_state} ->
+        history =
+          HistoryLifecycle.pin_runtime(
+            next_state.history,
+            server_id,
+            owner,
+            opts[:history_session]
+          )
+
+        next_state = %{next_state | history: history}
         {:reply, {:ok, server_ref(server_id)}, next_state}
 
       {:error, reason, next_state} ->
@@ -306,6 +443,42 @@ defmodule Zaq.Agent.ServerManager do
       end
     else
       {:error, _} = error -> {:reply, error, state}
+    end
+  end
+
+  def handle_call({:reserve_history_request, pid, actor, input_id, deadline}, from, state) do
+    with {:ok, server_id} <- history_incarnation_id(state.history, pid),
+         :ok <- history_runtime_current(state, server_id, pid),
+         :ok <- validate_history_actor(pid, actor) do
+      case HistoryLifecycle.begin_request(state.history, server_id, pid, from,
+             deadline: deadline,
+             input_id: input_id,
+             reservation?: true
+           ) do
+        {:reply, {:ok, lease}, history} ->
+          {:reply, {:ok, %{server_id: server_id, lease: lease}}, %{state | history: history}}
+
+        {:reply, error, history} ->
+          {:reply, error, %{state | history: history}}
+
+        {:wait, history} ->
+          {:noreply, %{state | history: history}}
+      end
+    else
+      {:error, _} = error -> {:reply, error, state}
+    end
+  end
+
+  def handle_call({:adopt_history_request, server_id, pid, token, details}, {owner, _}, state) do
+    with :ok <- history_runtime_current(state, server_id, pid),
+         {:ok, %{pid: ^pid} = entry} <-
+           HistoryLifecycle.owned_entry(state.history, server_id, token, owner),
+         :ok <- matching_reservation(entry.lease[:details], details) do
+      entry = %{entry | lease: Map.put(entry.lease, :details, details)}
+      {:reply, :ok, %{state | history: Map.put(state.history, server_id, entry)}}
+    else
+      {:error, _} = error -> {:reply, error, state}
+      _ -> {:reply, {:error, :stale_history_lease}, state}
     end
   end
 
@@ -343,26 +516,60 @@ defmodule Zaq.Agent.ServerManager do
   end
 
   def handle_call(
-        {:stop_history_runtimes, transcript_id, person_ids, event_id, generation},
+        {:history_projection, server_id, pid, token, binding, actor, projection},
         _from,
         state
       ) do
-    payload = {transcript_id, Enum.sort(Enum.uniq(person_ids)), generation}
-    receipts = Map.get(state, :history_removals, %{})
+    case Map.get(state.history, server_id) do
+      %{pid: ^pid, lease: %{token: ^token, details: %{history: %{binding: ^binding}}}} = entry ->
+        update_history_projection(state, server_id, entry, actor, projection)
 
-    case Map.fetch(receipts, event_id) do
-      {:ok, ^payload} ->
-        {:reply, {:ok, 0}, state}
-
-      {:ok, _} ->
-        {:reply, {:error, :removal_conflict}, state}
-
-      :error ->
-        {count, state} = stop_bound_history(state, transcript_id, person_ids, generation)
-
-        {:reply, {:ok, count},
-         Map.put(state, :history_removals, Map.put(receipts, event_id, payload))}
+      _ ->
+        {:reply, {:error, :stale_history_lease}, state}
     end
+  end
+
+  def handle_call({:pin_history_scope, transcript_id, actor, session}, {owner, _}, state) do
+    with {:ok, principal} <- ExecutionActor.identity(actor),
+         true <- is_reference(session) do
+      history =
+        HistoryLifecycle.pin_scope(state.history, transcript_id, principal, owner, session)
+
+      {:reply, :ok, %{state | history: history}}
+    else
+      _ -> {:reply, {:error, :invalid_history_pin}, state}
+    end
+  end
+
+  def handle_call({:release_history_pins, session}, {owner, _}, state) do
+    state = %{state | history: HistoryLifecycle.release_pins(state.history, owner, session)}
+    {:reply, :ok, check_retirements(state)}
+  end
+
+  def handle_call({:retire_history_scope, transcript_id, person_id}, _from, state) do
+    history =
+      Map.new(state.history, fn {id, entry} ->
+        if entry.principal == {:person, person_id} and Map.has_key?(entry.cursors, transcript_id),
+          do: {id, %{entry | retirement: entry.retirement || :requested}},
+          else: {id, entry}
+      end)
+
+    {:reply, :ok, check_retirements(%{state | history: history})}
+  end
+
+  def handle_call({:admitted_history_target, pid, session}, {owner, _}, state) do
+    result =
+      Enum.reduce_while(state.history, :ok, fn
+        {_id, %{pid: ^pid, retirement: reason, pins: pins}}, :ok when not is_nil(reason) ->
+          if Map.has_key?(pins, {owner, session}),
+            do: {:cont, :ok},
+            else: {:halt, {:error, :server_retiring}}
+
+        _, :ok ->
+          {:cont, :ok}
+      end)
+
+    {:reply, result, state}
   end
 
   def handle_call({:abort_history_request, server_id, token}, {owner, _}, state) do
@@ -515,10 +722,40 @@ defmodule Zaq.Agent.ServerManager do
   end
 
   @impl true
-  def handle_info({:expire_server, server_id}, state) do
-    _ = stop_server_if_running(server_id)
-    OpaqueAliases.clear_scope(server_id)
-    {:noreply, untrack_server(state, server_id)}
+  def handle_info({:expire_server, _server_id}, state), do: {:noreply, state}
+
+  def handle_info({:expire_server, server_id, pid}, state) do
+    if safe_whereis(server_id) == pid do
+      expire_idle_incarnation(state, server_id, pid, state.history[server_id])
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info({:history_idle_result, server_id, pid, ref, result}, state) do
+    cond do
+      safe_whereis(server_id) != pid ->
+        {:noreply, state}
+
+      ref == :idle and is_nil(state.history[server_id]) ->
+        if result == :ok,
+          do: stop_idle_incarnation(pid),
+          else: Process.send_after(self(), {:expire_server, server_id, pid}, 100)
+
+        {:noreply, state}
+
+      match?(%{pid: ^pid, retirement: ^ref}, state.history[server_id]) ->
+        finish_retirement_check(state, server_id, pid, result)
+
+      true ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:check_history_retirements, server_id, pid}, state) do
+    if safe_whereis(server_id) == pid,
+      do: {:noreply, check_retirements(state)},
+      else: {:noreply, state}
   end
 
   def handle_info({:expire_authentication, server_id, expected_pid}, state) do
@@ -539,12 +776,23 @@ defmodule Zaq.Agent.ServerManager do
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case HistoryLifecycle.owner_scope(Map.get(state, :history, %{}), ref) do
       nil ->
-        handle_runtime_down(ref, state)
+        handle_runtime_down(ref, %{
+          state
+          | history: HistoryLifecycle.drop_waiter(state.history, ref)
+        })
 
       server_id ->
         _ = stop_server_if_running(server_id)
         {:noreply, untrack_server(state, server_id)}
     end
+  end
+
+  def handle_info({:expire_history_waiter, server_id, id}, state) do
+    {:noreply,
+     check_retirements(%{
+       state
+       | history: HistoryLifecycle.expire_waiter(state.history, server_id, id)
+     })}
   end
 
   def handle_info({:force_stop_server, server_id, ref}, state) do
@@ -562,7 +810,7 @@ defmodule Zaq.Agent.ServerManager do
   defp handle_runtime_down(ref, state) do
     case Enum.find(state.monitors, fn {_sid, r} -> r == ref end) do
       nil ->
-        {:noreply, state}
+        {:noreply, check_retirements(state)}
 
       {server_id, _ref} ->
         OpaqueAliases.clear_scope(server_id)
@@ -923,6 +1171,10 @@ defmodule Zaq.Agent.ServerManager do
     end
   rescue
     _ -> false
+  catch
+    # An unresponsive native incarnation is not proof that it is idle. Keep the
+    # existing bounded drain instead of crashing the lifecycle/inspection owner.
+    :exit, _ -> true
   end
 
   defp do_sync_runtime(configured_agent, state) do
@@ -1095,39 +1347,9 @@ defmodule Zaq.Agent.ServerManager do
         server_id,
         safe_whereis(server_id),
         Keyword.get(opts, :history_cursors),
-        principal,
-        Keyword.get(opts, :history_removal_generations)
+        principal
       )
     )
-  end
-
-  defp stop_bound_history(state, transcript_id, person_ids, generation) do
-    Enum.reduce(state.history, {0, state}, fn
-      {server_id, %{principal: {:person, person_id}, cursors: cursors, pid: pid} = entry},
-      {count, state} ->
-        if person_id in person_ids and Map.has_key?(cursors, transcript_id) and
-             entry.generations[transcript_id] < generation and
-             safe_whereis(server_id) == pid do
-          input_id = get_in(entry, [:lease, :details, :history, :binding, :user_message_id])
-          {:ok, sinks} = RequestRegistry.remove_history_runtime(pid, person_id, input_id)
-          _ = Factory.cancel_history_request(pid)
-          :ok = Factory.wake_history_streams(sinks)
-          _ = stop_server_if_running(server_id)
-
-          state = %{
-            state
-            | history:
-                HistoryLifecycle.drop(state.history, server_id, :history_membership_removed)
-          }
-
-          {count + 1, untrack_server(state, server_id)}
-        else
-          {count, state}
-        end
-
-      _, acc ->
-        acc
-    end)
   end
 
   defp validate_history_actor(pid, actor) do
@@ -1143,12 +1365,33 @@ defmodule Zaq.Agent.ServerManager do
     :exit, _ -> {:error, :stale_runtime}
   end
 
+  defp update_history_projection(state, server_id, entry, actor, projection) do
+    details = entry.lease.details
+
+    with {:ok, identity} <- ExecutionActor.identity(actor),
+         {:ok, ^identity} <- ExecutionActor.identity(details.actor),
+         :ok <- HistoryLifecycle.validate_projection(details.history, projection) do
+      if is_nil(projection) do
+        {:reply, {:ok, details.history.projection}, state}
+      else
+        history = Map.put(details.history, :projection, projection)
+        lease = %{entry.lease | details: %{details | history: history}}
+
+        {:reply, {:ok, projection},
+         %{state | history: Map.put(state.history, server_id, %{entry | lease: lease})}}
+      end
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+      _ -> {:reply, {:error, :unauthorized}, state}
+    end
+  end
+
   defp complete_history_lease(state, server_id, entry, token, context, cursors, owner) do
     case history_runtime_current(state, server_id, entry.pid) do
       :ok ->
         case HistoryLifecycle.complete(state.history, server_id, token, context, cursors, owner) do
           {:ok, history} ->
-            {:reply, :ok, %{state | history: history}}
+            {:reply, :ok, check_retirements(%{state | history: history})}
 
           {:error, reason} ->
             {:reply, {:error, reason}, state}
@@ -1162,6 +1405,75 @@ defmodule Zaq.Agent.ServerManager do
         {:reply, {:error, reason},
          %{state | history: HistoryLifecycle.drop(state.history, server_id)}}
     end
+  end
+
+  defp expire_idle_incarnation(state, server_id, pid, nil) do
+    request_idle_check(server_id, pid, :idle)
+    {:noreply, state}
+  end
+
+  defp expire_idle_incarnation(state, server_id, pid, entry) do
+    if HistoryLifecycle.accepted_work?(entry) do
+      Process.send_after(self(), {:expire_server, server_id, pid}, 100)
+      {:noreply, state}
+    else
+      history =
+        Map.put(state.history, server_id, %{entry | retirement: entry.retirement || :requested})
+
+      {:noreply, check_retirements(%{state | history: history})}
+    end
+  end
+
+  defp retiring_for_caller?(state, server_id, owner, session) do
+    case state.history[server_id] do
+      %{pid: pid, retirement: reason, pins: pins} when not is_nil(reason) ->
+        safe_whereis(server_id) == pid and not Map.has_key?(pins, {owner, session})
+
+      _ ->
+        false
+    end
+  end
+
+  defp check_retirements(state) do
+    history =
+      Map.new(state.history, fn {server_id, entry} ->
+        if entry.retirement == :requested and not HistoryLifecycle.accepted_work?(entry) do
+          ref = make_ref()
+          request_idle_check(server_id, entry.pid, ref)
+          {server_id, %{entry | retirement: ref}}
+        else
+          {server_id, entry}
+        end
+      end)
+
+    %{state | history: history}
+  end
+
+  defp request_idle_check(server_id, pid, ref) do
+    manager = self()
+
+    Task.start(fn ->
+      result = Factory.history_runtime_idle(pid)
+      send(manager, {:history_idle_result, server_id, pid, ref, result})
+    end)
+  end
+
+  defp finish_retirement_check(state, server_id, pid, result) do
+    entry = state.history[server_id]
+
+    if result == :ok and not HistoryLifecycle.accepted_work?(entry) do
+      stop_idle_incarnation(pid)
+      history = Map.put(state.history, server_id, %{entry | retirement: :stopping})
+      {:noreply, %{state | history: history}}
+    else
+      Process.send_after(self(), {:check_history_retirements, server_id, pid}, 100)
+      history = Map.put(state.history, server_id, %{entry | retirement: :requested})
+      {:noreply, %{state | history: history}}
+    end
+  end
+
+  defp stop_idle_incarnation(pid) do
+    Task.start(fn -> DynamicSupervisor.terminate_child(@dynamic_supervisor, pid) end)
   end
 
   defp history_runtime_current(state, server_id, pid) do
@@ -1184,5 +1496,65 @@ defmodule Zaq.Agent.ServerManager do
     state.agent_servers
     |> Map.get(agent_id, MapSet.new())
     |> MapSet.to_list()
+  end
+
+  defp request_lookup(key) do
+    :ets.lookup(@requests, key)
+  rescue
+    ArgumentError -> []
+  end
+
+  defp history_incarnation_id(history, pid) do
+    case Enum.filter(history, fn {_id, entry} -> entry.pid == pid end) do
+      [{id, _}] -> {:ok, id}
+      [] -> {:error, :stale_runtime}
+      _ -> {:error, :ambiguous_request}
+    end
+  end
+
+  defp matching_reservation(current, details) when is_map(current) do
+    input_id = current[:input_id] || get_in(current, [:history, :binding, :user_message_id])
+
+    if current[:session] == details[:session] and
+         input_id == get_in(details, [:history, :binding, :user_message_id]) and
+         ExecutionActor.identity(current[:actor]) == ExecutionActor.identity(details[:actor]),
+       do: :ok,
+       else: {:error, :history_binding_conflict}
+  end
+
+  defp matching_reservation(_, _), do: {:error, :history_binding_conflict}
+
+  defp request_entries do
+    :ets.tab2list(@requests)
+  rescue
+    ArgumentError -> []
+  end
+
+  defp matching_request_runtime?(_request, nil), do: true
+  defp matching_request_runtime?(request, pid) when is_pid(pid), do: request[:runtime_pid] == pid
+
+  defp matching_request_runtime?(%{agent: %{id: id}}, %{agent_id: expected}),
+    do: to_string(id) == to_string(expected)
+
+  defp matching_request_runtime?(_, _), do: false
+
+  defp observation_conflict(current, attrs) do
+    cond do
+      observation_owner_changed?(current, attrs) ->
+        {:error, :ownership_conflict}
+
+      current[:status] in @terminal_observations and
+          Map.get(attrs, :status, current[:status]) != current[:status] ->
+        {:error, :terminal_request}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp observation_owner_changed?(current, attrs) do
+    Enum.any?(@request_identity, fn key ->
+      not is_nil(current[key]) and Map.has_key?(attrs, key) and current[key] != attrs[key]
+    end)
   end
 end

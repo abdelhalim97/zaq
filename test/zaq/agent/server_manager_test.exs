@@ -468,6 +468,79 @@ defmodule Zaq.Agent.ServerManagerTest do
     assert recreated_status.raw_state.runtime_config.llm_opts[:api_key] == "replacement-key"
   end
 
+  test "a Person credential mutation stops only that Person's matching runtime" do
+    people =
+      for name <- ["Selective grant owner", "Unaffected grant owner"] do
+        Repo.insert!(Person.changeset(%Person{}, %{full_name: name}))
+      end
+
+    credential =
+      ai_credential_fixture(%{
+        name: "Selective grant #{System.unique_integer([:positive, :monotonic])}",
+        provider: "openai",
+        endpoint: "https://api.openai.com/v1",
+        api_key: "legacy-key"
+      })
+
+    connect_credential = Connect.get_credential!(credential.connect_credential_id)
+
+    assert {:ok, _connect_credential} =
+             Connect.update_credential(connect_credential, %{
+               personal_credential_policy: :optional
+             })
+
+    for person <- people do
+      assert {:ok, _grant} =
+               Connect.replace_credential_grant(
+                 connect_credential,
+                 {:person, person.id},
+                 %{api_key: "person-#{person.id}-key"}
+               )
+    end
+
+    {:ok, agent} =
+      Agent.create_agent(%{
+        name: "Selective grant agent #{System.unique_integer([:positive])}",
+        job: "Test",
+        model: "gpt-4.1-mini",
+        credential_id: credential.id,
+        strategy: "react",
+        enabled_tool_keys: [],
+        conversation_enabled: false,
+        active: true,
+        advanced_options: %{}
+      })
+
+    [target, unaffected] = people
+
+    target_scope = "selective-grant:#{agent.id}:#{target.id}"
+    unaffected_scope = "selective-grant:#{agent.id}:#{unaffected.id}"
+    target_actor = %{person: %{id: target.id}}
+    unaffected_actor = %{person: %{id: unaffected.id}}
+
+    assert {:ok, target_ref} =
+             ServerManager.ensure_server(agent, target_scope, nil, actor: target_actor)
+
+    assert {:ok, unaffected_ref} =
+             ServerManager.ensure_server(agent, unaffected_scope, nil, actor: unaffected_actor)
+
+    target_pid = GenServer.whereis(target_ref)
+    unaffected_pid = GenServer.whereis(unaffected_ref)
+    target_monitor = Process.monitor(target_pid)
+
+    assert :ok =
+             ServerManager.invalidate_credential(%{
+               "credential_id" => connect_credential.id,
+               "owner_type" => "person",
+               "owner_id" => target.id
+             })
+
+    assert_receive {:DOWN, ^target_monitor, :process, ^target_pid, _}, 1_000
+    assert GenServer.whereis(unaffected_ref) == unaffected_pid
+    assert Process.alive?(unaffected_pid)
+    assert :ok = ServerManager.stop_server(agent, unaffected_scope)
+  end
+
   test "invalidation queued during synchronous startup runs after dependency registration" do
     Process.register(self(), :server_manager_credential_resolution_test)
 
@@ -1041,7 +1114,7 @@ defmodule Zaq.Agent.ServerManagerTest do
 
   test "init starts no servers — supervision tree is empty on start" do
     # init/1 no longer pre-spawns any servers; all spawning is lazy per-message.
-    assert {:ok, state} = ServerManager.init([])
+    state = restart_manager()
 
     assert state == %{
              fingerprints: %{},
@@ -1115,7 +1188,8 @@ defmodule Zaq.Agent.ServerManagerTest do
       server_to_agent: %{},
       credential_dependencies: %{},
       draining: %{},
-      monitors: %{}
+      monitors: %{},
+      history: %{}
     }
 
     server_id = "configured_agent_123456"
@@ -1123,7 +1197,7 @@ defmodule Zaq.Agent.ServerManagerTest do
     assert {:reply, {:error, :provider_not_found}, ^init_state} =
              ServerManager.handle_call(
                {:ensure_server, configured_agent, server_id, nil, [actor: @execution_actor]},
-               self(),
+               {self(), make_ref()},
                init_state
              )
   end
@@ -1151,7 +1225,7 @@ defmodule Zaq.Agent.ServerManagerTest do
     assert {:reply, {:ok, {:via, Registry, {registry, ^server_id}}}, state} =
              ServerManager.handle_call(
                {:ensure_server, configured_agent, server_id, nil, [actor: @execution_actor]},
-               self(),
+               {self(), make_ref()},
                empty_server_manager_state()
              )
 
@@ -1181,7 +1255,7 @@ defmodule Zaq.Agent.ServerManagerTest do
         assert {:reply, {:error, :spawn_failed}, state} =
                  ServerManager.handle_call(
                    {:ensure_server, configured_agent, server_id, nil, [actor: @execution_actor]},
-                   self(),
+                   {self(), make_ref()},
                    empty_server_manager_state()
                  )
 
@@ -1215,13 +1289,14 @@ defmodule Zaq.Agent.ServerManagerTest do
       server_to_agent: %{},
       credential_dependencies: %{},
       draining: %{server_id => make_ref()},
-      monitors: %{}
+      monitors: %{},
+      history: %{}
     }
 
     assert {:reply, {:error, :provider_not_found}, next_state} =
              ServerManager.handle_call(
                {:ensure_server, configured_agent, server_id, nil, [actor: @execution_actor]},
-               self(),
+               {self(), make_ref()},
                state
              )
 
@@ -1288,7 +1363,8 @@ defmodule Zaq.Agent.ServerManagerTest do
       agent_servers: %{configured_agent.id => MapSet.new([server_id])},
       server_to_agent: %{server_id => configured_agent.id},
       draining: %{},
-      monitors: %{server_id => monitor_ref}
+      monitors: %{server_id => monitor_ref},
+      history: %{}
     }
 
     assert {:noreply, ^state} =
@@ -1562,8 +1638,8 @@ defmodule Zaq.Agent.ServerManagerTest do
   describe "init/1 starts no servers" do
     test "supervision tree is empty after start" do
       # init/1 must not pre-spawn any servers; all children belong to other tests.
-      # We call init/1 directly to inspect the state without side effects.
-      assert {:ok, state} = ServerManager.init([])
+      # Init owns protected ETS, so exercise the real supervised process boundary.
+      state = restart_manager()
 
       assert state == %{
                fingerprints: %{},
@@ -1699,6 +1775,52 @@ defmodule Zaq.Agent.ServerManagerTest do
     assert is_pid(pid)
   end
 
+  test "invalid empty history binding is rejected before runtime spawn" do
+    config = valid_configured_agent(System.unique_integer([:positive]))
+    scope = "empty-history-binding:#{config.id}"
+    before = :sys.get_state(ServerManager)
+
+    assert {:error, :invalid_history_binding} =
+             ServerManager.ensure_server(config, scope, nil,
+               actor: @execution_actor,
+               history_binding: %{}
+             )
+
+    assert :sys.get_state(ServerManager) == before
+    assert Jido.AgentServer.whereis(Jido.registry_name(Zaq.Agent.Jido), scope) == nil
+  end
+
+  test "stopping a missing scoped server is idempotent" do
+    config = valid_configured_agent(System.unique_integer([:positive]))
+    scope = "missing-stop:#{config.id}"
+
+    assert :ok = ServerManager.stop_server(config, scope)
+    assert :ok = ServerManager.stop_server(config, scope)
+  end
+
+  test "invalidate credential with no runtime dependency preserves a live server" do
+    config = valid_configured_agent(System.unique_integer([:positive]))
+    scope = "untracked-invalidation:#{config.id}"
+    assert {:ok, ref} = ServerManager.ensure_server(config, scope, nil, actor: @execution_actor)
+    pid = GenServer.whereis(ref)
+
+    assert :ok =
+             ServerManager.invalidate_credential(%{
+               "credential_id" => -1,
+               "owner_type" => "person",
+               "owner_id" => -1
+             })
+
+    assert GenServer.whereis(ref) == pid
+    assert Process.alive?(pid)
+    assert :ok = ServerManager.stop_server(config, scope)
+  end
+
+  test "request inspection and malformed runtime selectors return no matches" do
+    assert {:error, :not_found} = ServerManager.request_observation(nil)
+    assert {:ok, []} = ServerManager.request_bindings("unrelated", @execution_actor, :malformed)
+  end
+
   test "runtime hydration happens when server is first ensured, not during init" do
     previous_module = Application.get_env(:zaq, :agent_runtime_sync_module)
     previous_opts = Application.get_env(:zaq, :agent_runtime_sync_opts)
@@ -1752,7 +1874,7 @@ defmodule Zaq.Agent.ServerManagerTest do
         advanced_options: %{}
       })
 
-    assert {:ok, _state} = ServerManager.init([])
+    _state = restart_manager()
 
     refute_receive {:runtime_sync_hydrate_called, _, _, _}, 150
 
@@ -2546,6 +2668,12 @@ defmodule Zaq.Agent.ServerManagerTest do
   end
 
   defp extract_request_content(_), do: ""
+
+  defp restart_manager do
+    assert :ok = Supervisor.terminate_child(Zaq.Agent.Supervisor, ServerManager)
+    assert {:ok, pid} = Supervisor.restart_child(Zaq.Agent.Supervisor, ServerManager)
+    :sys.get_state(pid)
+  end
 
   defp empty_server_manager_state do
     %{

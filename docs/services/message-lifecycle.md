@@ -39,7 +39,7 @@ structs can execute on Channels before dispatch.
 | `History.Delivery` | Interpret confirmed receipts using Engine history policy. |
 | `HistoryDeliveryWorker` | Retry association by canonical message ID, without resending transport delivery. |
 | `ExecutionHistory`, `ExecutionLifecycle`, `ExecutionRecord` | Compose authorized canonical projections and persist private root/receipt outcomes. |
-| `Executor`, `RequestRegistry`, `StreamEvents` | Admit immutable Person-bound native requests, track actual input consumption, and reduce runtime output. |
+| `Executor`, `RequestControl`, `StreamEvents` | Submit admitted Person-bound requests and controls to Jido, record native input consumption, and reduce runtime output; Jido owns lifecycle and acceptance. |
 | `HistorySync`, `HistoryLifecycle`, `ServerManager`, `Factory` | Serialize request boundaries, confirm exact-PID context application, and publish incorporated cursors. |
 
 ## History-aware execution and completion
@@ -55,7 +55,9 @@ Before each internal model request, the transformer rereads cumulative additions
 from the fixed incorporated cursor vector and deduplicates by canonical UUID.
 It retains the active input and tool-call/result pairs; background alone is
 trimmed under context pressure. A bounded page advances only through associations
-actually read. Permissions are checked again for every projection.
+actually read. Fresh projections require current permissions. A verified access
+denial stops fresh history reads but retains the request-owned last authorized
+projection, admitted input and tool exchanges so accepted execution can finish.
 
 Busy same-owner inputs can become private child receipts under the active root.
 Only actual correlated native `input_injected` evidence marks them consumed; a
@@ -92,11 +94,15 @@ without an API persistence owner do not retain an uncommitted warm exchange.
 Generation completion, context synchronization and transport confirmation remain
 distinct: delayed/failed transport never creates a false confirmed association.
 
-Committed membership removal fences affected Person/source/PID bindings, cancels
-workers and wakes local consumers before further output. The initial source removal
-generation protects newly authorized replacements from delayed notifications.
-Failed private root persistence remains auditable; unrelated people, sources and
-manual grants survive. See the [Agent lifecycle contract](agent.md#modules) and
+Each new input is authorized once at the Engine-backed Agent gate; capture, a
+pending row and a raw capability alone are not acceptance. Membership loss denies
+new inputs, fresh history and inspection, but accepted execution, steering and live
+handoff may finish, persist and deliver. Verified access denial requests exact-PID
+soft retirement after admission pins, leases, waiters, reservations and completion
+have drained. Provider removal with surviving manual access does not retire a
+runtime. Membership emits no cancellation jobs or notifications. Credential expiry,
+explicit cancellation and request/tool deadlines retain their separate contracts.
+See the [Agent lifecycle contract](agent.md#modules) and
 [Engine membership contract](engine.md#data-flow) for owning APIs and retry limits.
 
 ## Incoming routing overview

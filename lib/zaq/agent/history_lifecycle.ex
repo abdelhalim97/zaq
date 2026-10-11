@@ -18,7 +18,7 @@ defmodule Zaq.Agent.HistoryLifecycle do
     do: if(valid_cursors?(cursors), do: :ok, else: {:error, :invalid_history_cursor})
 
   @doc "Initializes one incarnation, disposing any replaced lease and its waiting admissions."
-  def initialize(history, server_id, pid, cursors, principal \\ nil, generations \\ nil) do
+  def initialize(history, server_id, pid, cursors, principal \\ nil) do
     history = drop(history, server_id)
 
     if is_nil(cursors),
@@ -28,34 +28,44 @@ defmodule Zaq.Agent.HistoryLifecycle do
           pid: pid,
           principal: principal,
           cursors: cursors,
-          generations: generations || Map.new(cursors, fn {id, _} -> {id, 0} end),
+          pins: %{},
+          retirement: nil,
           lease: nil,
           waiters: []
         })
   end
 
-  @doc "Validates initial Engine generation bindings against the exact source vector."
-  def validate_generations(_cursors, nil), do: :ok
-
-  def validate_generations(cursors, generations) do
-    if valid_cursors?(cursors) and valid_cursors?(generations) and
-         Enum.sort(Map.keys(cursors)) == Enum.sort(Map.keys(generations)),
-       do: :ok,
-       else: {:error, :invalid_history_generation}
+  @doc "Grants a process-owned lease, or defers another caller without advancing its cursor."
+  def begin_request(history, server_id, pid, from, opts \\ []) do
+    if deadline_expired?(opts[:deadline]) do
+      {:reply, {:error, :history_handoff_timeout}, history}
+    else
+      admit_request(history, server_id, pid, from, opts)
+    end
   end
 
-  @doc "Grants a process-owned lease, or defers another caller without advancing its cursor."
-  def begin_request(history, server_id, pid, from) do
+  defp admit_request(history, server_id, pid, from, opts) do
     case Map.get(history, server_id) do
       %{pid: ^pid, lease: nil} = entry ->
-        {entry, lease} = grant(entry, from)
+        {entry, lease} = grant(entry, from, opts)
         {:reply, {:ok, lease}, Map.put(history, server_id, entry)}
 
       %{pid: ^pid, lease: %{owner: owner}} when elem(from, 0) == owner ->
         {:reply, {:error, :history_request_active}, history}
 
       %{pid: ^pid} = entry ->
-        {:wait, Map.put(history, server_id, %{entry | waiters: entry.waiters ++ [from]})}
+        waiter = %{
+          from: from,
+          id: make_ref(),
+          deadline: opts[:deadline],
+          input_id: opts[:input_id],
+          reservation?: opts[:reservation?] == true,
+          server_id: server_id,
+          monitor: Process.monitor(elem(from, 0))
+        }
+
+        schedule_expiry(waiter)
+        {:wait, Map.put(history, server_id, %{entry | waiters: entry.waiters ++ [waiter]})}
 
       _ ->
         {:reply, {:error, :missing_history_cursor}, history}
@@ -105,37 +115,122 @@ defmodule Zaq.Agent.HistoryLifecycle do
 
       entry ->
         if entry.lease, do: Process.demonitor(entry.lease.monitor, [:flush])
-        Enum.each(entry.waiters, &GenServer.reply(&1, {:error, reason}))
+        Enum.each(entry.pins, fn {_key, monitor} -> Process.demonitor(monitor, [:flush]) end)
+        Enum.each(entry.waiters, &discard_waiter(&1, reason))
     end
 
     Map.delete(history, server_id)
   end
 
-  defp grant(entry, {owner, _tag}) do
+  defp grant(entry, {owner, _tag}, opts) do
     lease = %{
       token: make_ref(),
       owner: owner,
       monitor: Process.monitor(owner),
       op_id: Jido.Util.generate_id(),
       pid: entry.pid,
-      cursors: entry.cursors
+      cursors: entry.cursors,
+      input_id: opts[:input_id]
     }
 
     {%{entry | lease: lease}, Map.take(lease, [:token, :op_id, :pid, :cursors])}
   end
 
+  @doc "Pins admitted work before native targeting using the existing incarnation ledger."
+  def pin_scope(history, transcript_id, principal, owner, session) do
+    Map.new(history, fn {server_id, entry} ->
+      if entry.principal == principal and Map.has_key?(entry.cursors, transcript_id) and
+           (is_nil(entry.retirement) or Map.has_key?(entry.pins, {owner, session})),
+         do: {server_id, pin_entry(entry, owner, session)},
+         else: {server_id, entry}
+    end)
+  end
+
+  @doc "Pins a runtime in the same manager transition as its creation/reuse."
+  def pin_runtime(history, server_id, owner, session) when is_reference(session) do
+    case Map.fetch(history, server_id) do
+      {:ok, entry} -> Map.put(history, server_id, pin_entry(entry, owner, session))
+      :error -> history
+    end
+  end
+
+  def pin_runtime(history, _server_id, _owner, _session), do: history
+
+  defp pin_entry(entry, owner, session) do
+    pins = Map.put_new_lazy(entry.pins, {owner, session}, fn -> Process.monitor(owner) end)
+    %{entry | pins: pins}
+  end
+
+  @doc "Releases this caller's admission pins after completion, receipt transfer or failure."
+  def release_pins(history, owner, session) do
+    Map.new(history, fn {server_id, entry} ->
+      {monitor, pins} = Map.pop(entry.pins, {owner, session})
+      if monitor, do: Process.demonitor(monitor, [:flush])
+      {server_id, %{entry | pins: pins}}
+    end)
+  end
+
+  @doc "Reports local accepted work independently of retained native terminal records."
+  def accepted_work?(entry),
+    do: not is_nil(entry.lease) or entry.waiters != [] or map_size(entry.pins) > 0
+
   defp advance_waiter(%{waiters: []} = entry), do: entry
 
-  defp advance_waiter(%{waiters: [{owner, _tag} = from | remaining]} = entry) do
+  defp advance_waiter(%{waiters: [waiter | remaining]} = entry) do
     entry = %{entry | waiters: remaining}
+    owner = elem(waiter.from, 0)
 
-    if Process.alive?(owner) do
-      {entry, lease} = grant(entry, from)
-      GenServer.reply(from, {:ok, lease})
+    if Process.alive?(owner) and not deadline_expired?(waiter.deadline) do
+      Process.demonitor(waiter.monitor, [:flush])
+      {entry, lease} = grant(entry, waiter.from, input_id: waiter.input_id)
+
+      reply =
+        if waiter.reservation?, do: %{server_id: waiter.server_id, lease: lease}, else: lease
+
+      GenServer.reply(waiter.from, {:ok, reply})
       entry
     else
+      discard_waiter(waiter, :history_handoff_timeout)
       advance_waiter(entry)
     end
+  end
+
+  @doc "Removes an expired reservation; grant-time deadline checks prevent late timer delivery from granting it."
+  def expire_waiter(history, server_id, id) do
+    case Map.get(history, server_id) do
+      nil ->
+        history
+
+      entry ->
+        {expired, remaining} = Enum.split_with(entry.waiters, &(&1.id == id))
+        Enum.each(expired, &discard_waiter(&1, :history_handoff_timeout))
+        Map.put(history, server_id, %{entry | waiters: remaining})
+    end
+  end
+
+  @doc "Drops a dead waiter without invalidating the current lease owner's runtime."
+  def drop_waiter(history, monitor) do
+    Map.new(history, fn {server_id, entry} ->
+      pins = Map.reject(entry.pins, fn {_key, ref} -> ref == monitor end)
+
+      {server_id,
+       %{entry | pins: pins, waiters: Enum.reject(entry.waiters, &(&1.monitor == monitor))}}
+    end)
+  end
+
+  defp schedule_expiry(%{deadline: nil}), do: :ok
+
+  defp schedule_expiry(waiter) do
+    delay = max(waiter.deadline - System.monotonic_time(:millisecond), 0)
+    Process.send_after(self(), {:expire_history_waiter, waiter.server_id, waiter.id}, delay)
+  end
+
+  defp deadline_expired?(nil), do: false
+  defp deadline_expired?(deadline), do: deadline <= System.monotonic_time(:millisecond)
+
+  defp discard_waiter(waiter, reason) do
+    Process.demonitor(waiter.monitor, [:flush])
+    GenServer.reply(waiter.from, {:error, reason})
   end
 
   defp valid_cursors?(cursors) when is_map(cursors) and map_size(cursors) > 0 do
@@ -145,6 +240,19 @@ defmodule Zaq.Agent.HistoryLifecycle do
   end
 
   defp valid_cursors?(_), do: false
+
+  @doc "Validates bounded projection storage without advancing the incorporated ledger."
+  def validate_projection(_history, nil), do: :ok
+
+  def validate_projection(
+        %{projection: %{transcript_id: id}, cursors: cursors},
+        %{kind: :canonical, transcript_id: id, messages: messages, cursors: next}
+      )
+      when is_list(messages) and length(messages) <= 151 do
+    validate_next(cursors, next)
+  end
+
+  def validate_projection(_history, _projection), do: {:error, :invalid_history_projection}
 
   defp validate_next(previous, next) do
     valid? =

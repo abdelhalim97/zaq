@@ -621,12 +621,19 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
     else
       :error -> {:error, :not_found}
       nil -> {:error, :not_found}
-      {:access, false} -> {:error, :unauthorized}
+      {:access, false} -> access_denial(person_id, transcript_id, opts)
       {:error, reason} -> {:error, reason}
     end
   end
 
   def list(_person, _transcript_id, _opts), do: {:error, :unauthorized}
+
+  defp access_denial(person_id, transcript_id, opts) do
+    if Keyword.get(opts, :trusted_access_denial, false),
+      do:
+        {:error, {:history_access_denied, %{person_id: person_id, transcript_id: transcript_id}}},
+      else: {:error, :unauthorized}
+  end
 
   defp fresh_history?(%Transcript{strategy: "legacy"}), do: {:error, :unauthorized}
   defp fresh_history?(_), do: :ok
