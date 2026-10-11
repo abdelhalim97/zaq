@@ -16,11 +16,15 @@
     {
       "text": "Candidate integration now verified at 4bd6929bb599ced0bc4a9c0536588fb8b7a002b9; prerequisite zaq-lbk completed. Keep blocked on explicit human completed UX approval zaq-xfl. Consolidated journey should cover create/save/reopen defaults and custom issuer/audience/SameSite; strict legacy upgrade/no automatic rewrite; generate/rotate key and enable/disable; enabled distinct from Ready with zero visitors; saved versus effective configuration and dirty edits during health refresh; Channels list matching connector cards; scoped cookies/CSRF/BO isolation and actual embedded question/reply/renew/reconnect/context-selected restore/signed disconnect. Manual exploratory probe is not committed feature E2E. Existing 201 E2E tests across three browsers passed, but this does not satisfy new feature coverage gate.",
       "timestamp": "2026-10-10T17:16:17Z"
+    },
+    {
+      "text": "Supervised candidate migration adds infra recovery/removal, readiness v2 scope and actual proxy HTTPS/WSS integration tests. Unit/integration validation passes; consolidated feature E2E authoring still deferred pending zaq-xfl explicit UX approval. Existing Channels/Chat/System Configuration regression journeys will be rerun.",
+      "timestamp": "2026-10-11T06:55:10Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-vrq] Finalize widget settings and health feature E2E",
   "type": "task",
-  "updated_at": "2026-10-10T17:16:17Z"
+  "updated_at": "2026-10-11T06:55:10Z"
 }
