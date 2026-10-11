@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-11T09:09:12Z",
+  "description": "Audit-only upstream issue https://github.com/www-zaq-ai/web_widget/issues/23#issuecomment-6107439809 against PR24 revision6c6df55e1835b97a83901a0acda06d35b00312f9. Independent fresh fixture root kill sometimes fails to reconstruct runtime despite infrastructure registration restored. Final relevant run seed893691: 516 tests +10properties, 1 root-recovery failure; earlier515/10 clean and three lifecycle seeds clean. No ZAQ recovery machinery or upstream source edits. Investigate/fix upstream via authorized external work, update resolved candidate only when approved, rerun unpaused-root isolation and relevant regression suite. Blocks cleanup validation/release recommendation.",
+  "id": "zaq-yx7.6",
+  "labels": [],
+  "parent": "zaq-yx7",
+  "priority": 2,
+  "status": "open",
+  "title": "Resolve candidate root-kill recovery acceptance blocker",
+  "type": "task",
+  "updated_at": "2026-10-11T09:09:12Z"
+}
