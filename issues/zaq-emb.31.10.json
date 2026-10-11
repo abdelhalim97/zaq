@@ -62,11 +62,15 @@
     {
       "text": "Integrated acceptance ready for finalhumanreview: requiredhumanbehaviorapproval/E2E done, acceptedfreshhumancoverage10593tests green, perfilecoveragework+targeted284tests4properties and finalprecommit green. Detailedcoverageexceptionszaq-68v; historicalflakezaq-1wb deferredbyJulien, notfixed. No newruntime/productionchanges incoverage. Finalhumanimplementationapproval stillpending .34; do not claimGitpublished/merged.",
       "timestamp": "2026-10-10T22:38:42Z"
+    },
+    {
+      "text": "Integrated approved work now committed/pushedce00c72a8 and newPR#842 targetsA#835 inexistingstack; finalhumanapproval .34closed. Validationresults/deferredfindings accurately inPR. Historicalzaq-1wbremainsunresolved/humanacceptedcarryforward; no merge.",
+      "timestamp": "2026-10-11T06:39:08Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "[zaq-emb.31] D: registry removal and live recovery preservation",
   "type": "task",
-  "updated_at": "2026-10-10T22:38:42Z"
+  "updated_at": "2026-10-11T06:39:08Z"
 }
