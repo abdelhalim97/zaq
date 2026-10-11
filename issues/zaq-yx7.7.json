@@ -9,9 +9,15 @@
   "id": "zaq-yx7.7",
   "labels": [],
   "parent": "zaq-yx7",
+  "comments": [
+    {
+      "text": "Dynamic bridge delegation complete: API provider-scoped confidential channel_setup -\u003e registered bridge -\u003e dynamically registered adapter. Removed concrete ZAQ WidgetAdapter, Runtime and Readiness. Six shared hooks only; opaque host_options/adapter_options reach public infrastructure callback. Fresh local upstream candidate: mix q clean; 82 tests + 3 properties pass; expanded bridge/settings/BO suite 485 tests + 11 properties pass seed 893691. BO-only role starts no Channels/widget infrastructure. Reuse evidence remains Bridge/provider runtime and NodeRouter; evaluation process composition reuses Channels.Supervisor child options and is local-only deployment setup, not an agent operation. No source commit/push.",
+      "timestamp": "2026-10-11T10:33:04Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7.7] Replace widget host implementation with dynamic bridge adapter contracts",
   "type": "task",
-  "updated_at": "2026-10-11T10:03:42Z"
+  "updated_at": "2026-10-11T10:33:04Z"
 }
