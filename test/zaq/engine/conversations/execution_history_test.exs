@@ -2,8 +2,11 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
   use Zaq.DataCase, async: true
   use ExUnitProperties
 
+  alias Jido.AI.Context, as: AIContext
+  alias Jido.AI.Reasoning.ReAct.Config
   alias Zaq.Accounts.People
   alias Zaq.Agent.Api, as: AgentApi
+  alias Zaq.Agent.ContextWindow.RequestTransformer
   alias Zaq.Agent.HistorySync
   alias Zaq.Agent.ServerManager
   alias Zaq.Agent.StreamEvents
@@ -80,6 +83,31 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert execution.status == "failed"
     assert is_nil(execution.admitted_at)
     assert Repo.get!(Message, binding.user_message_id) == message
+  end
+
+  test "canonical model refresh rejects a missing request lease", ctx do
+    {binding, _} = admitted(ctx)
+    grant(ctx)
+
+    assert {:ok, projection} =
+             Conversations.admit_execution(binding, actor(ctx.alice), "Current input")
+
+    assert {:error, :stale_history_lease} =
+             RequestTransformer.transform_request(
+               %{messages: []},
+               %{context: AIContext.new()},
+               struct(Config, llm: %{max_tokens: 10}),
+               %{
+                 actor: actor(ctx.alice),
+                 node_router: Zaq.NodeRouter,
+                 context_window: %{max_context_tokens: 1_000},
+                 execution_history: %{
+                   binding: binding,
+                   cursors: projection.cursors,
+                   scope: "missing-lease"
+                 }
+               }
+             )
   end
 
   test "a denied replay cannot revoke an earlier accepted execution", ctx do

@@ -46,7 +46,8 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
 
     case router.dispatch(event) do
       %{response: {:ok, %{kind: :canonical} = projection}} ->
-        with {:ok, projection} <- retain_projection(history, runtime_context[:actor], projection) do
+        with {:ok, projection} <-
+               ServerManager.history_projection(history, runtime_context[:actor], projection) do
           project_request(request, state.context, projection, scope)
         end
 
@@ -67,11 +68,6 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
   end
 
   defp refresh_history(request, _state, _runtime_context), do: {:ok, request}
-
-  defp retain_projection(%{lease_ref: _} = history, actor, projection),
-    do: ServerManager.history_projection(history, actor, projection)
-
-  defp retain_projection(_history, _actor, projection), do: {:ok, projection}
 
   defp project_request(request, context, projection, scope) do
     context =

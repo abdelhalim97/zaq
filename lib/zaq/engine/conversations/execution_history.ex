@@ -72,14 +72,6 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
 
   def project_admission(_input, _conversation, _person), do: {:error, :unauthorized}
 
-  @doc "Reads bounded cumulative association additions without advancing a runtime cursor."
-  def delta(input, conversation, person, cursors) do
-    case delta_admission(input, conversation, person, cursors) do
-      {:error, {:history_access_denied, _}} -> {:error, :unauthorized}
-      result -> result
-    end
-  end
-
   @doc "Reads fresh history with a trusted denial after caller binding validation."
   def delta_admission(%{source_provider: nil}, _conversation, _person, _cursors),
     do: {:error, :unauthorized}
