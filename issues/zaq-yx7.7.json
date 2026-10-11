@@ -4,6 +4,8 @@
   "blocks": [
     "zaq-yx7.8"
   ],
+  "closed_at": "2026-10-11T10:43:29Z",
+  "close_reason": "Dynamic bridge contracts implemented and validated: mix q clean; 485 tests + 11 properties pass; public real-host ownership fixture 16 tests + 1 property pass; 42 doc links and diff check clean. Upstream publication/pinned acceptance remains zaq-yx7.8; root recovery gate zaq-yx7.6; existing WebKit blocker zaq-yx7.5.",
   "created": "2026-10-11T10:03:23Z",
   "description": "Approved five-review remediation. Reuse Bridge.provider_config/2, existing runtime lifecycle, channel_ingress_status and NodeRouter confidential events. Add typed optional infrastructure/runtime adapter contracts with explicit trusted init opts; API resolves bridge, bridge dynamically resolves registered adapter. WebBridge owns shared protocol constructors and config-bound ingress sink; upstream owns package policy/readiness/installation. Remove concrete ZAQ WidgetAdapter and widget env/global configuration. Lifecycle/construction/projection are local-only transport interfaces, not business Actions/tool exposure. Verify with two independent adapters, unsupported capability, confidentiality/provider scoping, opaque boot options and isolation tests. Existing uncommitted branch work is intended input; no application commit/push or final UX approval authorized.",
   "id": "zaq-yx7.7",
@@ -16,8 +18,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-yx7.7] Replace widget host implementation with dynamic bridge adapter contracts",
   "type": "task",
-  "updated_at": "2026-10-11T10:33:04Z"
+  "updated_at": "2026-10-11T10:43:29Z"
 }
