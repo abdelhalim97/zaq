@@ -19,11 +19,15 @@
     {
       "text": "Pinned published PR24 SHA090f2493914f5cae77c22cb5fb2963d170643440 in mix.exs/mix.lock; fetched deps HEAD verified. Fresh mix q clean; 485 tests+11 properties pass seed893691. Evaluation rebuilt/restarted from fetched pin; Chromium probe on connector5 passes real TLS-proxy/WSS auth, response, renewal, reconnect, durable restore and signed disconnect with zero browser errors. Upstream reports final-source 270-test precommit and 400-browser-pass/2-skipped, assets/distributed checks green. ZAQ remains uncommitted/unpublished, no merge/main switch. Integration implementation complete; retain issue in progress for existing BO WebKit blocker zaq-yx7.5. Final UX/review/coverage/precommit deferred.",
       "timestamp": "2026-10-11T11:02:38Z"
+    },
+    {
+      "text": "Review correction zaq-yx7.9 completed: no separate ZAQ adapter behavior or base-Bridge adapter dispatch; CommunicationBridge routes infrastructure, WebBridge owns construction. 676 tests+12 properties and mix q pass; rebuilt published-pin evaluation has green real WSS lifecycle connector6. Remaining blocker is unchanged zaq-yx7.5; final human UX/review/coverage/precommit not requested.",
+      "timestamp": "2026-10-11T19:25:51Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7.8] Integrate upstream process options adapter candidate and validate",
   "type": "task",
-  "updated_at": "2026-10-11T11:02:39Z"
+  "updated_at": "2026-10-11T19:25:51Z"
 }
