@@ -11,9 +11,15 @@
   "id": "zaq-yx7.1",
   "labels": [],
   "parent": "zaq-yx7",
+  "comments": [
+    {
+      "text": "Expanded existing Channels supervision assertions to include shared widget child startup options and parent teardown. Final isolated combined validation: 165 tests + 10 properties, no failures. BO-only startup independently confirms zero widget processes. Thin wrapper preserves WidgetAdapter and generic bridge contracts.",
+      "timestamp": "2026-10-11T07:21:52Z"
+    }
+  ],
   "priority": 2,
   "status": "closed",
   "title": "[zaq-yx7.1] Migrate widget to published supervised connector lifecycle",
   "type": "task",
-  "updated_at": "2026-10-11T06:55:08Z"
+  "updated_at": "2026-10-11T07:21:52Z"
 }
