@@ -14,11 +14,15 @@
     {
       "text": "Action reuse assessment: reuse existing BridgeSupervisor bootstrap/runtime replacement and Channels :channel_ingress_status event; reuse WidgetSettings.validate and upstream RuntimeBuilder status/installation. Concrete WidgetAdapter owns child specs, fixed config-bound ingress sink and closed BO projection. These are local-only transport/lifecycle details, not independently composable business Actions or new agent tools; inputs are trusted resolved connector/config opts, outputs OTP child specs or secret-free status/snippet, errors bounded. No new recovery machinery, verification inputs from browsers or direct BO service calls. Deleted Runtime/Readiness/SupervisedWidgetAdapter; downstream source references and owner docs updated. Desired-vs-installed comparison retained; package aggregate precedence is no longer duplicated. Validation: mix q clean, scoped 515 tests + 10 properties, lifecycle 27 tests + 1 property across seeds 940995/773882/41768, credential ingress 11 isolated tests clean. Existing browsers twice 200/201 with reproducible-in-suite WebKit goto timeout (isolated case passed), tracked zaq-yx7.5; broader all-Channels attempt incomplete with DB ownership/queue errors. No final approval/publication requested.",
       "timestamp": "2026-10-11T09:02:50Z"
+    },
+    {
+      "text": "Correction to final validation evidence: after generic bootstrap extra-info acceptance was added, final run seed893691 had 516 tests +10 properties and ONE unpaused WebWidget.Supervisor root recovery failure. Even fresh independent fixtures do not eliminate the package failure; do not describe it as fully resolved by test isolation. Reported audit hypothesis and evidence upstream in issue23 comment6107439809; no upstream edits or host recovery. mix q at this final run also failed due ExDNA Task.Supervised.stream(5000) timeout; rerun needed, no Credo rule/timeouts changed. BO-only startup and git diff --check passed. Keep cleanup issue unclosed pending candidate recovery acceptance; initial515/10 passing run is historical, not final green.",
+      "timestamp": "2026-10-11T09:09:27Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7.4] Remove widget readiness plumbing and unify adapter status",
   "type": "task",
-  "updated_at": "2026-10-11T09:09:26Z"
+  "updated_at": "2026-10-11T09:09:27Z"
 }
