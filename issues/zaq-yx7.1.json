@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-11T06:39:48Z",
+  "description": "Pin 6c6df55e1835b97a83901a0acda06d35b00312f9; start Channels-only shared infrastructure via options; use stable Connector children and existing WebBridge lifecycle. Reuse: existing startup/replacement/shutdown operations, local-only supervisor wiring (no new domain Action). Test ordering, recovery, removal and isolation.",
+  "id": "zaq-yx7.1",
+  "labels": [],
+  "parent": "zaq-yx7",
+  "priority": 2,
+  "status": "open",
+  "title": "Migrate widget to published supervised connector lifecycle",
+  "type": "task",
+  "updated_at": "2026-10-11T06:39:48Z"
+}
