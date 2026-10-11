@@ -4,6 +4,8 @@
     "zaq-yx7.1"
   ],
   "blocks": [],
+  "closed_at": "2026-10-11T07:21:54Z",
+  "close_reason": "Implemented and validated for local evaluation. No ZAQ package recovery coordinator or dedicated widget TLS listener. Finalization remains gated by existing zaq-xfl / zaq-vrq.",
   "created": "2026-10-11T06:39:54Z",
   "description": "Depend on supervised connector migration. Validate/project v2 verification scope; preserve local versus external HTTPS distinction; configure explicit trusted ingress on existing endpoint; remove evaluation TLS runtime configuration; update docs and host tests. Reuse Readiness pure boundary and existing BO status. UX approval/E2E remains deferred.",
   "id": "zaq-yx7.2",
@@ -16,8 +18,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-yx7.2] Adopt widget readiness v2 and proxy host deployment",
   "type": "task",
-  "updated_at": "2026-10-11T07:21:53Z"
+  "updated_at": "2026-10-11T07:21:54Z"
 }
