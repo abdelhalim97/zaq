@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-11T19:16:29Z",
+  "description": "Approved three-review correction: delete Web.Adapter and declare consumed adapter callbacks in WebBridge; move adapter resolution/runtime/infrastructure calls out of base Bridge; CommunicationBridge owns startup capability routing, WebBridge owns adapter option assembly, supervisor starts returned specs only. Reuse existing provider_config, CommunicationBridge dispatch conventions and OTP lifecycle/rollback; these are local-only transport lifecycle contracts, not business Actions or agent tools. Tests first: domain routing, unchanged options through supervisor, WebBridge override precedence, absent capabilities and two adapters; preserve real public HostAdapter/recovery tests. ZAQ changes remain uncommitted; pinned upstream090f249 unchanged.",
+  "id": "zaq-yx7.9",
+  "labels": [],
+  "parent": "zaq-yx7",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-yx7] Keep adapter construction inside WebBridge",
+  "type": "task",
+  "updated_at": "2026-10-11T19:16:29Z"
+}
