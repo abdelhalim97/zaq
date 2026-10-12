@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T02:26:37Z",
+  "description": "User approved six-review simplification plus trusted startup scope. Reuse start_runtime/do_start_runtime for provider-shared infrastructure and connector children; remove parallel infrastructure startup callback/loop, move PubSub default to WebBridge, preserve process-authoritative options through later runtime sync. Consolidate setup status into existing queries; installation remains read-only confidential operation for disabled connectors. Remove Ready(local) label. Mount widget/routes/assets under trusted /channels scope after upstream session ses_ed938c98dffeNy0Lv6C031hy3u publishes compatible candidate; no ZAQ publication authorization. Action reuse: extend existing Bridge/CommunicationBridge runtime lifecycle and NodeRouter queries; local-only OTP/provider lifetime, no agent-tool exposure. Test shared-runtime dedup/concurrent startup, disable isolation, restart/rollback/options, scoped paths/cookies/assets/WSS and installation.",
+  "id": "zaq-yx7.10",
+  "labels": [],
+  "parent": "zaq-yx7",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-yx7] Reuse provider runtime startup and trusted channel scope",
+  "type": "task",
+  "updated_at": "2026-10-12T02:26:37Z"
+}
