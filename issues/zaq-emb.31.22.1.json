@@ -11,9 +11,15 @@
   "id": "zaq-emb.31.22.1",
   "labels": [],
   "parent": "zaq-emb.31.22",
+  "comments": [
+    {
+      "text": "Implemented actor/scope/agent-filtered live incarnation snapshots; native status is read once per selected PID outside manager. Existing process-owned completion lease binds native request ID exactly once and supplies canonical execution UUIDs. Legacy uses actual bound actor/scope. Exact PID/token/request revalidation preserved. Added real native steer/inject, foreign actor/scope/agent rejection and replacement tests + literal scope/principal property. mix q clean; focused group 332 tests/14 properties passes. No ETS dependency. Native completed low-level requests keep native idle refusal while active discovery rejects them; dead/untracked/foreign IDs fail before queue without exposing ownership. Canonical runtime flag avoids treating legacy conversation bindings as canonical leases. No new Action/tool; existing admission/receipt APIs reused.",
+      "timestamp": "2026-10-12T03:19:07Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-emb.31.22] Live runtime targeting",
   "type": "task",
-  "updated_at": "2026-10-12T02:00:33Z"
+  "updated_at": "2026-10-12T03:19:07Z"
 }
