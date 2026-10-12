@@ -11,21 +11,35 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
   alias Zaq.Repo
 
   defmodule Adapter do
-    @behaviour Zaq.Channels.Web.WidgetAdapter
+    @behaviour Zaq.Channels.WebBridge
 
     @impl true
-    def build(config, _hooks),
+    def build_runtime_specs(config, _hooks),
       do: {:ok, {%{id: :widget, start: {Agent, :start_link, [fn -> config.token end]}}, []}}
 
     @impl true
-    def embed_script(id, base_url),
+    def installation(%{id: id}, base_url, scope: "/channels"),
       do: {:ok, "<script src=\"#{base_url}/widget.js\" data-widget-id=\"#{id}\"></script>"}
   end
 
   defmodule ReadyAdapter do
-    defdelegate build(config, hooks), to: Adapter
-    defdelegate embed_script(id, base_url), to: Adapter
-    def status(_id, timeout_ms: 2_000), do: {:ok, Zaq.WidgetReadinessFixtures.response()}
+    defdelegate build_runtime_specs(config, hooks), to: Adapter
+    defdelegate installation(config, base_url, opts), to: Adapter
+
+    def ingress_status(_config, timeout_ms: 2_000),
+      do:
+        {:ok,
+         %{
+           status: :ok,
+           summary: "Ready locally; external HTTPS not checked",
+           mode: "websocket",
+           verification: %{
+             scope: :local,
+             session_handshake: :verified,
+             external_https: :not_checked
+           },
+           effective_settings: Zaq.WidgetReadinessFixtures.response().effective_settings
+         }}
   end
 
   setup %{conn: conn} do
@@ -37,6 +51,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
   test "mounts the real form and allows disabled configuration before prerequisites", %{
     conn: conn
   } do
+    configure_adapter(nil)
     {:ok, view, _} = live(conn, ~p"/bo/channels/retrieval/web_widget")
     refute has_element?(view, "#widget-config-form")
 
@@ -238,6 +253,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
   end
 
   test "configured base URL leaves only the missing adapter error in the modal", %{conn: conn} do
+    configure_adapter(nil)
     assert :ok = Zaq.System.set_global_base_url("https://zaq.example.test")
     {:ok, view, _} = live(conn, ~p"/bo/channels/retrieval/web_widget")
     refute has_element?(view, "#widget-prerequisite-errors")

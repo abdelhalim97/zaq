@@ -3,7 +3,8 @@ defmodule Zaq.WidgetReadinessFixtures do
 
   def response(status \\ :ready, reason \\ nil) do
     %{
-      protocol_version: 1,
+      protocol_version: 2,
+      verification: %{scope: :local, session_handshake: :verified, external_https: :not_checked},
       status: status,
       reason: reason,
       checks: %{

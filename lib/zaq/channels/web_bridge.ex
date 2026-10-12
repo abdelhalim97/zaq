@@ -12,8 +12,14 @@ defmodule Zaq.Channels.WebBridge do
 
   Widgets use config-bound adapter context and a temporary request owner for
   async acceptance/streaming or a single sync terminal. Idle widget init creates
-  no chat. Adapter-owned runtimes are constructed through Web.Runtime and the
-  existing Bridge lifecycle; this module installs no widget endpoint.
+  no chat. Transport runtimes are constructed by the dynamically registered
+  adapter through the existing Bridge lifecycle. This bridge binds the shared
+  protocol and ingress sink; transport policy and readiness belong to the adapter.
+
+  The callback declarations below describe the external adapter this module consumes,
+  not bridge lifecycle callbacks (which belong to `Zaq.Channels.Bridge`). Implementations
+  are selected through provider registration and need no compile-time ZAQ dependency.
+  Shared infrastructure receives trusted process options, never browser settings.
   """
 
   use Zaq.Channels.Bridge
@@ -21,7 +27,7 @@ defmodule Zaq.Channels.WebBridge do
   @behaviour Zaq.Channels.CommunicationBridge
 
   alias Zaq.Channels.{Bridge, CommunicationBridge}
-  alias Zaq.Channels.Web.{Command, Context, Delivery, Response, Runtime}
+  alias Zaq.Channels.Web.{Command, Context, Delivery, Response}
   alias Zaq.Channels.Web.Message, as: WebMessage
   alias Zaq.Channels.Web.RequestOwner
   alias Zaq.Engine.Conversations.{Conversation, MessageRating}
@@ -31,22 +37,255 @@ defmodule Zaq.Channels.WebBridge do
   alias Zaq.Events.Helper
   alias Zaq.NodeRouter
 
+  @callback infrastructure_child_specs(keyword()) ::
+              {:ok, [Supervisor.child_spec()]} | {:error, term()}
+  @callback build_runtime_specs(map(), map()) :: {:ok, {map() | nil, [map()]}} | {:error, term()}
+  @callback ingress_status(map(), keyword()) :: {:ok, map()} | {:error, atom()}
+  @callback installation(map() | pos_integer(), String.t(), keyword()) ::
+              {:ok, String.t()} | {:error, atom()}
+  @optional_callbacks infrastructure_child_specs: 1, ingress_status: 2, installation: 3
+
+  @doc "Resolves the web transport adapter registered for the provider."
+  @spec adapter_for(atom() | String.t(), keyword()) :: {:ok, module()} | {:error, atom()}
+  def adapter_for(provider, opts \\ []) do
+    case Bridge.provider_config(provider, opts) do
+      %{adapter: adapter} when is_atom(adapter) and not is_nil(adapter) ->
+        if Code.ensure_loaded?(adapter), do: {:ok, adapter}, else: {:error, :adapter_unavailable}
+
+      _ ->
+        {:error, :unsupported}
+    end
+  end
+
+  defp infrastructure_child_specs(provider, opts) do
+    case adapter_for(provider, opts) do
+      {:ok, adapter} ->
+        if function_exported?(adapter, :infrastructure_child_specs, 1) do
+          normalize_infrastructure_specs(
+            adapter.infrastructure_child_specs(infrastructure_options(provider, opts))
+          )
+        else
+          {:ok, []}
+        end
+
+      {:error, :unsupported} ->
+        {:ok, []}
+
+      {:error, _} ->
+        {:error, :provider_infrastructure_start_failed}
+    end
+  rescue
+    _ -> {:error, :provider_infrastructure_start_failed}
+  catch
+    _, _ -> {:error, :provider_infrastructure_start_failed}
+  end
+
+  defp infrastructure_options(provider, opts) do
+    provider_opts =
+      opts
+      |> Keyword.get(:adapter_options, %{})
+      |> Map.get(Bridge.provider_to_bridge_key(provider), [])
+
+    options =
+      Keyword.merge(Keyword.get(opts, :host_options, []), provider_opts)
+      |> Keyword.put_new(:pubsub_server, Zaq.PubSub)
+      |> Keyword.put_new(:scope, "/channels")
+
+    if Bridge.provider_to_bridge_key(provider) == :web_widget and
+         System.get_env("WIDGET_DEV_MODE") == "true" do
+      Keyword.update(
+        options,
+        :session,
+        [partitioned: false],
+        &Keyword.put_new(&1, :partitioned, false)
+      )
+    else
+      options
+    end
+  end
+
+  defp normalize_infrastructure_specs({:ok, specs}) when is_list(specs), do: {:ok, specs}
+  defp normalize_infrastructure_specs(_), do: {:error, :provider_infrastructure_start_failed}
+
   @impl Zaq.Channels.Bridge
-  def build_runtime_specs(config), do: Runtime.build(config)
+  def build_runtime_specs({:provider, provider}, opts) do
+    with {:ok, specs} <- infrastructure_child_specs(provider, opts) do
+      {:ok, {nil, specs}}
+    end
+  end
+
+  def build_runtime_specs(config, opts), do: super(config, opts)
+
+  @impl Zaq.Channels.Bridge
+  def build_runtime_specs(%{id: id} = config) when is_integer(id) and id > 0 do
+    hooks = %{
+      message: WebMessage,
+      command: Command,
+      context: Context,
+      delivery: Delivery,
+      response: Response,
+      sink_mfa: {__MODULE__, :from_adapter, [%{id: id}]}
+    }
+
+    build_adapter_runtime(config, hooks)
+  end
+
+  def build_runtime_specs(_), do: {:error, :invalid_connector}
+
+  defp build_adapter_runtime(config, hooks) do
+    with {:ok, adapter} <- adapter_for(Map.get(config, :provider)),
+         true <- function_exported?(adapter, :build_runtime_specs, 2) || {:error, :unsupported} do
+      case adapter.build_runtime_specs(config, hooks) do
+        {:ok, {state, listeners}} when (is_nil(state) or is_map(state)) and is_list(listeners) ->
+          {:ok, {state, listeners}}
+
+        {:error, reason} when is_atom(reason) ->
+          {:error, reason}
+
+        _ ->
+          {:error, :invalid_runtime_specs}
+      end
+    end
+  rescue
+    _ -> {:error, :runtime_construction_failed}
+  catch
+    _, _ -> {:error, :runtime_construction_failed}
+  end
 
   @impl Zaq.Channels.CommunicationBridge
   def channel_ingress_status(config), do: channel_ingress_status(config, [])
 
-  @doc "Resolves widget adapter readiness using the routed runtime configuration options."
+  @doc "Relays bounded ingress status to the provider's configured web transport."
   @spec channel_ingress_status(map(), keyword()) :: {:ok, map()} | {:error, atom()}
-  def channel_ingress_status(config, opts), do: Runtime.ingress_status(config, opts)
+  def channel_ingress_status(%{enabled: false}, _opts),
+    do: {:ok, %{status: :disabled, summary: "Disabled"}}
+
+  def channel_ingress_status(%{provider: provider, id: id} = config, opts)
+      when is_integer(id) and id > 0 do
+    with {:ok, adapter} <- adapter_for(provider, opts),
+         true <- function_exported?(adapter, :ingress_status, 2) || {:error, :unsupported} do
+      task =
+        Task.Supervisor.async_nolink(Zaq.TaskSupervisor, fn ->
+          safe_ingress_status(adapter, config)
+        end)
+
+      case Task.yield(task, 2_000) || Task.shutdown(task, :brutal_kill) do
+        {:ok, {:ok, status}} -> {:ok, status}
+        {:ok, {:error, :check_timeout}} -> unknown_ingress(:check_timeout)
+        nil -> unknown_ingress(:check_timeout)
+        _ -> unknown_ingress(:check_failed)
+      end
+    else
+      _ -> unknown_ingress(:readiness_unsupported)
+    end
+  end
+
+  def channel_ingress_status(_, _), do: {:error, :invalid_request}
+
+  defp safe_ingress_status(adapter, config) do
+    case adapter.ingress_status(config, timeout_ms: 2_000) do
+      {:ok, %{status: state, summary: summary} = status}
+      when state in [:ok, :pending, :error, :unknown, :disabled] and is_binary(summary) ->
+        {:ok, status}
+
+      {:error, :check_timeout} ->
+        {:error, :check_timeout}
+
+      _ ->
+        {:error, :check_failed}
+    end
+  rescue
+    _ -> {:error, :check_failed}
+  catch
+    _, _ -> {:error, :check_failed}
+  end
+
+  defp unknown_ingress(:readiness_unsupported),
+    do:
+      {:ok,
+       %{
+         status: :unknown,
+         reason: :readiness_unsupported,
+         summary: "Adapter does not support readiness checks"
+       }}
+
+  defp unknown_ingress(reason),
+    do:
+      {:ok,
+       %{status: :unknown, reason: reason, summary: "Transport readiness cannot be verified"}}
 
   @impl Zaq.Channels.Bridge
-  def start_runtime(%{provider: provider} = config)
-      when provider in [:web_widget, "web_widget"] do
-    case runtime_supervisor_module().lookup_runtime(runtime_bridge_id(config)) do
-      {:ok, _runtime} -> :ok
-      {:error, :not_running} -> super(config)
+  def capability_snapshot(config) do
+    resolved =
+      case adapter_for(config.provider) do
+        {:ok, adapter} ->
+          %{
+            runtime: function_exported?(adapter, :build_runtime_specs, 2),
+            installation: function_exported?(adapter, :installation, 3)
+          }
+
+        _ ->
+          %{runtime: false, installation: false}
+      end
+
+    {:ok, %{required: [:runtime, :installation], resolved: resolved}}
+  end
+
+  @doc "Generates a bounded installation snippet through the confidential installation read."
+  @spec installation(map(), keyword()) :: {:ok, String.t()} | {:error, atom()}
+  def installation(%{op: :installation, config: %{id: id} = config, base_url: base_url}, opts)
+      when is_integer(id) and id > 0 and is_binary(base_url) and byte_size(base_url) > 0 do
+    with {:ok, adapter} <- adapter_for(config.provider, opts),
+         true <- function_exported?(adapter, :installation, 3) || {:error, :unsupported} do
+      normalize_installation(adapter.installation(config, base_url, scope: "/channels"))
+    end
+  rescue
+    _ -> {:error, :installation_failed}
+  catch
+    _, _ -> {:error, :installation_failed}
+  end
+
+  def installation(_, _), do: {:error, :invalid_request}
+
+  defp normalize_installation({:ok, snippet})
+       when is_binary(snippet) and byte_size(snippet) in 1..32_768 do
+    if String.valid?(snippet), do: {:ok, snippet}, else: {:error, :invalid_installation}
+  end
+
+  defp normalize_installation(_), do: {:error, :invalid_installation}
+
+  @doc "Receives only shared payloads bound to the connector used at construction."
+  @spec from_adapter(map(), WebMessage.t() | Command.t(), keyword()) :: term()
+  def from_adapter(%{id: id}, payload, opts) when is_list(opts) do
+    with %Context{consumer: :widget, channel_config_id: ^id} = context <-
+           Keyword.get(opts, :context),
+         true <- is_struct(payload, WebMessage) or is_struct(payload, Command) do
+      Event.new(%{payload: payload, context: context}, :channels, opts: [action: :web_ingress])
+      |> NodeRouter.dispatch()
+      |> Map.fetch!(:response)
+    else
+      false -> {:error, :invalid_payload}
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  def from_adapter(_, _, _), do: {:error, :unauthorized}
+
+  @impl Zaq.Channels.Bridge
+  def start_runtime({:provider, _} = target), do: super(target)
+
+  def start_runtime(%{provider: provider}) when provider in [:web, "web"], do: :ok
+
+  def start_runtime(%{provider: provider} = config) do
+    case Bridge.provider_config(provider) do
+      %{adapter: _} ->
+        case runtime_supervisor_module().lookup_runtime(runtime_bridge_id(config)) do
+          {:ok, _runtime} -> :ok
+          {:error, :not_running} -> super(config)
+        end
+
+      _ ->
+        {:error, :unsupported}
     end
   end
 

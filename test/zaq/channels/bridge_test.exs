@@ -137,7 +137,9 @@ defmodule Zaq.Channels.BridgeTest do
   end
 
   defmodule CapabilitySnapshotBridge do
-    def capability_snapshot(_config) do
+    def capability_snapshot(config) do
+      send(self(), {:capability_input, config})
+
       {:ok,
        %{
          required: [:text, :image, :streaming],
@@ -390,6 +392,32 @@ defmodule Zaq.Channels.BridgeTest do
     assert {:error, :ambiguous_connector} = Bridge.capability_snapshot(:mattermost)
   end
 
+  test "explicit provider capabilities do not select a connector or disclose its credentials" do
+    channels = Application.get_env(:zaq, :channels)
+
+    Application.put_env(
+      :zaq,
+      :channels,
+      Map.put(channels, :mattermost, %{bridge: CapabilitySnapshotBridge})
+    )
+
+    first = insert_config(:mattermost)
+    insert_config(:mattermost, %{enabled: false})
+
+    assert {:error, :ambiguous_connector} = Bridge.capability_snapshot(:mattermost)
+    assert {:ok, _} = Bridge.capability_snapshot(:mattermost, %{scope: :provider})
+    assert_receive {:capability_input, %{id: nil, token: nil, settings: settings}}
+    assert settings == %{}
+
+    for key <- [:config_id, "config_id"] do
+      assert {:error, :invalid_request} =
+               Bridge.capability_snapshot(
+                 :mattermost,
+                 %{scope: :provider} |> Map.put(key, first.id)
+               )
+    end
+  end
+
   test "default_bridge_id supports atom and string keys" do
     assert Bridge.default_bridge_id(%{provider: "mattermost", id: 42}) == "mattermost_42"
     assert Bridge.default_bridge_id(%{"provider" => "mattermost", "id" => 43}) == "mattermost_43"
@@ -415,6 +443,8 @@ defmodule Zaq.Channels.BridgeTest do
 
     assert :ok = Bridge.sync_config_runtime(nil, %{provider: "mattermost", enabled: false})
     assert :ok = Bridge.sync_provider_runtime(:mattermost)
+    assert :ok = Bridge.sync_provider_runtime(:mattermost, [])
+    assert_received {:sync_provider_runtime_called, "mattermost", true}
   end
 
   describe "route_incoming error handling" do

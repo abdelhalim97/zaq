@@ -13,6 +13,29 @@ defmodule Zaq.Channels.BridgeRuntimeRestartTest do
     end
   end
 
+  defmodule ExtraInfoState do
+    def start_link(owner) do
+      {:ok, pid} = RuntimeState.start_link(owner)
+      {:ok, pid, :startup_info}
+    end
+  end
+
+  test "OTP extra-info results use the same state and listener tracking" do
+    id = "extra-info-fixture:#{Ecto.UUID.generate()}"
+    spec = %{id: id, start: {ExtraInfoState, :start_link, [self()]}, restart: :permanent}
+
+    assert {:ok, %{state_pid: state, listener_pids: [listener]}} =
+             ChannelsSupervisor.start_runtime(id, spec, [spec])
+
+    on_exit(fn -> ChannelsSupervisor.stop_bridge_runtime(%{}, id) end)
+    assert_receive {:runtime_started, ^state}
+    assert_receive {:runtime_started, ^listener}
+    assert state != listener
+    assert :ok = ChannelsSupervisor.stop_bridge_runtime(%{}, id)
+    refute Process.alive?(state)
+    refute Process.alive?(listener)
+  end
+
   test "runtime lookup follows a supervised state restart" do
     {id, initial, replacement} = restarted_runtime()
     assert ChannelsSupervisor.lookup_state_pid(id) == {:ok, replacement}

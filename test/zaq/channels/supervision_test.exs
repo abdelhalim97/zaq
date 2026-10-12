@@ -8,9 +8,62 @@ defmodule Zaq.Channels.SupervisionTest do
   alias Zaq.Engine.ChannelConfig
   alias Zaq.TestSupport.Channels.RuntimeAdapterStub, as: StubAdapter
 
+  defmodule InvalidInfrastructure do
+    def infrastructure_child_specs(_), do: raise("private configuration must not escape")
+  end
+
+  defmodule InvalidInfrastructureConfig do
+    def get(:zaq, :channels, _),
+      do: %{fixture: %{bridge: Zaq.Channels.WebBridge, adapter: InvalidInfrastructure}}
+  end
+
+  defmodule ExtraInfoInfrastructure do
+    def infrastructure_child_specs(opts),
+      do: {:ok, [%{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}}]}
+
+    def start_link(opts) do
+      {:ok, pid} = Agent.start_link(fn -> :infrastructure end)
+      send(opts[:owner], {:infrastructure_started, pid})
+      {:ok, pid, :provider_info}
+    end
+  end
+
+  defmodule ExtraInfoConfig do
+    def get(:zaq, :channels, _),
+      do: %{fixture: %{bridge: Zaq.Channels.WebBridge, adapter: ExtraInfoInfrastructure}}
+  end
+
+  defmodule PartialInfrastructure do
+    def infrastructure_child_specs(opts) do
+      {:ok,
+       [
+         %{id: :first, start: {ExtraInfoInfrastructure, :start_link, [opts]}},
+         Keyword.get(opts, :next_spec, %{id: :second, start: {__MODULE__, :fail, []}})
+       ]}
+    end
+
+    def fail, do: {:error, :fixture_failed}
+  end
+
+  defmodule PartialInfrastructureConfig do
+    def get(:zaq, :channels, _),
+      do: %{fixture: %{bridge: Zaq.Channels.WebBridge, adapter: PartialInfrastructure}}
+  end
+
+  defmodule StartupBridge do
+    def sync_provider_runtime({:provider, :fixture}, opts) do
+      send(opts[:owner], {:startup_options, opts})
+      :ok
+    end
+  end
+
+  defmodule StartupConfig do
+    def get(:zaq, :channels, _), do: %{fixture: %{bridge: StartupBridge}}
+  end
+
   setup do
     previous = Application.get_env(:zaq, :channels)
-    Application.put_env(:zaq, :channels, %{})
+    Application.put_env(:zaq, :channels, Map.take(previous, [:web_widget]))
     # Each crash scenario gets its own restart budget and resource ownership.
     :ok = Supervisor.terminate_child(Zaq.Supervisor, Channels)
     {:ok, _} = Supervisor.restart_child(Zaq.Supervisor, Channels)
@@ -19,12 +72,19 @@ defmodule Zaq.Channels.SupervisionTest do
     :ok
   end
 
-  test "static parent starts limiter before dynamic bridge owner and retains role discovery" do
+  test "static parent stays generic and widget infrastructure belongs to bridge subtree" do
     assert {:ok, {%{strategy: :one_for_one}, specs}} = Channels.init([])
     assert Enum.map(specs, & &1.id) == [Ingress, BridgeSupervisor]
 
     children = Supervisor.which_children(Channels)
     assert length(children) == 2
+
+    assert {_, widget, :supervisor, [WebWidget.Supervisor]} =
+             Enum.find(DynamicSupervisor.which_children(BridgeSupervisor), fn
+               {_, _, _, modules} -> modules == [WebWidget.Supervisor]
+             end)
+
+    assert widget == Process.whereis(WebWidget.Supervisor)
 
     for module <- [Ingress, BridgeSupervisor] do
       assert {^module, pid, :supervisor, [^module]} = List.keyfind(children, module, 0)
@@ -59,6 +119,94 @@ defmodule Zaq.Channels.SupervisionTest do
     assert_reloaded(bridge_id, old_runtime)
   end
 
+  test "infrastructure startup failure rolls back the dynamic subtree" do
+    :ok = Supervisor.terminate_child(Channels, BridgeSupervisor)
+
+    try do
+      assert {:error, :provider_infrastructure_start_failed} =
+               BridgeSupervisor.start_link(config: InvalidInfrastructureConfig)
+
+      assert Process.whereis(BridgeSupervisor) == nil
+      assert Process.whereis(WebWidget.Supervisor) == nil
+    after
+      assert {:ok, _} = Supervisor.restart_child(Channels, BridgeSupervisor)
+    end
+  end
+
+  test "generic infrastructure bootstrap accepts OTP extra-info startup results" do
+    :ok = Supervisor.terminate_child(Channels, BridgeSupervisor)
+
+    assert {:ok, supervisor} =
+             BridgeSupervisor.start_link(
+               config: ExtraInfoConfig,
+               adapter_options: %{fixture: [owner: self()]}
+             )
+
+    try do
+      assert_receive {:infrastructure_started, child}
+      assert {_, ^child, :worker, _} = hd(DynamicSupervisor.which_children(supervisor))
+      assert Process.alive?(child)
+    after
+      Supervisor.stop(supervisor)
+      assert {:ok, _} = Supervisor.restart_child(Channels, BridgeSupervisor)
+    end
+  end
+
+  test "partial provider infrastructure startup rolls back all children" do
+    :ok = Supervisor.terminate_child(Channels, BridgeSupervisor)
+
+    try do
+      assert {:error, :provider_infrastructure_start_failed} =
+               BridgeSupervisor.start_link(
+                 config: PartialInfrastructureConfig,
+                 host_options: [owner: self()]
+               )
+
+      assert_receive {:infrastructure_started, child}
+      refute Process.alive?(child)
+      assert Process.whereis(BridgeSupervisor) == nil
+    after
+      assert {:ok, _} = Supervisor.restart_child(Channels, BridgeSupervisor)
+    end
+  end
+
+  test "supervisor leaves startup option interpretation to the bridge" do
+    :ok = Supervisor.terminate_child(Channels, BridgeSupervisor)
+
+    opts = [
+      config: StartupConfig,
+      owner: self(),
+      host_options: [opaque: make_ref()],
+      adapter_options: %{fixture: [opaque: :override]}
+    ]
+
+    assert {:ok, supervisor} = BridgeSupervisor.start_link(opts)
+
+    try do
+      assert_receive {:startup_options, ^opts}
+    after
+      Supervisor.stop(supervisor)
+      assert {:ok, _} = Supervisor.restart_child(Channels, BridgeSupervisor)
+    end
+  end
+
+  test "malformed OTP child specs are rejected before any runtime child starts" do
+    :ok = Supervisor.terminate_child(Channels, BridgeSupervisor)
+
+    try do
+      assert {:error, :provider_infrastructure_start_failed} =
+               BridgeSupervisor.start_link(
+                 config: PartialInfrastructureConfig,
+                 adapter_options: %{fixture: [owner: self(), next_spec: :invalid_child_module]}
+               )
+
+      refute_receive {:infrastructure_started, _}
+      assert Process.whereis(BridgeSupervisor) == nil
+    after
+      assert {:ok, _} = Supervisor.restart_child(Channels, BridgeSupervisor)
+    end
+  end
+
   test "limiter supervisor crash resets its local resources without restarting bridge runtimes" do
     bridge_id = configured_runtime()
     assert {:ok, runtime} = Channels.lookup_runtime(bridge_id)
@@ -79,14 +227,19 @@ defmodule Zaq.Channels.SupervisionTest do
     assert :ok = Channels.stop_bridge_runtime(%{}, bridge_id)
   end
 
-  test "parent crash stops both subtrees and recreates ETS before bootstrapping" do
+  test "parent crash stops all subtrees and recreates ETS before bootstrapping" do
     bridge_id = configured_runtime()
     assert {:ok, old_runtime} = Channels.lookup_runtime(bridge_id)
     old_parent = Process.whereis(Channels)
     old_table = :ets.whereis(:zaq_channels_listeners)
 
     descendants =
-      [Process.whereis(BridgeSupervisor), Process.whereis(Ingress)] ++
+      [
+        Process.whereis(BridgeSupervisor),
+        Process.whereis(Ingress),
+        Process.whereis(WebWidget.Supervisor),
+        Process.whereis(WebWidget.Configuration)
+      ] ++
         ingress_children() ++ runtime_pids(old_runtime)
 
     crash_child(Zaq.Supervisor, Channels, descendants)
@@ -106,6 +259,7 @@ defmodule Zaq.Channels.SupervisionTest do
     refs =
       monitor_all([
         Process.whereis(Ingress),
+        Process.whereis(WebWidget.Supervisor),
         Process.whereis(BridgeSupervisor) | runtime_pids(runtime)
       ])
 
@@ -269,7 +423,7 @@ defmodule Zaq.Channels.SupervisionTest do
 
   defp crash_child(parent, child, descendants) do
     pid = Process.whereis(child)
-    refs = monitor_all([pid | descendants])
+    refs = monitor_all(Enum.uniq([pid | descendants ++ subtree_pids(pid)]))
     # :kill bypasses OTP terminate callbacks. Hold restart until all linked
     # descendants release their registered names; monitor every subtree process.
     # The separate abnormal-termination test exercises unpaused OTP recovery.
@@ -288,6 +442,14 @@ defmodule Zaq.Channels.SupervisionTest do
 
     refute new_pid == pid
     assert is_pid(new_pid)
+  end
+
+  defp subtree_pids(supervisor) do
+    Enum.flat_map(Supervisor.which_children(supervisor), fn
+      {_, pid, :supervisor, _} when is_pid(pid) -> [pid | subtree_pids(pid)]
+      {_, pid, :worker, _} when is_pid(pid) -> [pid]
+      _ -> []
+    end)
   end
 
   defp monitor_all(pids), do: Enum.map(pids, &{&1, Process.monitor(&1)})

@@ -30,6 +30,15 @@ defmodule ZaqWeb.Live.BO.Communication.IngressStatusUITest do
     assert IngressStatusUI.label(%{status: :disabled}) == "Disabled"
   end
 
+  test "local verification uses the common label and preserves verification details" do
+    health = %{status: :ok, verification: %{scope: :local, external_https: :not_checked}}
+    assert IngressStatusUI.label(health) == "Ready"
+    assert IngressStatusUI.label(%{status: :ok}) == "Ready"
+
+    assert IngressStatusUI.aggregate([%{id: 1, status: health}]).verification ==
+             health.verification
+  end
+
   describe "color/1" do
     test "returns success class for string ok status" do
       assert IngressStatusUI.color(%{"status" => "ok"}) == "status-success"

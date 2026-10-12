@@ -7,8 +7,10 @@ defmodule Zaq.Channels.CommunicationBridge do
   - Resolve provider -> bridge mappings through `Zaq.Channels.Bridge`.
   - Delegate provider interaction operations (typing/reactions/thread watches).
   - Coordinate runtime sync delegation (`sync_config_runtime/2`,
-    `sync_provider_runtime/1`) with fallback behavior when optional callbacks
+     `sync_provider_runtime/1,2`) with fallback behavior when optional callbacks
     are not implemented by a bridge.
+  - Route provider-scoped runtime startup before connector startup, forwarding
+    trusted initialization options unchanged.
   - Build and dispatch events through `Zaq.NodeRouter` for channel-originated
     activity: Engine routing events for incoming messages, and message ratings
     once a channel has mapped its provider vocabulary to a ZAQ rating.
@@ -284,23 +286,36 @@ defmodule Zaq.Channels.CommunicationBridge do
     end
   end
 
-  @doc "Applies supplied runtime config without Repo access; legacy provider-only calls resolve DB config."
-  @spec sync_provider_runtime(map() | atom() | String.t()) :: :ok | {:error, term()}
-  def sync_provider_runtime(%{id: id, provider: provider, enabled: enabled} = config)
+  @doc "Synchronizes an explicit runtime target; bare providers retain legacy connector lookup."
+  @spec sync_provider_runtime(Bridge.runtime_target() | atom() | String.t(), keyword()) ::
+          :ok | {:error, term()}
+  def sync_provider_runtime(target, opts \\ [])
+
+  def sync_provider_runtime(%{id: id, provider: provider, enabled: enabled} = config, opts)
       when is_integer(id) and id > 0 and is_binary(provider) and is_boolean(enabled) do
-    with {:ok, bridge} <- Bridge.resolve_bridge(provider) do
-      Bridge.dispatch_provider_runtime_sync(bridge, config)
+    with {:ok, bridge} <- Bridge.resolve_bridge(provider, opts) do
+      Bridge.dispatch_provider_runtime_sync(bridge, config, opts)
     end
   end
 
-  def sync_provider_runtime(config) when is_map(config), do: {:error, :invalid_runtime_config}
+  def sync_provider_runtime(config, _opts) when is_map(config),
+    do: {:error, :invalid_runtime_config}
 
-  def sync_provider_runtime(provider) do
+  def sync_provider_runtime({:provider, provider} = target, opts)
+      when is_atom(provider) or is_binary(provider) do
+    with {:ok, bridge} <- Bridge.resolve_bridge(provider, opts) do
+      Bridge.dispatch_provider_runtime_sync(bridge, target, opts)
+    end
+  end
+
+  def sync_provider_runtime(provider, opts) when is_atom(provider) or is_binary(provider) do
     with {:ok, config} <- Bridge.fetch_any_channel_config(provider),
-         {:ok, bridge} <- Bridge.resolve_bridge(provider) do
-      Bridge.dispatch_provider_runtime_sync(bridge, config)
+         {:ok, bridge} <- Bridge.resolve_bridge(provider, opts) do
+      Bridge.dispatch_provider_runtime_sync(bridge, config, opts)
     end
   end
+
+  def sync_provider_runtime(_target, _opts), do: {:error, :invalid_runtime_config}
 
   @doc "Runs bridge-specific connection test for a channel config."
   @spec test_connection(map(), String.t()) :: {:ok, term()} | {:error, term()}

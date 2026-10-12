@@ -1,6 +1,26 @@
 defmodule ZaqWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :zaq
 
+  import WebWidget.Endpoint
+  web_widget_socket("/widget", scope: "/channels")
+
+  # Endpoint-owned ingress normalization must precede adapter cookie/socket guards.
+  # The backend must be isolated behind ingress that overwrites forwarded headers.
+  defoverridable call: 2
+
+  @impl Plug
+  def call(conn, opts) do
+    rewrite_on =
+      case config(:force_ssl) do
+        options when is_list(options) -> Keyword.get(options, :rewrite_on, [])
+        _ -> []
+      end
+
+    conn
+    |> Plug.RewriteOn.call(Plug.RewriteOn.init(rewrite_on))
+    |> super(opts)
+  end
+
   # The session will be stored in the cookie and signed,
   # this means its contents can be read but not tampered with.
   # Set :encryption_salt if you would also like to encrypt it.

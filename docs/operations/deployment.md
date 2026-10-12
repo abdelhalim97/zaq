@@ -170,11 +170,21 @@ Do not let untrusted clients reach the backend directly: forwarded scheme header
 
 Open `https://zaq.company.com/bo/login`. Verify login and LiveView navigation without redirect loops or WebSocket/origin errors. For integrations requiring callbacks, also set **System Config → Global → Base URL** to the public HTTPS URL. That database setting is separate from `PHX_HOST`.
 
+Web widgets use the same host HTTPS normalization as the endpoint, before their
+cookie/socket guards. No separate widget proxy configuration is needed; the HTTP
+listener remains unchanged. See
+[widget ingress startup configuration](../guides/web-widget-integration.md#ordinary-application-startup-behind-ingress)
+for trust boundaries and development tunnel configuration.
+
 ### Troubleshooting
 
 - **Redirects to `https://localhost/...` or `https://example.com/...`:** correct the container's `PHX_HOST` and recreate it. Phoenix SSL redirects default to the configured endpoint hostname, not necessarily the incoming request hostname.
 - **Repeated redirects behind a proxy:** verify it overwrites `X-Forwarded-Proto` and preserves the public host.
 - **TLS errors at `https://server:4000`:** that port serves HTTP, not TLS. Use the proxy's HTTPS endpoint.
+- **Widget `503 https_required` behind HTTPS ingress:** check the host Endpoint's
+  `force_ssl[:rewrite_on]`, ingress header sanitization and backend isolation in the
+  [widget integration guide](../guides/web-widget-integration.md#ordinary-application-startup-behind-ingress).
+  Do not disable Secure cookies or infer ingress trust from a visitor's forwarded IP.
 - **Changing `BASE_URL` or `BASE_URL_SCHEME` does not fix SSL behavior:** neither disables enforcement nor changes the endpoint's HTTPS/443 configuration. `force_ssl` is compile-time configuration; changing it requires rebuilding. Do not disable it for production.
 
 Direct TLS termination in Phoenix is an alternative but requires an `https` listener and certificate/key configuration as described in [runtime.exs](../../config/runtime.exs), then rebuilding. The supplied Compose setup does not configure it.

@@ -238,15 +238,18 @@ defmodule Zaq.Channels.CommunicationBridgeTest do
       defdelegate bridge_for(provider, opts), to: Zaq.Channels.BridgeBase
       defdelegate provider_to_bridge_key(provider), to: Zaq.Channels.BridgeBase
       defdelegate resolve_bridge(provider), to: Zaq.Channels.BridgeBase
+      defdelegate resolve_bridge(provider, opts), to: Zaq.Channels.BridgeBase
       defdelegate fetch_connection_details(provider), to: Zaq.Channels.BridgeBase
       defdelegate fetch_connection_details_for_config(config), to: Zaq.Channels.BridgeBase
       defdelegate fetch_channel_config_by_id(id), to: Zaq.Channels.BridgeBase
       defdelegate fetch_channel_config(provider, config_id), to: Zaq.Channels.BridgeBase
       defdelegate fetch_any_channel_config(provider), to: Zaq.Channels.BridgeBase
       defdelegate dispatch_provider_runtime_sync(bridge, config), to: Zaq.Channels.BridgeBase
+      defdelegate dispatch_provider_runtime_sync(bridge, target, opts), to: Zaq.Channels.BridgeBase
       defdelegate capability_snapshot(provider), to: Zaq.Channels.BridgeBase
       defdelegate sync_config_runtime(before_config, after_config), to: Zaq.Channels.BridgeBase
       defdelegate sync_provider_runtime(provider), to: Zaq.Channels.BridgeBase
+      defdelegate sync_provider_runtime(target, opts), to: Zaq.Channels.BridgeBase
       defdelegate required_capabilities(kind), to: Zaq.Channels.BridgeBase
       defdelegate capability_meta(kind), to: Zaq.Channels.BridgeBase
 

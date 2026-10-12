@@ -4,6 +4,7 @@ defmodule ZaqWeb.Router do
   use ZaqWeb, :router
 
   import JidoStudio.Router
+  import WebWidget.Router
 
   pipeline :browser do
     plug :accepts, ["html"]
@@ -45,6 +46,17 @@ defmodule ZaqWeb.Router do
 
   pipeline :api_stream do
     plug :fetch_query_params
+  end
+
+  # The package installs its own session/CSRF pipeline; never fetch the BO session here.
+  scope "/" do
+    pipe_through :channels_node_only
+    web_widget("/widget", scope: "/channels")
+  end
+
+  scope "/" do
+    pipe_through [:api, :channels_node_only]
+    web_widget_api("/widget-api", scope: "/channels")
   end
 
   scope "/", ZaqWeb do

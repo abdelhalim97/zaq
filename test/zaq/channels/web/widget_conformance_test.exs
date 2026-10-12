@@ -1,12 +1,14 @@
 defmodule Zaq.Channels.Web.WidgetConformanceTest do
   use Zaq.DataCase, async: false
 
-  alias Zaq.Channels.Web.{Command, Context, Delivery, Message, Response, Runtime}
+  alias Zaq.Channels.Web.{Command, Context, Delivery, Message, Response}
   alias Zaq.Engine.{ChannelConfig, ChannelConversations, IncomingMessageRouting}
   alias Zaq.SystemConfigFixtures
   alias Zaq.TestSupport.OpenAIStub
 
   defmodule AdapterFixture do
+    alias Zaq.Channels.WebBridge
+
     def ingress(payload, config_id, topic) do
       {:ok, delivery} =
         Delivery.new(%{
@@ -36,7 +38,7 @@ defmodule Zaq.Channels.Web.WidgetConformanceTest do
           delivery: delivery
         )
 
-      Runtime.from_listener(%{id: config_id}, payload, context: context)
+      WebBridge.from_adapter(%{id: config_id}, payload, context: context)
     end
   end
 

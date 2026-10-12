@@ -21,8 +21,8 @@ defmodule Zaq.Channels.Supervisor do
   def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl true
-  def init(_opts) do
-    Supervisor.init([PeopleAuthRateLimiter, BridgeSupervisor], strategy: :one_for_one)
+  def init(opts) do
+    Supervisor.init([PeopleAuthRateLimiter, {BridgeSupervisor, opts}], strategy: :one_for_one)
   end
 
   @doc "Starts runtime for a config via router bridge delegation."

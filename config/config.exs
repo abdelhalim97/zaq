@@ -50,7 +50,10 @@ config :zaq, :channels, %{
     message_format: :html
   },
   web: %{bridge: Zaq.Channels.WebBridge},
-  web_widget: %{bridge: Zaq.Channels.WebBridge},
+  web_widget: %{
+    bridge: Zaq.Channels.WebBridge,
+    adapter: WebWidget.HostAdapter
+  },
   disk: %{bridge: Zaq.Channels.DiskBridge}
 }
 

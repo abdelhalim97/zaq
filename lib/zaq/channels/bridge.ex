@@ -22,28 +22,37 @@ defmodule Zaq.Channels.Bridge do
   @smtp_provider "email:smtp"
   @imap_provider "email:imap"
 
+  @type runtime_target :: map() | {:provider, atom() | String.t()}
+
   @callback to_internal(map(), map()) :: Incoming.t() | {:error, term()}
   @callback capability_snapshot(map()) :: {:ok, map()} | {:error, term()}
 
-  @callback start_runtime(map()) :: :ok | {:error, term()}
+  @callback start_runtime(runtime_target()) :: :ok | {:error, term()}
+  @callback start_runtime(runtime_target(), keyword()) :: :ok | {:error, term()}
   @callback stop_runtime(map()) :: :ok | {:error, term()}
   @callback sync_runtime(map() | nil, map()) :: :ok | {:error, term()}
-  @callback sync_provider_runtime(map()) :: :ok | {:error, term()}
+  @callback sync_provider_runtime(runtime_target()) :: :ok | {:error, term()}
+  @callback sync_provider_runtime(runtime_target(), keyword()) :: :ok | {:error, term()}
   @callback build_runtime_specs(map()) :: {:ok, {map() | nil, list()}} | {:error, term()}
+  @callback build_runtime_specs(runtime_target(), keyword()) ::
+              {:ok, {map() | nil, list()}} | {:error, term()}
   @callback runtime_update_enabled_enabled(map(), map()) :: :ok | {:error, term()}
   @callback runtime_supervisor_module() :: module()
-  @callback runtime_bridge_id(map()) :: String.t()
+  @callback runtime_bridge_id(runtime_target()) :: String.t()
   @callback test_connection(map(), String.t()) :: {:ok, term()} | {:error, term()}
   @callback before_incoming(map(), map(), keyword(), module()) ::
               {:ok, {map(), map(), keyword()}} | {:error, term()}
   @callback after_incoming(map(), map(), keyword(), term(), module()) :: term()
 
   @optional_callbacks start_runtime: 1,
+                      start_runtime: 2,
                       stop_runtime: 1,
                       sync_runtime: 2,
                       sync_provider_runtime: 1,
+                      sync_provider_runtime: 2,
                       runtime_update_enabled_enabled: 2,
                       build_runtime_specs: 1,
+                      build_runtime_specs: 2,
                       runtime_supervisor_module: 0,
                       runtime_bridge_id: 1,
                       before_incoming: 4,
@@ -111,18 +120,21 @@ defmodule Zaq.Channels.Bridge do
       defdelegate dispatch_provider_runtime_sync(bridge, config),
         to: Zaq.Channels.Bridge
 
-      def start_runtime(config) do
-        bridge_id = runtime_bridge_id(config)
+      def start_runtime(target), do: ChannelBridge.start_runtime(__MODULE__, target, [])
 
-        with true <-
-               function_exported?(__MODULE__, :build_runtime_specs, 1) || {:error, :unsupported},
-             {:ok, {state_spec, listeners}} <- build_runtime_specs(config) do
-          case runtime_supervisor_module().start_runtime(bridge_id, state_spec, listeners) do
-            {:ok, _runtime} -> :ok
-            {:error, :already_running} -> ChannelBridge.restart_runtime(__MODULE__, config)
-            {:error, reason} -> {:error, reason}
-          end
-        end
+      def start_runtime({:provider, _} = target, opts),
+        do: ChannelBridge.start_runtime(__MODULE__, target, opts)
+
+      # Legacy connector overrides keep their lifecycle semantics. Bridges needing
+      # option-aware connector construction can override this additive callback.
+      def start_runtime(config, _opts) when is_map(config), do: start_runtime(config)
+
+      def build_runtime_specs({:provider, _}, _opts), do: {:ok, {nil, []}}
+
+      def build_runtime_specs(config, _opts) when is_map(config) do
+        if function_exported?(__MODULE__, :build_runtime_specs, 1),
+          do: apply(__MODULE__, :build_runtime_specs, [config]),
+          else: {:error, :unsupported}
       end
 
       def stop_runtime(config),
@@ -138,8 +150,14 @@ defmodule Zaq.Channels.Bridge do
 
       def sync_runtime(_before, _after), do: :ok
 
+      def sync_provider_runtime({:provider, _} = target), do: sync_provider_runtime(target, [])
       def sync_provider_runtime(%{enabled: false} = config), do: stop_runtime(config)
       def sync_provider_runtime(%{enabled: true} = config), do: start_runtime(config)
+
+      def sync_provider_runtime({:provider, _} = target, opts), do: start_runtime(target, opts)
+
+      def sync_provider_runtime(config, _opts) when is_map(config),
+        do: sync_provider_runtime(config)
 
       def runtime_update_enabled_enabled(_before, _after), do: :ok
 
@@ -148,19 +166,62 @@ defmodule Zaq.Channels.Bridge do
       def runtime_bridge_id(config), do: ChannelBridge.default_bridge_id(config)
 
       defoverridable start_runtime: 1,
+                     start_runtime: 2,
                      stop_runtime: 1,
                      sync_runtime: 2,
                      sync_provider_runtime: 1,
+                     sync_provider_runtime: 2,
+                     build_runtime_specs: 2,
                      runtime_update_enabled_enabled: 2,
                      runtime_supervisor_module: 0,
                      runtime_bridge_id: 1
     end
   end
 
-  @spec default_bridge_id(map()) :: String.t()
+  @spec default_bridge_id(runtime_target()) :: String.t()
+  def default_bridge_id({:provider, provider}), do: "provider:#{provider}"
+
   def default_bridge_id(config),
     do:
       "#{Map.get(config, :provider) || Map.get(config, "provider")}_#{Map.get(config, :id) || Map.get(config, "id")}"
+
+  @doc false
+  @spec start_runtime(module(), runtime_target(), keyword()) :: :ok | {:error, term()}
+  def start_runtime(bridge, target, opts) do
+    with {:ok, specs} <- runtime_specs(bridge, target, opts) do
+      start_runtime_specs(bridge, target, specs)
+    end
+  end
+
+  defp runtime_specs(bridge, target, opts) do
+    cond do
+      bridge_supports?(bridge, :build_runtime_specs, 2) ->
+        bridge.build_runtime_specs(target, opts)
+
+      is_map(target) and bridge_supports?(bridge, :build_runtime_specs, 1) ->
+        bridge.build_runtime_specs(target)
+
+      true ->
+        {:error, :unsupported}
+    end
+  end
+
+  defp start_runtime_specs(_bridge, {:provider, _}, {nil, []}), do: :ok
+
+  defp start_runtime_specs(bridge, target, {state_spec, listeners}) do
+    case bridge.runtime_supervisor_module().start_runtime(
+           bridge.runtime_bridge_id(target),
+           state_spec,
+           listeners
+         ) do
+      {:ok, _runtime} -> :ok
+      {:error, :already_running} -> restart_existing_runtime(bridge, target)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp restart_existing_runtime(_bridge, {:provider, _}), do: :ok
+  defp restart_existing_runtime(bridge, config), do: restart_runtime(bridge, config)
 
   @spec stop_runtime_normalized(module(), map()) :: :ok | {:error, term()}
   def stop_runtime_normalized(bridge_module, config)
@@ -365,16 +426,41 @@ defmodule Zaq.Channels.Bridge do
   end
 
   @doc "Delegates provider runtime sync to bridge callback or fallback runtime hooks."
-  @spec dispatch_provider_runtime_sync(module(), map()) :: :ok | {:error, term()}
-  def dispatch_provider_runtime_sync(bridge, config) do
-    if bridge_supports?(bridge, :sync_provider_runtime, 1) do
-      bridge.sync_provider_runtime(config)
-    else
-      fallback_sync_provider_runtime(config)
+  @spec dispatch_provider_runtime_sync(module(), runtime_target(), keyword()) ::
+          :ok | {:error, term()}
+  def dispatch_provider_runtime_sync(bridge, target, opts \\ [])
+
+  def dispatch_provider_runtime_sync(bridge, {:provider, _} = target, opts) do
+    case dispatch_runtime_sync(bridge, target, opts) do
+      :ok -> :ok
+      _ -> {:error, :provider_infrastructure_start_failed}
+    end
+  rescue
+    _ -> {:error, :provider_infrastructure_start_failed}
+  catch
+    _, _ -> {:error, :provider_infrastructure_start_failed}
+  end
+
+  def dispatch_provider_runtime_sync(bridge, config, opts) when is_map(config),
+    do: dispatch_runtime_sync(bridge, config, opts)
+
+  defp dispatch_runtime_sync(bridge, target, opts) do
+    cond do
+      bridge_supports?(bridge, :sync_provider_runtime, 2) ->
+        bridge.sync_provider_runtime(target, opts)
+
+      is_map(target) and bridge_supports?(bridge, :sync_provider_runtime, 1) ->
+        bridge.sync_provider_runtime(target)
+
+      match?({:provider, _}, target) and bridge_supports?(bridge, :start_runtime, 2) ->
+        bridge.start_runtime(target, opts)
+
+      true ->
+        fallback_sync_provider_runtime(target)
     end
   end
 
-  @doc "Returns standardized capability snapshot for a provider."
+  @doc "Returns standardized capabilities; explicit provider scope excludes connector credentials."
   @spec capability_snapshot(atom() | String.t(), map()) :: {:ok, map()} | {:error, term()}
   def capability_snapshot(provider, params \\ %{}) when is_map(params) do
     with {:ok, bridge} <- resolve_bridge(provider),
@@ -383,6 +469,12 @@ defmodule Zaq.Channels.Bridge do
          {:ok, raw_snapshot} <- bridge.capability_snapshot(config) do
       {:ok, normalize_capability_snapshot(raw_snapshot, config)}
     end
+  end
+
+  defp fetch_capability_config(provider, %{scope: :provider} = params) do
+    if Map.has_key?(params, :config_id) or Map.has_key?(params, "config_id"),
+      do: {:error, :invalid_request},
+      else: {:ok, synthetic_capability_config(provider)}
   end
 
   defp fetch_capability_config(provider, params) do
@@ -470,9 +562,10 @@ defmodule Zaq.Channels.Bridge do
     do: CommunicationBridge.sync_config_runtime(before_config, after_config)
 
   @doc "Synchronizes runtime processes from canonical DB config for provider."
-  @spec sync_provider_runtime(atom() | String.t()) :: :ok | {:error, term()}
-  def sync_provider_runtime(provider),
-    do: CommunicationBridge.sync_provider_runtime(provider)
+  @spec sync_provider_runtime(runtime_target() | atom() | String.t(), keyword()) ::
+          :ok | {:error, term()}
+  def sync_provider_runtime(target, opts \\ []),
+    do: CommunicationBridge.sync_provider_runtime(target, opts)
 
   @doc "Returns required capabilities for a channel kind."
   @spec required_capabilities(:communication | :data_source) :: [atom()]
@@ -483,6 +576,8 @@ defmodule Zaq.Channels.Bridge do
   @spec capability_meta(:communication | :data_source) :: map()
   def capability_meta(:communication), do: @communication_capability_meta
   def capability_meta(:data_source), do: DataSourceBridge.capability_meta()
+
+  defp fallback_sync_provider_runtime({:provider, _}), do: :ok
 
   defp fallback_sync_provider_runtime(config) do
     if config.enabled do

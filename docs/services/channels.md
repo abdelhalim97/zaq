@@ -873,6 +873,12 @@ Required callbacks:
 
 Optional callbacks cover runtime/lifecycle and provider extras (`start_runtime/1`,
 `stop_runtime/1`, typing/reaction callbacks, profile/DM helpers, etc.).
+Bridge also owns the option-aware `start_runtime/2`, `sync_provider_runtime/2` and
+`build_runtime_specs/2` lifecycle contracts. A connector is a configuration map;
+shared services use the explicit `{:provider, provider}` target. Supplying options
+does not change target meaning. Legacy connector overrides are preserved by defaults,
+while bridges needing option-aware connector behavior can override the additive
+callbacks. CommunicationBridge routes targets/options without owning those contracts.
 
 Shared routing helpers pass normalized incoming envelopes to Engine admission.
 Engine persists the prompt before Agent execution and finalizes the outcome before
@@ -1170,11 +1176,27 @@ See [Web transport contracts](#web-transport-contracts) for initialization, hist
 It uses `Supervisor` with `:one_for_one` and starts these children in order:
 
 1. `Zaq.Channels.PeopleAuthRateLimiter` — failed-identification counters and config cache.
-2. `Zaq.Channels.BridgeSupervisor` — `DynamicSupervisor` for bridge state and listener processes.
+2. `Zaq.Channels.BridgeSupervisor` — `DynamicSupervisor` for configured provider
+   infrastructure, bridge state and listener processes. Provider infrastructure
+   starts before enabled connector bootstrap, entirely inside this subtree.
 
 Each child restarts independently. A bridge-supervisor restart preserves limiter
 counters and cache; a limiter-supervisor restart resets its local counters/cache
-without restarting bridge runtimes. Stopping the parent stops both subtrees.
+without restarting bridge runtimes. Widget infrastructure restarts are recovered
+inside each stable `WebWidget.Connector` subtree, without restarting unrelated bridges.
+The widget's shared `{WebWidget, opts}` and connector supervisors are dynamic bridge
+children; neither the application nor the static Channels parent knows widget options.
+The parent forwards startup options unchanged. Runtime synchronization routes the
+explicit `{:provider, provider}` target to registered bridges before enabled
+connector startup. WebBridge assembles common `host_options` and provider-keyed
+`adapter_options` and supplies default PubSub. Bridge's common startup path starts
+shared adapter children through the same tracked runtime/listener machinery as
+connector children, under a distinct
+provider runtime ID. WebBridge owns adapter resolution; transport policy
+interpretation stays in the adapter. No adapter callback dispatch belongs to the base
+Bridge or supervisor, and no provider-specific bootstrap flags are stored in the registry.
+Only Channels nodes start widget infrastructure. Stopping the parent stops all subtrees.
+See [WebBridge lifecycle](web-bridge.md#widget-runtime-construction).
 
 ### Process tracking
 

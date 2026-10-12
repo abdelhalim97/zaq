@@ -2,6 +2,10 @@ defmodule Zaq.Channels.BridgeSupervisor do
   @moduledoc """
   Dynamic supervisor for channel bridge listener processes.
 
+  Starts configured provider infrastructure before bootstrapping enabled
+  connectors. Infrastructure and connector lifecycles belong to this subtree;
+  adapters supply child specs and own transport-specific recovery.
+
   On startup, loads all enabled retrieval and data source channel configs from
   the database and starts the corresponding runtime processes. Supports runtime
   start/stop of listeners when channel configs are enabled or disabled.
@@ -28,17 +32,24 @@ defmodule Zaq.Channels.BridgeSupervisor do
   @table :zaq_channels_listeners
   @children_table :zaq_channels_runtime_children
 
-  def start_link(_opts) do
+  def start_link(opts) do
     Enum.each([@table, @children_table], fn table ->
       if :ets.whereis(table) == :undefined, do: :ets.new(table, [:named_table, :public, :set])
     end)
 
     case DynamicSupervisor.start_link(__MODULE__, [], name: __MODULE__) do
-      {:ok, _pid} = result ->
+      {:ok, pid} = result ->
         :ets.delete_all_objects(@table)
         :ets.delete_all_objects(@children_table)
-        load_initial_runtimes()
-        result
+
+        case load_initial_runtimes(opts) do
+          :ok ->
+            result
+
+          {:error, _} = error ->
+            Supervisor.stop(pid)
+            error
+        end
 
       error ->
         error
@@ -75,11 +86,17 @@ defmodule Zaq.Channels.BridgeSupervisor do
   def start_runtime(bridge_id, state_spec, listener_specs)
       when is_binary(bridge_id) and (is_nil(state_spec) or is_map(state_spec)) and
              is_list(listener_specs) do
-    if running?(bridge_id) do
-      {:error, :already_running}
-    else
-      do_start_runtime(bridge_id, state_spec, listener_specs)
-    end
+    :global.trans(
+      {{__MODULE__, bridge_id}, self()},
+      fn ->
+        if running?(bridge_id) do
+          {:error, :already_running}
+        else
+          do_start_runtime(bridge_id, state_spec, listener_specs)
+        end
+      end,
+      [node()]
+    )
   end
 
   @doc "Stops a bridge runtime by bridge id."
@@ -130,9 +147,21 @@ defmodule Zaq.Channels.BridgeSupervisor do
   # Private
   # ---------------------------------------------------------------------------
 
-  defp load_initial_runtimes do
-    load_initial_runtimes_for(:retrieval, CommunicationBridge)
-    load_initial_runtimes_for(:data_source, DataSourceBridge)
+  defp load_initial_runtimes(opts) do
+    providers = Zaq.Config.get(:zaq, :channels, %{}, opts) |> Map.keys()
+
+    with :ok <- Enum.reduce_while(providers, :ok, &bootstrap_provider(&1, &2, opts)) do
+      load_initial_runtimes_for(:retrieval, CommunicationBridge)
+      load_initial_runtimes_for(:data_source, DataSourceBridge)
+      :ok
+    end
+  end
+
+  defp bootstrap_provider(provider, :ok, opts) do
+    case CommunicationBridge.sync_provider_runtime({:provider, provider}, opts) do
+      :ok -> {:cont, :ok}
+      error -> {:halt, error}
+    end
   end
 
   defp load_initial_runtimes_for(kind, runtime_module) do
@@ -210,6 +239,9 @@ defmodule Zaq.Channels.BridgeSupervisor do
         {:ok, pid} ->
           {:cont, {:ok, [pid | pids]}}
 
+        {:ok, pid, _info} ->
+          {:cont, {:ok, [pid | pids]}}
+
         {:error, {:already_started, pid}} ->
           {:cont, {:ok, [pid | pids]}}
 
@@ -242,6 +274,7 @@ defmodule Zaq.Channels.BridgeSupervisor do
   defp start_state_process(spec) do
     case DynamicSupervisor.start_child(__MODULE__, spec) do
       {:ok, pid} -> {:ok, pid}
+      {:ok, pid, _info} -> {:ok, pid}
       {:error, {:already_started, pid}} -> {:ok, pid}
       {:error, reason} -> {:error, reason}
     end
@@ -324,6 +357,8 @@ defmodule Zaq.Channels.BridgeSupervisor do
 
   defp tracked_spec(spec, bridge_id, slot) do
     spec = Supervisor.child_spec(spec, [])
+    {module, _, _} = spec.start
+    spec = Map.put_new(spec, :modules, [module])
     %{spec | start: {__MODULE__, :start_tracked_child, [spec.start, bridge_id, slot]}}
   end
 

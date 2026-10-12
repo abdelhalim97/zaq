@@ -48,7 +48,16 @@ defmodule Zaq.Engine.WidgetConnectorSettings do
     with {:ok, config} <- selected(id),
          base_url when is_binary(base_url) and base_url != "" <-
            SystemConfig.get_global_base_url() do
-      channels(%{op: :embed_script, widget_id: config.id, base_url: base_url}, opts)
+      dispatch(
+        :channel_installation,
+        %{
+          op: :installation,
+          provider: @provider,
+          config: setup_config(config),
+          base_url: base_url
+        },
+        opts
+      )
     else
       nil -> {:error, :missing_global_base_url}
       {:error, _} = error -> error
@@ -68,7 +77,7 @@ defmodule Zaq.Engine.WidgetConnectorSettings do
          configs: Enum.map(configs, &projection/1),
          selected: if(config.id, do: projection(config)),
          base_url: SystemConfig.get_global_base_url(),
-         adapter: channels(%{op: :status, widget_id: config.id}, opts)
+         adapter: adapter_capabilities(opts)
        }}
     end
   end
@@ -217,9 +226,19 @@ defmodule Zaq.Engine.WidgetConnectorSettings do
   end
 
   defp adapter_available(opts) do
-    case channels(%{op: :status, widget_id: nil}, opts) do
+    case adapter_capabilities(opts) do
       {:ok, %{available?: true}} -> :ok
       _ -> {:error, :widget_runtime_not_configured}
+    end
+  end
+
+  defp adapter_capabilities(opts) do
+    case dispatch(:channel_capability_snapshot, %{provider: @provider, scope: :provider}, opts) do
+      {:ok, %{resolved: %{runtime: runtime, installation: installation}}} ->
+        {:ok, %{available?: runtime == true and installation == true}}
+
+      _ ->
+        {:error, :widget_runtime_not_configured}
     end
   end
 
@@ -286,7 +305,7 @@ defmodule Zaq.Engine.WidgetConnectorSettings do
     |> Map.take([:id, :name, :provider, :kind, :enabled, :token, :settings])
   end
 
-  defp channels(request, opts), do: dispatch(:widget_adapter_setup, request, opts)
+  defp setup_config(config), do: %{id: config.id, provider: @provider}
 
   defp dispatch(action, request, opts) do
     router = Keyword.get(opts, :node_router, NodeRouter)

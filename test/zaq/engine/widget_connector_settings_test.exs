@@ -13,7 +13,7 @@ defmodule Zaq.Engine.WidgetConnectorSettingsTest do
     def dispatch(%Event{opts: opts} = event) do
       response =
         case opts[:action] do
-          :widget_adapter_setup -> {:ok, %{available?: true, runtime: :disabled}}
+          :channel_capability_snapshot -> {:ok, %{resolved: %{runtime: true, installation: true}}}
           :sync_channel_runtime -> :ok
         end
 
