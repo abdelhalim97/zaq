@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T19:48:45Z",
+  "description": "Tests first media-only capture -\u003e delayed prompt -\u003e scoped alias -\u003e real materializer/provider edge -\u003e model projection; restart and legacy/unauthorized scenarios. Update materialization/channels/agent/engine service docs and module docs. mix q per issue, isolated regressions, final mix precommit. No new UI or browser E2E required.",
+  "id": "zaq-w02.5",
+  "labels": [],
+  "parent": "zaq-w02",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-w02] Integrated validation and documentation",
+  "type": "task",
+  "updated_at": "2026-10-12T19:48:45Z"
+}
