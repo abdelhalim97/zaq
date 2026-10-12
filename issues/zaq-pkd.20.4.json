@@ -11,9 +11,15 @@
   "id": "zaq-pkd.20.4",
   "labels": [],
   "parent": "zaq-pkd.20",
+  "comments": [
+    {
+      "text": "Integrated exact pushed web_widget revision d7ed897fae3e519ae25ea5155d7c20b5e8f8805d from feature/submission-message-lifecycle in its existing project worktree; only web_widget lock key changed. Remote session ses_ecef514b0ffegZqQ4Lh1HJhrgu reports 307 tests precommit + asset build +2 real constructor smoke tests passing, 402-case browser run pending. ZAQ updated public owner docs and removed RequestOwner references. Final focused suite 6 doctests/11 properties/548 tests PASS; installed adapter test proves repeated no-answer submissions with no pending spinner. Existing WebBridge browser 9 tests PASS across Firefox/WebKit/Chromium, no retries. Final mix q PASS and mix precommit PASS: 48 doctests/248 properties/10789 tests/0 failures,1 existing skip,122 excluded (594.6s total); full default tags/assertions preserved. Failed preliminary gates identified missing Python modules and stale Python3.14 worktree venv plus inherited deleted-conversation fixture. User explicitly authorized fresh environment; rebuilt ignored local .venv with Python3.12 and pinned crawler requirements, pip check PASS,60 Python tests PASS. Fixture correction retains canonical/input/execution evidence and existing denial assertions; no production delete-policy change. git diff --check PASS. ZAQ changes remain uncommitted/unpushed; no final human approval implied. Human v2 UX/consolidated E2E tracked .20.5, overall PR review/coverage remain .15.",
+      "timestamp": "2026-10-12T18:25:07Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-pkd.20] Upstream pin, documentation and integrated validation",
   "type": "task",
-  "updated_at": "2026-10-12T18:24:56Z"
+  "updated_at": "2026-10-12T18:25:07Z"
 }
