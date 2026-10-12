@@ -4,14 +4,16 @@
     "zaq-qdk.5"
   ],
   "blocks": [],
+  "closed_at": "2026-10-12T17:06:58Z",
+  "close_reason": "Final review complete; six scoped files only, no schema/dispatch changes. All targeted Engine/Agent suites and mix q pass. Final MIX_ENV=test mix precommit --max-cases1 passes 9472tests179properties17doctests0failures1skipped114excluded. Normal parallel gate deadlocked6unrelated People/OAuth tests; tracked in zaq-s2z, not claimed fixed. Post-review numerical coverage remains workflow phase; no commit/push authorized.",
   "created": "2026-10-12T16:31:05Z",
   "description": "Run isolated changed tests and mix q per code step, inspect diff for boundaries/duplication and run final mix precommit. Preserve existing concurrency/property coverage. No new browser E2E scope, schema or public dispatch change. Numerical coverage phase remains post-review per workflow; no commit/push without authorization.",
   "id": "zaq-qdk.6",
   "labels": [],
   "parent": "zaq-qdk",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[zaq-qdk.6] Validate completed admission refactor",
   "type": "task",
-  "updated_at": "2026-10-12T16:31:07Z"
+  "updated_at": "2026-10-12T17:06:58Z"
 }
