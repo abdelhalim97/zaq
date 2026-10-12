@@ -7,9 +7,15 @@
   "id": "zaq-yx7.10",
   "labels": [],
   "parent": "zaq-yx7",
+  "comments": [
+    {
+      "text": "Upstream scope support dispatched by explicit user request to ses_ed938c98dffeNy0Lv6C031hy3u with returnResult; exact early API confirmed (scope:/channels startup and three macro arity2 scope opts; online installed/offline explicit installation; root backward compatible; canonical validation and path conflict rejection). Host phase1 implemented: provider-shared specs use existing tracked start_runtime/do_start_runtime under provider:\u003ckey\u003e; removed CommunicationBridge infrastructure callback/collector and supervisor parallel child startup loop. Provider sync additive arity2 opts routes optional bridge start_runtime/2; static Channels parent forwards opts unchanged; PubSub default moved WebBridge. Node-local runtime-ID global lock serializes concurrent starts; OTP extra-info children and original module metadata preserved. Tests first missing APIs RED; 246 tests+3 properties pass including JidoChat and public widget recovery; after quality helper fixes final52tests+2properties pass seed893691; mix q clean. ExDNA timeout initial then 3 nesting findings fixed without rule changes. Existing malformed-child test now asserts stronger all-spec prevalidation before any start (partial valid-child startup failure still proves rollback). Outstanding: scoped candidate integration/routes/cookies/assets/probes, label reuse, channel_setup consolidation into read queries + installation operation, full regression and evaluation refresh. Current demo may run earlier compiled code; not counted for latest phase. No ZAQ commits/pushes; published090f249 remains pinned pending new scope SHA.",
+      "timestamp": "2026-10-12T02:37:59Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7] Reuse provider runtime startup and trusted channel scope",
   "type": "task",
-  "updated_at": "2026-10-12T02:33:34Z"
+  "updated_at": "2026-10-12T02:37:59Z"
 }
