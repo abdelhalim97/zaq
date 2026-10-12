@@ -6,14 +6,16 @@
   "blocks": [
     "zaq-pkd.20.3"
   ],
+  "closed_at": "2026-10-12T17:07:54Z",
+  "close_reason": "Native request_started notifications implemented in existing StreamEvents reducer with opt-in consumer-neutral lifecycle option; opt-in queued/rejected outcomes traverse existing synchronous Status/Channels boundary. No new execution owner and no opaque context inspection. Red regressions reproduced; Agent API/StreamEvents/Executor suite 6 doctests,6 properties,147 tests pass; mix q passes. Pre-ask answering behavior preserved for existing consumers; widget will ignore it and use native start only.",
   "created": "2026-10-12T16:58:35Z",
   "description": "Reuse Agent.Api RequestControl/HistorySync and Executor Status synchronous Channels boundary. Move answering start notification after native ask accepted; opt-in consumer-neutral submission notifications preserve queued/no answer and asynchronous errors without inspecting opaque transport context or introducing new execution owner. Inputs existing Incoming/Event actor opts; confidential admission unchanged; outputs safe lifecycle status through existing upsert, no root/child IDs to widget. Test queued child/no status create, native busy race, terminal admission error and started ordering with real role boundaries where possible. Extend existing Status path; no Action or tools.",
   "id": "zaq-pkd.20.2",
   "labels": [],
   "parent": "zaq-pkd.20",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-pkd.20] Ordered native start and submission outcome notifications",
   "type": "task",
-  "updated_at": "2026-10-12T17:02:22Z"
+  "updated_at": "2026-10-12T17:07:54Z"
 }
