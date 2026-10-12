@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T19:48:25Z",
+  "description": "Approved implementation: no new descriptor module; reuse Record.attributes, Channels builders/CommunicationMedia, Engine capture and API, InputPrompt/HistoryLoader. Persist versioned source metadata without handles or bytes; hydrate authorized admission/read projections after transactions via confidential NodeRouter Channels event. Preserve original author authorization and legacy display-only fallback. Tests-first each step, real internal boundaries, provider edges mocked; regression/property tests and mix q per issue, final mix precommit. No new UI feature/E2E gate needed; delayed-analysis integration required. Current branch explicitly approved by user; attached PR #842.",
+  "id": "zaq-w02",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "[#842] Restore delayed attachment materialization with durable source metadata",
+  "type": "epic",
+  "updated_at": "2026-10-12T19:48:25Z"
+}
