@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T16:58:45Z",
+  "description": "Extend WebBridge local transport projection: direct async adapter delivery, opt-in lifecycle notifications, stable transport identity propagated once through validated Delivery, sync bounded local reply wait/no duplicate live final/no accepted-work cancellation. Keep Channels delivery confirmation and public projections. Delete RequestOwner after tests migrated, no replacement GenServer/ETS/global registry. Public widget protocol consumed upstream only; Agent/Engine see opaque references. Regression-first tests sync queued ack, async no answer, correlated stream and persisted final, errors, timeout/disconnect and isolation. Action reuse local-only transport over existing CommunicationBridge and NodeRouter role actions; no new execution manager.",
+  "id": "zaq-pkd.20.3",
+  "labels": [],
+  "parent": "zaq-pkd.20",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-pkd.20] Direct widget delivery and RequestOwner removal",
+  "type": "task",
+  "updated_at": "2026-10-12T16:58:45Z"
+}
