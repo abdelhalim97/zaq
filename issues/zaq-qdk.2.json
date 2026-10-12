@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "zaq-qdk.1"
+  ],
   "blocks": [],
   "created": "2026-10-12T16:30:56Z",
   "description": "Owners: existing execution_history tests. Preserve capture independence, invalid bindings/principals, distinct conversation/execution ownership, revocation, denial evidence, legacy semantics and concurrency. Add generated binding mutation checks before refactoring. Reuse existing fixtures and QueryRecorder production telemetry seam.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-qdk.2] Lock down execution authorization regressions",
   "type": "task",
-  "updated_at": "2026-10-12T16:30:57Z"
+  "updated_at": "2026-10-12T16:30:58Z"
 }

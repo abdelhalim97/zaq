@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "zaq-qdk.2"
+  ],
   "created": "2026-10-12T16:30:55Z",
   "description": "Documentation-only. Owners: Engine service guide and module docs; Agent guide links to owner. Define capture, prepare, authorize, read, lease and finalize. Action reuse not applicable: contracts only.",
   "id": "zaq-qdk.1",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-qdk.1] Define lifecycle contracts",
   "type": "task",
-  "updated_at": "2026-10-12T16:30:55Z"
+  "updated_at": "2026-10-12T16:30:58Z"
 }
