@@ -23,11 +23,15 @@
     {
       "text": "Review correction zaq-yx7.9 completed: no separate ZAQ adapter behavior or base-Bridge adapter dispatch; CommunicationBridge routes infrastructure, WebBridge owns construction. 676 tests+12 properties and mix q pass; rebuilt published-pin evaluation has green real WSS lifecycle connector6. Remaining blocker is unchanged zaq-yx7.5; final human UX/review/coverage/precommit not requested.",
       "timestamp": "2026-10-11T19:25:51Z"
+    },
+    {
+      "text": "Scoped upstream publication prerequisite now cleared: published a30116d702f9b271e66f4b97f5bfbb4e432d955b integrated in ZAQ manifest/lock, fetched HEAD verified. Post-pin mixq clean; expanded689tests+12properties pass seed893691 including scoped real host transport/recovery. Latest prior local-source manual WSS connector9 matches candidate bytes and passed entire lifecycle zero browser errors; no service restart after explicit user stop. Upstream root400pass2skip0flaky, scoped3browser3pass and final280testprecommit/assetsclean reports. Historical failure cause notproven and user opted moveon; no production workaround. Keep integrated finalization active for existing zaq-yx7.5 BO WebKit blocker and deferred UX/consolidatedE2E/reviewcoverage/finalprecommit/deployment checks. No ZAQ commit/push authorization inferred.",
+      "timestamp": "2026-10-12T09:44:19Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7.8] Integrate upstream process options adapter candidate and validate",
   "type": "task",
-  "updated_at": "2026-10-11T19:25:51Z"
+  "updated_at": "2026-10-12T09:44:19Z"
 }
