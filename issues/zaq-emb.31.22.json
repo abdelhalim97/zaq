@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T01:59:38Z",
+  "description": "Approved plan: remove unused observations ETS/archive; target live exact native runtime with canonical lease/legacy actor ownership; share attachment prompt formatting; protect full active execution under pressure. No commit/push authorized. Steps tests-first, real internal boundaries, external LLM/transport stubs only. Action reuse: extend ServerManager/Factory/RequestControl/HistoryLifecycle, Engine admission/receipts unchanged; local runtime bookkeeping not independent business Action or exposed tool. Existing Accounts.History is permission-aware recall, PersistMessageHistory is legacy message persistence, neither owns native control. Contracts preserve same actor, scope, configured agent, exact PID/request, accepted access-loss work, receipt/persistence/handoff. Integration/docs validation last.",
+  "id": "zaq-emb.31.22",
+  "labels": [],
+  "parent": "zaq-emb.31",
+  "priority": 2,
+  "status": "open",
+  "title": "[#842] Review fixes: live targeting and complete steering context",
+  "type": "epic",
+  "updated_at": "2026-10-12T01:59:38Z"
+}
