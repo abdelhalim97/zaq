@@ -11,9 +11,15 @@
   "id": "zaq-emb.31.22.4",
   "labels": [],
   "parent": "zaq-emb.31.22",
+  "comments": [
+    {
+      "text": "Factory marks native root entry and per-request runtime context with execution_root. Transformer computes mandatory boundary after refreshed projection, preserving root/consumed steering/tool suffix; missing expected marker fails closed by protecting all. Overflow remains explicit. Regression reproduced latest-user omission first, now passes with multiple-correction order property. Canonical real two-tool + two-correction pressure test passes with exact original root, paired call/results, no background, consumed receipts. Full precommit exposed nested identity fixture relying on default5000 total4096 reserved while silently dropping active exchange; made only that identity fixture window explicit20000, unchanged identity assertions; all24 identity/status tests pass. q clean before this last fixture change; final repeat pending.",
+      "timestamp": "2026-10-12T03:19:15Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-emb.31.22] Protect active execution during trimming",
   "type": "task",
-  "updated_at": "2026-10-12T03:19:14Z"
+  "updated_at": "2026-10-12T03:19:15Z"
 }
