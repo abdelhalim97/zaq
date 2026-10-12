@@ -178,6 +178,7 @@ defmodule Zaq.Agent.ServerManagerTest do
         fingerprints: %{"target" => "a", "other" => "b"},
         agent_servers: %{1 => MapSet.new(["target", "other"])},
         server_to_agent: %{"target" => 1, "other" => 1},
+        runtime_bindings: %{},
         credential_dependencies: %{
           "target" => %{
             credential_id: 10,
@@ -1120,6 +1121,7 @@ defmodule Zaq.Agent.ServerManagerTest do
              fingerprints: %{},
              agent_servers: %{},
              server_to_agent: %{},
+             runtime_bindings: %{},
              credential_dependencies: %{},
              draining: %{},
              monitors: %{},
@@ -1186,6 +1188,7 @@ defmodule Zaq.Agent.ServerManagerTest do
       fingerprints: %{},
       agent_servers: %{},
       server_to_agent: %{},
+      runtime_bindings: %{},
       credential_dependencies: %{},
       draining: %{},
       monitors: %{},
@@ -1287,6 +1290,7 @@ defmodule Zaq.Agent.ServerManagerTest do
       fingerprints: %{},
       agent_servers: %{},
       server_to_agent: %{},
+      runtime_bindings: %{},
       credential_dependencies: %{},
       draining: %{server_id => make_ref()},
       monitors: %{},
@@ -1311,6 +1315,7 @@ defmodule Zaq.Agent.ServerManagerTest do
     state = %{
       fingerprints: %{target_server_id => "old", other_server_id => "current"},
       agent_servers: %{configured_agent.id => MapSet.new([target_server_id, other_server_id])},
+      runtime_bindings: %{},
       server_to_agent: %{
         target_server_id => configured_agent.id,
         other_server_id => configured_agent.id
@@ -1345,6 +1350,7 @@ defmodule Zaq.Agent.ServerManagerTest do
       fingerprints: %{server_id => "current"},
       agent_servers: %{configured_agent.id => MapSet.new([server_id])},
       server_to_agent: %{server_id => configured_agent.id},
+      runtime_bindings: %{},
       draining: %{server_id => drain_ref},
       monitors: %{}
     }
@@ -1362,6 +1368,7 @@ defmodule Zaq.Agent.ServerManagerTest do
       fingerprints: %{server_id => "current"},
       agent_servers: %{configured_agent.id => MapSet.new([server_id])},
       server_to_agent: %{server_id => configured_agent.id},
+      runtime_bindings: %{},
       draining: %{},
       monitors: %{server_id => monitor_ref},
       history: %{}
@@ -1377,6 +1384,7 @@ defmodule Zaq.Agent.ServerManagerTest do
              fingerprints: %{},
              agent_servers: %{},
              server_to_agent: %{},
+             runtime_bindings: %{},
              credential_dependencies: %{},
              draining: %{},
              monitors: %{},
@@ -1445,6 +1453,7 @@ defmodule Zaq.Agent.ServerManagerTest do
       fingerprints: %{server_id => "current"},
       agent_servers: %{123_460 => MapSet.new([server_id])},
       server_to_agent: %{server_id => 123_460},
+      runtime_bindings: %{},
       draining: %{server_id => active_ref},
       monitors: %{}
     }
@@ -1469,6 +1478,7 @@ defmodule Zaq.Agent.ServerManagerTest do
       fingerprints: %{server_id => "current"},
       agent_servers: %{configured_agent.id => MapSet.new([server_id])},
       server_to_agent: %{server_id => configured_agent.id},
+      runtime_bindings: %{},
       draining: %{},
       monitors: %{}
     }
@@ -1486,6 +1496,7 @@ defmodule Zaq.Agent.ServerManagerTest do
              fingerprints: %{},
              agent_servers: %{},
              server_to_agent: %{},
+             runtime_bindings: %{},
              credential_dependencies: %{},
              draining: %{},
              monitors: %{},
@@ -1505,6 +1516,7 @@ defmodule Zaq.Agent.ServerManagerTest do
       fingerprints: %{server_id => "current"},
       agent_servers: %{123_461 => MapSet.new([server_id])},
       server_to_agent: %{server_id => 123_461},
+      runtime_bindings: %{},
       draining: %{server_id => drain_ref},
       monitors: %{}
     }
@@ -1518,6 +1530,7 @@ defmodule Zaq.Agent.ServerManagerTest do
              fingerprints: %{},
              agent_servers: %{},
              server_to_agent: %{},
+             runtime_bindings: %{},
              credential_dependencies: %{},
              draining: %{},
              monitors: %{},
@@ -1537,6 +1550,7 @@ defmodule Zaq.Agent.ServerManagerTest do
       fingerprints: %{server_id => "current"},
       agent_servers: %{200_003 => MapSet.new([server_id])},
       server_to_agent: %{server_id => 200_003},
+      runtime_bindings: %{},
       draining: %{server_id => drain_ref},
       monitors: %{}
     }
@@ -1579,6 +1593,7 @@ defmodule Zaq.Agent.ServerManagerTest do
       fingerprints: %{server_id => "current"},
       agent_servers: %{200_004 => MapSet.new([server_id])},
       server_to_agent: %{server_id => 200_004},
+      runtime_bindings: %{},
       draining: %{},
       monitors: %{}
     }
@@ -1606,6 +1621,7 @@ defmodule Zaq.Agent.ServerManagerTest do
       fingerprints: %{server_id => "current"},
       agent_servers: %{configured_agent.id => MapSet.new([server_id])},
       server_to_agent: %{server_id => configured_agent.id},
+      runtime_bindings: %{},
       draining: %{},
       monitors: %{}
     }
@@ -1619,6 +1635,7 @@ defmodule Zaq.Agent.ServerManagerTest do
              fingerprints: %{},
              agent_servers: %{},
              server_to_agent: %{},
+             runtime_bindings: %{},
              credential_dependencies: %{},
              draining: %{},
              monitors: %{},
@@ -1645,6 +1662,7 @@ defmodule Zaq.Agent.ServerManagerTest do
                fingerprints: %{},
                agent_servers: %{},
                server_to_agent: %{},
+               runtime_bindings: %{},
                credential_dependencies: %{},
                draining: %{},
                monitors: %{},
@@ -1817,8 +1835,8 @@ defmodule Zaq.Agent.ServerManagerTest do
   end
 
   test "request inspection and malformed runtime selectors return no matches" do
-    assert {:error, :not_found} = ServerManager.request_observation(nil)
-    assert {:ok, []} = ServerManager.request_bindings("unrelated", @execution_actor, :malformed)
+    assert {:error, :not_found} = ServerManager.runtime_candidates(nil)
+    assert {:ok, []} = ServerManager.runtime_candidates(@execution_actor, "unrelated", :malformed)
   end
 
   test "runtime hydration happens when server is first ensured, not during init" do
@@ -2680,6 +2698,7 @@ defmodule Zaq.Agent.ServerManagerTest do
       fingerprints: %{},
       agent_servers: %{},
       server_to_agent: %{},
+      runtime_bindings: %{},
       credential_dependencies: %{},
       draining: %{},
       monitors: %{},

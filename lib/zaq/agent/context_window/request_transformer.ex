@@ -5,7 +5,9 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
   This module projects the outgoing provider request without mutating the Jido
   agent's retained state. Older historical messages may be removed from the
   request, but the system prompt, current turn, active ReAct/tool interaction,
-  tools, and output schema remain mandatory.
+   tools, and output schema remain mandatory. A per-request root reference fences
+   the entire execution, including later steering messages, rather than just the
+   latest user turn.
   """
 
   @behaviour Jido.AI.Reasoning.ReAct.RequestTransformer
@@ -23,9 +25,16 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
   def transform_request(request, state, %Config{} = config, runtime_context) do
     window = Map.get(runtime_context || %{}, :context_window, %{})
 
-    with {:ok, request} <- refresh_history(request, state, runtime_context || %{}),
+    with {:ok, request, context} <- refresh_history(request, state, runtime_context || %{}),
          {:ok, budget} <- input_budget(window, config),
-         {:ok, messages} <- fit_messages(request, config, window, budget) do
+         {:ok, messages} <-
+           fit_messages(
+             request,
+             config,
+             window,
+             budget,
+             active_start(context, runtime_context || %{})
+           ) do
       {:ok, %{messages: messages}}
     end
   end
@@ -67,13 +76,14 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
     end
   end
 
-  defp refresh_history(request, _state, _runtime_context), do: {:ok, request}
+  defp refresh_history(request, state, _runtime_context),
+    do: {:ok, request, if(is_map(state), do: Map.get(state, :context))}
 
   defp project_request(request, context, projection, scope) do
     context =
       HistoryLoader.merge_projection(context, projection.messages, opaque_alias_scope: scope)
 
-    {:ok, %{request | messages: AIContext.to_messages(context)}}
+    {:ok, %{request | messages: AIContext.to_messages(context)}, context}
   end
 
   defp input_budget(window, %Config{} = config) do
@@ -89,19 +99,25 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
     end
   end
 
-  defp fit_messages(%{messages: messages} = request, %Config{} = config, window, budget)
+  defp fit_messages(
+         %{messages: messages} = request,
+         %Config{} = config,
+         window,
+         budget,
+         active_start
+       )
        when is_list(messages) do
     request = request_for_estimate(request, config)
 
     if RequestEstimator.estimate(request, window) <= budget do
       {:ok, messages}
     else
-      {mandatory, evictable_units} = split_messages(messages)
+      {mandatory, evictable_units} = split_messages(messages, active_start)
       fit_units(request, mandatory, evictable_units, window, budget)
     end
   end
 
-  defp fit_messages(_request, _config, _window, _budget),
+  defp fit_messages(_request, _config, _window, _budget, _active_start),
     do: {:error, {:context_window_exceeded, :invalid_messages}}
 
   defp fit_units(request, mandatory, [], window, budget) do
@@ -124,8 +140,9 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
     end
   end
 
-  defp split_messages(messages) do
-    latest_user_index = latest_user_index(messages) || max(length(messages) - 1, 0)
+  defp split_messages(messages, active_start) do
+    latest_user_index =
+      active_start || latest_user_index(messages) || max(length(messages) - 1, 0)
 
     {evictable, mandatory} = Enum.split(messages, latest_user_index)
 
@@ -138,6 +155,16 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformer do
 
     {Enum.map(mandatory, &[&1]), logical_units(evictable)}
   end
+
+  defp active_start(%AIContext{} = context, %{execution_root: root}) when is_binary(root) do
+    index = Enum.find_index(Enum.reverse(context.entries), &(&1.refs[:execution_root] == root))
+
+    if is_integer(index),
+      do: index + if(is_binary(context.system_prompt), do: 1, else: 0),
+      else: 0
+  end
+
+  defp active_start(_context, _runtime_context), do: nil
 
   defp logical_units(messages), do: do_logical_units(messages, []) |> Enum.reverse()
 

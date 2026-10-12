@@ -8,7 +8,6 @@ defmodule Zaq.Agent.StreamEvents do
 
   alias ReqLLM.Message.ContentPart
   alias ReqLLM.ToolResult
-  alias Zaq.Agent.ServerManager
   alias Zaq.Agent.Status
   alias Zaq.Contracts.Record
   alias Zaq.Engine.Messages.Incoming
@@ -72,12 +71,10 @@ defmodule Zaq.Agent.StreamEvents do
       node_router: Keyword.get(opts, :node_router, Zaq.NodeRouter),
       status_module: Keyword.get(opts, :status_module, Status),
       request_id: actual_request_id(Keyword.get(opts, :request), incoming),
-      correlation_id: request_id(incoming),
       actor: Keyword.get(opts, :actor),
       execution_scope: Keyword.get(opts, :execution_scope),
       execution_user_message_id: Keyword.get(opts, :execution_user_message_id),
       execution_id: Keyword.get(opts, :execution_id),
-      server_id: Keyword.get(opts, :server_id),
       runtime_pid: Keyword.get(opts, :runtime_pid),
       agent: Keyword.get(opts, :agent),
       started_at: started_at,
@@ -101,7 +98,6 @@ defmodule Zaq.Agent.StreamEvents do
       termination_reason: nil,
       error: nil
     }
-    |> register(:running)
   end
 
   defp handle_event(event, state), do: handle_event(kind(event), event, state)
@@ -124,7 +120,6 @@ defmodule Zaq.Agent.StreamEvents do
     |> flush_trace_segment(event)
     |> Map.put(:termination_reason, :cancelled)
     |> Map.put(:error, :cancelled)
-    |> register(:cancelled)
   end
 
   defp handle_event(_kind, _event, state), do: state
@@ -198,7 +193,6 @@ defmodule Zaq.Agent.StreamEvents do
       }
 
       maybe_flush(state, event)
-      |> register(:streaming)
     else
       state
     end
@@ -240,7 +234,7 @@ defmodule Zaq.Agent.StreamEvents do
     if existing["status"] == "completed" do
       %{state | trace: put_tool_trace(state.trace, tool_call)}
     else
-      broadcast_tool(state, tool_call, :started) |> register(:tool_running)
+      broadcast_tool(state, tool_call, :started)
     end
   end
 
@@ -284,7 +278,7 @@ defmodule Zaq.Agent.StreamEvents do
         trace_artifacts: state.trace_artifacts ++ trace_artifacts
     }
 
-    broadcast_tool(state, tool_call, :completed) |> register(:tool_completed)
+    broadcast_tool(state, tool_call, :completed)
   end
 
   defp put_tool_trace(trace, tool_call) do
@@ -442,14 +436,12 @@ defmodule Zaq.Agent.StreamEvents do
         usage: usage,
         termination_reason: data_get(data, :termination_reason) || :complete
     }
-    |> register(:completed)
   end
 
   defp handle_request_failed(state, event) do
     data = data(event)
 
     %{state | error: data_get(data, :error) || data_get(data, :reason) || :request_failed}
-    |> register(:failed)
   end
 
   defp maybe_flush(state, event) do
@@ -477,7 +469,6 @@ defmodule Zaq.Agent.StreamEvents do
       )
 
     %{state | incoming: incoming, buffer: "", last_flush_ms: now}
-    |> register(nil)
   end
 
   defp broadcast_tool(state, tool_call, status) do
@@ -539,33 +530,6 @@ defmodule Zaq.Agent.StreamEvents do
       |> json_safe()
 
     %{state | trace: [entry | state.trace]}
-  end
-
-  defp register(%{request_id: request_id} = state, status) do
-    attrs = %{
-      server_id: state.server_id,
-      runtime_pid: state.runtime_pid,
-      consumer_pid: self(),
-      owner_node: if(is_pid(state.runtime_pid), do: node(state.runtime_pid)),
-      correlation_id: state.correlation_id,
-      actor: state.actor,
-      execution_scope: state.execution_scope,
-      execution_user_message_id: state.execution_user_message_id,
-      execution_id: state.execution_id,
-      agent: sanitize_agent(state.agent),
-      current_stage: state.current_stage,
-      current_intent: state.current_intent,
-      current_content: state.current_full,
-      buffered_chars: byte_size(state.buffer || ""),
-      tool_calls: state.tool_calls |> Map.values(),
-      termination_reason: state.termination_reason,
-      updated_at_ms: System.system_time(:millisecond)
-    }
-
-    attrs = if is_nil(status), do: attrs, else: Map.put(attrs, :status, status)
-    ServerManager.observe_request(request_id, attrs)
-
-    state
   end
 
   defp actual_request_id(%Jido.AI.Request.Handle{id: id}, _incoming), do: id

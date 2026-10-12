@@ -554,7 +554,7 @@ defmodule Zaq.Agent.HistoryContextSyncTest do
   end
 
   @tag :busy
-  test "retirement retains successful native inspection after the consumer finishes", ctx do
+  test "retirement finishes accepted work and leaves no live control target", ctx do
     [root] = Map.keys(ctx.cursors)
     session = make_ref()
     assert :ok = ServerManager.pin_history_scope(root, ctx.actor, session)
@@ -567,14 +567,9 @@ defmodule Zaq.Agent.HistoryContextSyncTest do
     assert_receive {:sync_llm_barrier, worker}, 5_000
     on_exit(fn -> send(worker, :release_sync_llm) end)
 
-    assert :ok =
-             ServerManager.observe_request(request.id, %{
-               status: :running,
-               actor: ctx.actor,
-               execution_scope: ctx.scope,
-               runtime_pid: ctx.pid,
-               server_id: ctx.server
-             })
+    assert {:ok, {id, target}} = RequestControl.find_native_request(ctx.scope, ctx.actor, ctx.pid)
+    assert id == request.id
+    assert target.runtime_pid == ctx.pid
 
     monitor = Process.monitor(ctx.pid)
 
@@ -587,15 +582,9 @@ defmodule Zaq.Agent.HistoryContextSyncTest do
     assert Process.alive?(ctx.pid)
     send(worker, :release_sync_llm)
     assert {:ok, "Answer"} = Factory.await(request, timeout: 5_000)
-    assert :ok = ServerManager.observe_request(request.id, %{status: :completed})
     assert :ok = ServerManager.release_history_pins(session)
     assert_receive {:DOWN, ^monitor, :process, _, _}, 5_000
-    assert {:ok, registry} = ServerManager.request_observation(request.id)
-    assert registry.status == :completed
-    refute Map.has_key?(registry, :history_removed)
-
-    assert {:error, :terminal_request} =
-             ServerManager.observe_request(request.id, %{status: :streaming})
+    assert :ets.whereis(:zaq_agent_request_observations) == :undefined
 
     assert {:error, :not_found} =
              RequestControl.find_native_request(ctx.scope, ctx.actor, ctx.pid)
@@ -638,15 +627,6 @@ defmodule Zaq.Agent.HistoryContextSyncTest do
              )
 
     assert {:ok, "Answer"} = Factory.await(request, timeout: 5_000)
-
-    assert :ok =
-             ServerManager.observe_request(request.id, %{
-               actor: ctx.actor,
-               execution_scope: ctx.scope,
-               status: :completed,
-               runtime_pid: ctx.pid,
-               server_id: ctx.server
-             })
 
     for action <- [:steer_request, :inject_request] do
       event =

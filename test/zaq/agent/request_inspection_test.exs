@@ -4,9 +4,8 @@ defmodule Zaq.Agent.RequestInspectionTest do
   import Zaq.SystemConfigFixtures
 
   alias Zaq.Accounts.People
-  alias Zaq.Agent.{Api, Factory, ServerManager, StreamEvents}
+  alias Zaq.Agent.{Factory, RequestControl, ServerManager, StreamEvents}
   alias Zaq.Engine.Messages.Incoming
-  alias Zaq.Event
   alias Zaq.TestSupport.{MultiAgentOpenAIStub, OpenAIStub}
 
   setup tags do
@@ -56,36 +55,6 @@ defmodule Zaq.Agent.RequestInspectionTest do
     end
   end
 
-  test "bindings and complete presentation survive streams larger than native trace retention" do
-    id = "inspection-#{System.unique_integer([:positive])}"
-    actor = %{kind: :bo_user, subject: "1"}
-    binding = %{actor: actor, execution_scope: id, runtime_pid: self(), agent: %{id: 1}}
-    on_exit(fn -> ServerManager.forget_request(id) end)
-
-    assert :ok = ServerManager.observe_request(id, Map.put(binding, :status, :running))
-
-    for n <- 1..2_100 do
-      assert :ok =
-               ServerManager.observe_request(id, %{
-                 current_content: "segment-#{n}",
-                 buffered_chars: n,
-                 updated_at_ms: n
-               })
-    end
-
-    assert :ok = ServerManager.observe_request(id, %{status: :completed})
-    assert {:ok, observation} = ServerManager.request_observation(id)
-    assert observation.current_content == "segment-2100"
-    assert observation.buffered_chars == 2_100
-    assert observation.updated_at_ms == 2_100
-    assert observation.actor == actor
-    assert {:ok, [{^id, ^observation}]} = ServerManager.request_bindings(id, actor)
-    assert {:ok, []} = ServerManager.request_bindings(id, %{kind: :bo_user, subject: "2"})
-
-    assert {:error, :ownership_conflict} =
-             ServerManager.observe_request(id, %{actor: %{kind: :bo_user, subject: "2"}})
-  end
-
   test "unavailable native state is not acceptance proof" do
     pid = spawn(fn -> :ok end)
     monitor = Process.monitor(pid)
@@ -95,7 +64,7 @@ defmodule Zaq.Agent.RequestInspectionTest do
 
   @tag :native
   @tag timeout: 180_000
-  test "a real native stream beyond trace capacity retains its complete request-specific presentation",
+  test "a real native stream beyond trace capacity returns the complete answer without an archive",
        ctx do
     {request, result} = consume_native(ctx, "Long native stream")
     text = long_native_text()
@@ -105,36 +74,23 @@ defmodule Zaq.Agent.RequestInspectionTest do
     assert native_trace.truncated?
     assert length(native_trace.events) == 2_000
     assert Enum.count(native_trace.events, &(&1.kind == :llm_delta)) < 2_010
-    assert {:ok, retained} = ServerManager.request_observation(request.id)
-    assert retained.status == :completed
-    assert retained.current_content == text
-    assert retained.current_stage == :answering
-    assert retained.buffered_chars == 0
-    assert retained.termination_reason == :final_answer
-    assert retained.runtime_pid == ctx.pid
-    assert retained.actor == ctx.actor
-    assert retained.agent == Map.take(ctx.agent, [:id, :name])
-    assert inspect_native(ctx, request.id) == {:ok, retained}
-    assert inspect_native(ctx, request.id) == {:ok, retained}
-    assert {:ok, ^retained} = ServerManager.request_observation(request.id)
-    {later, _} = consume_native(ctx, "Different subsequent answer")
+    assert result.termination_reason == :final_answer
+    assert :ets.whereis(:zaq_agent_request_observations) == :undefined
+    assert {:error, :not_found} = RequestControl.find_native_request(ctx.scope, ctx.actor)
+    {later, later_result} = consume_native(ctx, "Different subsequent answer")
     refute later.id == request.id
-    assert inspect_native(ctx, request.id) == {:ok, retained}
-
-    assert {:ok, %{current_content: "Different subsequent answer"}} =
-             inspect_native(ctx, later.id)
+    assert later_result.answer == "Different subsequent answer"
 
     stop_native(ctx)
     assert {:error, :stale_runtime} = Factory.request_state(ctx.pid, request.id)
-    assert inspect_native(ctx, request.id) == {:ok, retained}
+    assert {:error, :not_found} = RequestControl.find_native_request(ctx.scope, ctx.actor)
   end
 
   @tag :native
   @tag timeout: 300_000
-  test "native default 100-request eviction and teardown do not evict archived authorized inspection",
+  test "native default 100-request eviction does not create an application archive",
        ctx do
     {first, _} = consume_native(ctx, "Oldest answer")
-    assert {:ok, retained} = ServerManager.request_observation(first.id)
     assert {:ok, %{raw_state: initial}} = Jido.AgentServer.status(ctx.pid)
     assert (get_in(initial, [:__request_tracking__, :max_requests]) || 100) == 100
 
@@ -147,20 +103,11 @@ defmodule Zaq.Agent.RequestInspectionTest do
     assert map_size(raw.requests) == 100
     refute Map.has_key?(raw.requests, first.id)
     assert {:error, :not_found} = Factory.request_state(ctx.pid, first.id)
-    assert inspect_native(ctx, first.id) == {:ok, retained}
-
-    assert %{response: {:error, :unauthorized}} =
-             Api.handle_event(
-               Event.new(%{request_id: first.id}, :agent,
-                 actor: %{kind: :bo_user, subject: "foreign"}
-               ),
-               :inspect_request,
-               nil
-             )
+    assert {:error, :not_found} = RequestControl.find_native_request(ctx.scope, ctx.actor)
+    assert :ets.whereis(:zaq_agent_request_observations) == :undefined
 
     stop_native(ctx)
-    assert inspect_native(ctx, first.id) == {:ok, retained}
-    assert {:ok, ^retained} = ServerManager.request_observation(first.id)
+    assert {:error, :not_found} = RequestControl.find_native_request(ctx.scope, ctx.actor)
   end
 
   defp stop_native(ctx) do
@@ -170,10 +117,10 @@ defmodule Zaq.Agent.RequestInspectionTest do
   end
 
   @tag :native
-  test "an unavailable runtime cannot restart ServerManager or erase archived inspection during shutdown",
+  test "an unavailable runtime cannot restart ServerManager during shutdown",
        ctx do
     {request, _} = consume_native(ctx, "Archived before unavailable shutdown")
-    assert {:ok, retained} = ServerManager.request_observation(request.id)
+    monitor = Process.monitor(ctx.pid)
     manager = Process.whereis(ServerManager)
     assert :erlang.suspend_process(ctx.pid)
 
@@ -184,19 +131,19 @@ defmodule Zaq.Agent.RequestInspectionTest do
 
     assert :ok = ServerManager.stop_server(ctx.agent, ctx.scope)
     assert Process.whereis(ServerManager) == manager
-    assert {:ok, ^retained} = ServerManager.request_observation(request.id)
+    assert :ets.whereis(:zaq_agent_request_observations) == :undefined
 
     if Process.info(ctx.pid, :status) == {:status, :suspended},
       do: :erlang.resume_process(ctx.pid)
 
-    assert inspect_native(ctx, request.id) == {:ok, retained}
+    assert_receive {:DOWN, ^monitor, :process, _, _}, 10_000
+    assert {:error, :stale_runtime} = Factory.request_state(ctx.pid, request.id)
   end
 
   defp consume_native(ctx, question) do
     {request, result} =
       Task.async(fn -> do_consume_native(ctx, question) end) |> Task.await(120_000)
 
-    on_exit(fn -> ServerManager.forget_request(request.id) end)
     {request, result}
   end
 
@@ -267,14 +214,6 @@ defmodule Zaq.Agent.RequestInspectionTest do
           10 -> await_native_idle(pid, id, deadline)
         end
     end
-  end
-
-  defp inspect_native(ctx, id) do
-    Api.handle_event(
-      Event.new(%{request_id: id, execution_scope: ctx.scope}, :agent, actor: ctx.actor),
-      :inspect_request,
-      nil
-    ).response
   end
 
   defp long_text_sse(text, model) do

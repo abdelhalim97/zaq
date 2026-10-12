@@ -105,6 +105,14 @@ explicit cancellation and request/tool deadlines retain their separate contracts
 See the [Agent lifecycle contract](agent.md#modules) and
 [Engine membership contract](engine.md#data-flow) for owning APIs and retry limits.
 
+Steering targets the current native request of the exact actor-bound runtime and
+history lease, without an archived request-observations table. Attachment payloads
+share ordinary execution formatting after original-content admission. Per-turn
+budgeting protects the full active execution, including its root input, consumed
+corrections and tool pairs; only background history is evictable. Live response
+metadata and Engine-authorized persisted execution data remain the inspection
+sources (see the [Agent control contract](agent.md#agent-api--executor)).
+
 ## Incoming routing overview
 
 ```mermaid
