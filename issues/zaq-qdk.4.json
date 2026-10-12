@@ -6,14 +6,16 @@
   "blocks": [
     "zaq-qdk.5"
   ],
+  "closed_at": "2026-10-12T16:41:16Z",
+  "close_reason": "Context, admission, control authorization and queue/followup scope share owner verification. Transcript access and finalization root-state gates retained. Canonical capture/concurrency suite: 85 tests + 3 properties pass. Final isolated recheck 49 tests + 2 properties; mix q clean after correcting single-clause with.",
   "created": "2026-10-12T16:31:01Z",
   "description": "Owners: Conversations entry points and ExecutionLifecycle. Reuse shared verification for authorization, context reads and control scope. Keep TranscriptHistory permissions, ExecutionHistory projection and lifecycle state authoritative; finalization retains separate token/root-state gate. Tests: isolated admission, queue, finalization and concurrency suites.",
   "id": "zaq-qdk.4",
   "labels": [],
   "parent": "zaq-qdk",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[zaq-qdk.4] Integrate explicit execution policies",
   "type": "task",
-  "updated_at": "2026-10-12T16:31:05Z"
+  "updated_at": "2026-10-12T16:41:16Z"
 }
