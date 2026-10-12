@@ -6,14 +6,16 @@
   "blocks": [
     "zaq-w02.3"
   ],
+  "closed_at": "2026-10-12T19:57:10Z",
+  "close_reason": "Bounded metadata-only serialization reused in canonical and legacy persistence. Trusted legacy replay upgrades complete source metadata without changing UUID/position; different complete locators fail closed. 230 targeted scenarios and mix q pass.",
   "created": "2026-10-12T19:48:40Z",
   "description": "Files Record, HistoryIngress, TranscriptHistory, Conversations. Tests first JSON sanitization/property, no handle/bytes, attachment-only and duplicate old/new delivery. Extend existing metadata/capture; no provider interpretation in Engine; trusted canonical storage only.",
   "id": "zaq-w02.2",
   "labels": [],
   "parent": "zaq-w02",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[zaq-w02] Engine metadata-only attachment persistence",
   "type": "task",
-  "updated_at": "2026-10-12T19:48:43Z"
+  "updated_at": "2026-10-12T19:57:10Z"
 }
