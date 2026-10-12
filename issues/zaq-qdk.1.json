@@ -4,14 +4,16 @@
   "blocks": [
     "zaq-qdk.2"
   ],
+  "closed_at": "2026-10-12T16:31:49Z",
+  "close_reason": "Lifecycle contract table and module responsibilities documented; public names retained. Documentation-only checks complete.",
   "created": "2026-10-12T16:30:55Z",
   "description": "Documentation-only. Owners: Engine service guide and module docs; Agent guide links to owner. Define capture, prepare, authorize, read, lease and finalize. Action reuse not applicable: contracts only.",
   "id": "zaq-qdk.1",
   "labels": [],
   "parent": "zaq-qdk",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[zaq-qdk.1] Define lifecycle contracts",
   "type": "task",
-  "updated_at": "2026-10-12T16:30:58Z"
+  "updated_at": "2026-10-12T16:31:49Z"
 }
