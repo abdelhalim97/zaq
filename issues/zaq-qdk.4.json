@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "zaq-qdk.3"
+  ],
   "blocks": [],
   "created": "2026-10-12T16:31:01Z",
   "description": "Owners: Conversations entry points and ExecutionLifecycle. Reuse shared verification for authorization, context reads and control scope. Keep TranscriptHistory permissions, ExecutionHistory projection and lifecycle state authoritative; finalization retains separate token/root-state gate. Tests: isolated admission, queue, finalization and concurrency suites.",
