@@ -6,14 +6,16 @@
   "blocks": [
     "zaq-qdk.3"
   ],
+  "closed_at": "2026-10-12T16:34:34Z",
+  "close_reason": "Baseline passes: 48 tests, 2 properties; mix q clean. Added generated binding rejection, separate record ownership and inactive-principal regressions. PostgreSQL tools supplied via PATH without config changes.",
   "created": "2026-10-12T16:30:56Z",
   "description": "Owners: existing execution_history tests. Preserve capture independence, invalid bindings/principals, distinct conversation/execution ownership, revocation, denial evidence, legacy semantics and concurrency. Add generated binding mutation checks before refactoring. Reuse existing fixtures and QueryRecorder production telemetry seam.",
   "id": "zaq-qdk.2",
   "labels": [],
   "parent": "zaq-qdk",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[zaq-qdk.2] Lock down execution authorization regressions",
   "type": "task",
-  "updated_at": "2026-10-12T16:31:00Z"
+  "updated_at": "2026-10-12T16:34:34Z"
 }
