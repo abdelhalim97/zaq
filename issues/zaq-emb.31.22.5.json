@@ -11,9 +11,15 @@
   "id": "zaq-emb.31.22.5",
   "labels": [],
   "parent": "zaq-emb.31.22",
+  "comments": [
+    {
+      "text": "Implementation/docs complete; final validation BLOCKED. Final mix q passes clean. Focused core: 332 tests +14 properties, 0 failures. Identity/status follow-up:24 tests0failures. Browser/native combined84tests1fixturefailure; all21browsercases passed; attachment fixture then fixed with explicit attachment JSON checks and isolated attachment test PASS. Two-correction/two-tool budget test PASS. First final precommit:17doctests167properties8414tests,2failures (100ms Status load flake passed in isolation; nested identity fixture default5000/4096reserve caused intentional mandatory overflow, fixed explicit20000fixture without weakening identity assertions). All24 relevant identity/status tests subsequently pass. Repeat final precommit exceeded900s without usable sandbox output. Third run mix precommit --seed0 logged to /private/var/folders/9p/mdzhcqxx7hs8bw_10vwjvfp00000gn/T/opencode/pr842-precommit.log also exceeded900s; observed broader failures incl PeopleCredentialsGatewayTest and two IMAP IDLE/sink deadline tests, no final green gate. No timeout increases/assertion weakening/unrelated code fixes; no final approval requested; no commit/push. Next: diagnose broad-suite environment/resource failures and rerun authorized15min gate; optional post-review coverage phase remains separate. Source/doc diff check passed before gate; only last change was identity fixture budget then q formatting.",
+      "timestamp": "2026-10-12T03:53:37Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-emb.31.22] Integrated validation and documentation",
   "type": "task",
-  "updated_at": "2026-10-12T03:19:16Z"
+  "updated_at": "2026-10-12T03:53:37Z"
 }
