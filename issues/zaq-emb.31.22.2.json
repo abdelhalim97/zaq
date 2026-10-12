@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "zaq-emb.31.22.1"
+  ],
   "blocks": [],
   "created": "2026-10-12T01:59:56Z",
   "description": "Step 2 depends 1. Remove observations ETS/APIs unused inspect_request Factory presentation and StreamEvents snapshots. Files Api Factory ServerManager StreamEvents tests. Tests first replace retention-only assertions with live-target identity and teardown; retain complete stream output and persisted inspection tests. Preserve receipts broadcasts traces telemetry. Action reuse local-only reduction and existing Engine persisted inspection; no storage migration/new action. Mock external model only; doc updates in step 5.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-emb.31.22] Remove request observations archive",
   "type": "task",
-  "updated_at": "2026-10-12T01:59:56Z"
+  "updated_at": "2026-10-12T02:00:28Z"
 }
