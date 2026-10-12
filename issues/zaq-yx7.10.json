@@ -27,11 +27,15 @@
     {
       "text": "User explicitly accepted moving on from unreproduced historical root browser failures; contention is possible, not proven. Latest upstream complete root history400pass2skip0flaky; scoped3browser3pass; no production workaround or test timeout/retry changes, temporary observers removed. Dispatched authorized final candidate verification/commit/push to designated upstream session ses_ed938c98dffeNy0Lv6C031hy3u with returnResult; awaiting actual immutable published SHA to replace ZAQ local-path manifest and rerun published-pin host acceptance. No merge/main switch or ZAQ publication. User-stopped evaluation server remains stopped; do not restart based on cancellation notice.",
       "timestamp": "2026-10-12T09:35:25Z"
+    },
+    {
+      "text": "Published scoped candidate consumed: a30116d702f9b271e66f4b97f5bfbb4e432d955b on upstream ww-v12/explicit-host-startup PR24 (upstream remote verified; source unchanged across final gates). Replaced temporary local-path dependency with github/ref manifest; mix deps.get fetched published SHA and updated lock; deps/web_widget HEAD and lock/manifest verified exactSHA. Fresh dependency compile, clean mix q, immutable-pin isolated expanded689tests+12properties pass seed893691; diff check clean. Real scoped HTTP/assets/cookie/WebSocket/recovery tests included. Earlier exploratory Chromium fullWSS connector9 used identical candidate source; user-stopped evaluation server stayed stopped, no service start/stop/restart or browser rerun. Upstream finalprecommit280pass/qualityclean/assetsnochange; valid root400pass2skip0flaky+scoped3browser3pass; prior distributed auth checks passed. Historical failures NOTPROVEN, contention possible only; user chose moveon, no production workaround/testdeadline change. docs/evaluation evidence reflects immutable pin and stopped server. Implementation+issue-level pin acceptance complete; ZAQ remains uncommitted/unpublished, overall .8/.5 and UX/consolidatedE2E/reviewcoverage/finalprecommit/deployment gates remain separate. deps.get reported existing security advisories/retired packages with Hex versions unchanged; no unrelated dependency updates.",
+      "timestamp": "2026-10-12T09:44:09Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7] Reuse provider runtime startup and trusted channel scope",
   "type": "task",
-  "updated_at": "2026-10-12T09:35:25Z"
+  "updated_at": "2026-10-12T09:44:09Z"
 }
