@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T11:04:02Z",
+  "description": "User-approved normal ZAQ startup wiring for ngrok/production TLS-terminating ingress, coordinated with upstream missing X-Forwarded-Port default443 fix in designated session ses_ed938c98dffeNy0Lv6C031hy3u. Reuse PHX_HOST authority and existing Channels startup option path; explicit trusted immediate-peer literals from deployment env, never browser/connector/DB base URL/X-Forwarded-For. Preserve Secure/SameSite/Partitioned, BO sessions and existing Phoenix production redirect policy; no header fabrication or transport algorithm duplication. Action reuse: extend existing application composition and runtime configuration; local-only trusted deployment initialization, not a business operation/Action/tool. Tests environment parsing/no trust by default/failclosed malformed peers or missing host, normal app boot option propagation, production/dev same authority, ngrok proxy and WSS/health acceptance. No user service/evaluation restarts, no ZAQ publication; upstream candidate consumption only after validated SHA.",
+  "id": "zaq-yx7.11",
+  "labels": [],
+  "parent": "zaq-yx7",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-yx7] Wire trusted ingress options into normal Channels startup",
+  "type": "task",
+  "updated_at": "2026-10-12T11:04:02Z"
+}
