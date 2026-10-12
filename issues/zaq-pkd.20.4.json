@@ -6,6 +6,8 @@
   "blocks": [
     "zaq-pkd.20.5"
   ],
+  "closed_at": "2026-10-12T18:25:20Z",
+  "close_reason": "Pinned pushed upstream branch SHA; docs current, installed-adapter regression and affected suites pass, all9 existing WebBridge browser cases pass, final mix precommit10789tests/248properties/48doctests/0failures PASS after authorized fresh local Python environment. No ZAQ commit/push. Human UX/consolidated new E2E and branch review/coverage remain explicit open gates under .20.5/.15.",
   "created": "2026-10-12T16:58:56Z",
   "description": "Widget session builds/pushes new branch in its existing worktree; inspect returned SHA, update pinned dependency normally (never edit deps source). Update docs/services/web-bridge.md owner and links; test adapter real runtime and split-role behavior, run mix q and isolated tests per issue. Existing webbridge browser journey execution; record human UX approval before new feature E2E authoring. Final PR review/coverage lifecycle and mix precommit before final approval. Related prior FK regression zaq-pkd.19 remains separate. Reuse assessment N/A for dependency/docs/validation. Dependency chain .1 -\u003e .2 -\u003e .3 -\u003e .4; Mermaid graph LR A[contracts]--\u003eB[Agent notifications]--\u003eC[bridge removal]--\u003eD[upstream pin and validation]. No ZAQ commit/push authorization implied; user explicitly authorizes upstream widget new-branch push.",
   "id": "zaq-pkd.20.4",
@@ -18,8 +20,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-pkd.20] Upstream pin, documentation and integrated validation",
   "type": "task",
-  "updated_at": "2026-10-12T18:25:07Z"
+  "updated_at": "2026-10-12T18:25:20Z"
 }
