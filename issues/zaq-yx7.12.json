@@ -7,9 +7,15 @@
   "id": "zaq-yx7.12",
   "labels": [],
   "parent": "zaq-yx7",
+  "comments": [
+    {
+      "text": "Implemented ZAQonly flag at existing WebBridge.infrastructure_options providerboundary: exactWIDGET_DEV_MODE=true adds session.partitioned:false via Keyword.put_new; explicitpartitioned/secure options retainprecedence, otherproviders unchanged, unset/false/unknown values noimplicitdev. No upstream or runtime/app/proxy changes. Testsfirst isolatedVM fakeconstructor deliveryRED before implementation, corrected fixturekeywordaccess/name/sameoriginbootstrap mistakes (notproductionworkarounds), thenGREEN. Isolated ordinary appstartup actualHTTPpage/session Lax cookie nonSecure/nonPartitioned, CSP localhostparent allowlist, foreignOrigin403/noCookie, invalidproofunauthorized, readiness sessionhandshakeverified(WebSocket), SameSiteNone still503https_required/noCookie. All envmutations childVM only. Focused55tests+2propertiespass; broad709tests+12propertiespass seed893691; mixqclean/diffcheckclean. Guide documents WIDGET_DEV_MODE=true mixphxserver, SameSiteLax/Strict/globalhttpURL/localhostparent allowlist, explicitpolicyprecedence/restartnotprod/samesitebrowserlimits/authunmodified. Evaluationevidence updated. ExistinguncommittedBridge/hostwork preserved; no upstreamedits/user service/evaluationrestart/ZAQcommitpush. Overall UX/reviewcoverage/finalprecommit remain tracked gates, no finalhumanapproval requested.",
+      "timestamp": "2026-10-12T12:33:40Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7] Add explicit widget HTTP development flag",
   "type": "task",
-  "updated_at": "2026-10-12T12:25:57Z"
+  "updated_at": "2026-10-12T12:33:40Z"
 }
