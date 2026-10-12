@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T14:01:32Z",
+  "description": "History B RequestControl.queue_incoming returns Outgoing metadata execution_disposition=queued, root_request_id, no separate public answer. Agent intentionally suppresses return hop. WebBridge.dispatch_widget_message sends any directly returned Outgoing as final, causing empty completion; async RequestOwner waits for independent final and can timeout on accepted steering. Define approved widget queued acknowledgement semantics for sync/async and owner cleanup without second public answer; do not silently change protocol. Reuse Engine/Agent admission and RequestControl, keep transport response projection and lifecycle Channels-owned. Add regression tests at real routing boundaries including model/tool wait, no empty/double terminal, correlation and timeout; preserve existing assertions. PR #836 now integrating #842. Action reuse: extend existing WebBridge/RequestOwner transport lifecycle locally; no new business Action, no duplicated execution ownership.",
+  "id": "zaq-pkd.20",
+  "labels": [],
+  "parent": "zaq-pkd",
+  "priority": 2,
+  "status": "open",
+  "title": "Handle queued steering acknowledgements in widget transport",
+  "type": "bug",
+  "updated_at": "2026-10-12T14:01:32Z"
+}
