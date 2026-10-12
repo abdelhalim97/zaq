@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-10-12T17:07:05Z",
+  "close_reason": "Approved six-step implementation complete with shared Engine verification, active Person reuse, explicit gates, preserved fresh permissions/legacy/locking, runtime lease terminology and regression/property tests. Validation green with serialized precommit; default async fixture deadlocks tracked separately zaq-s2z. Changes uncommitted; review/coverage lifecycle still applies before merge.",
   "created": "2026-10-12T16:30:33Z",
   "description": "Approved behavior-preserving plan: lifecycle contracts -\u003e regression tests -\u003e Engine verification -\u003e stage integration -\u003e Agent terminology -\u003e final validation. No schema/public dispatch changes. Retain fresh permission checks, explicit legacy principals, locking and admission evidence. E2E: no new browser journey or UI changes; use existing integration/runtime regressions.",
   "id": "zaq-qdk",
   "labels": [],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-qdk] Clarify message admission and consolidate execution verification",
   "type": "epic",
-  "updated_at": "2026-10-12T17:06:39Z"
+  "updated_at": "2026-10-12T17:07:05Z"
 }
