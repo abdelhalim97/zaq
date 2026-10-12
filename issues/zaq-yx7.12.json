@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T12:25:50Z",
+  "description": "User-approved ZAQ-only WIDGET_DEV_MODE=true flag translated at existing WebBridge infrastructure option construction into session partitioned:false default. No upstream changes/new startup mechanism/proxy configuration. Unset/false/unrecognized keep defaults; explicit process session options retain precedence. Saved SameSite Lax/Strict required; never silently downgrade None, disable auth or allowed origins. Action reuse local-only existing WebBridge provider specs/adapter constructors; process deployment initialization not a business Action/tool. Tests-first isolated environment parsing/explicit precedence and ordinary startup actual HTTP sessions/WebSocket readiness, security regression tests; document one localhost command. Preserve existing uncommitted Bridge/hostwork; no user services/evaluation restarts or publication.",
+  "id": "zaq-yx7.12",
+  "labels": [],
+  "parent": "zaq-yx7",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-yx7] Add explicit widget HTTP development flag",
+  "type": "task",
+  "updated_at": "2026-10-12T12:25:50Z"
+}
