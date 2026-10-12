@@ -15,11 +15,15 @@
     {
       "text": "All requested production fixes and regression/docs updates implemented; children1-4 closed with focused validation. Child5 stays in_progress because final precommit repeatedly times out under15minute budget and latest seeded full run has broader credential-gateway/IMAP failures. User informed; no final approval requested, no commits/push. See child5 for exact validations and saved latest gate log.",
       "timestamp": "2026-10-12T03:53:39Z"
+    },
+    {
+      "text": "User authorized committing/pushing all review fixes for CI validation. Commit ea25d3f3a pushed to existing PR #842 branch; clean working tree. Child5 remains pending final GitHub CI outcome; local gate not represented as passed.",
+      "timestamp": "2026-10-12T07:28:23Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[#842] Review fixes: live targeting and complete steering context",
   "type": "epic",
-  "updated_at": "2026-10-12T03:53:39Z"
+  "updated_at": "2026-10-12T07:28:23Z"
 }
