@@ -7,9 +7,15 @@
   "id": "zaq-pkd.18",
   "labels": [],
   "parent": "zaq-pkd",
+  "comments": [
+    {
+      "text": "Merged origin/feature/issue-768-history-b-execution ea25d3f3a cleanly into refactor/webbridge as b6417e814. Upstream simplifications/migration/dependency pins retained; duplicate dev DB correction retained. Scoped stash restored original local config/dev.exs edit; merge commit excludes it. mix deps.get PASS, mix q PASS, cached diff --check PASS; commit hooks qf/docs/Credo PASS. Isolated focused suite (_history_b_transition): 7 properties,330 tests,1 failure in deleted-conversation fixture blocked by execution-record FK; tracked zaq-pkd.19. Widget queued disposition compatibility tracked zaq-pkd.20; protocol decision not silently implemented. psql existing /opt/homebrew/opt/libpq/bin used via per-command PATH. PR retarget attempt blocked by gh unauthenticated. No push; no E2E/final precommit; do not claim transition fully validated. Pending publication and PR #836 retarget to feature/issue-768-history-b-execution.",
+      "timestamp": "2026-10-12T14:02:55Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Integrate history B into WebBridge stack",
   "type": "task",
-  "updated_at": "2026-10-12T13:53:51Z"
+  "updated_at": "2026-10-12T14:02:55Z"
 }
