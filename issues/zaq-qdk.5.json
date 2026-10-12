@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T16:31:03Z",
+  "description": "Owners: HistorySync and Agent service guide. Local-only coordinator internals; no new Action/tool/API. Distinguish Engine authorization from exact-runtime lease acquisition. Preserve confidential dispatch, session-local admitted projections, runtime incarnation and cursor fences. Verify history-sync and loader tests.",
+  "id": "zaq-qdk.5",
+  "labels": [],
+  "parent": "zaq-qdk",
+  "priority": 2,
+  "status": "open",
+  "title": "Clarify Agent runtime lease terminology",
+  "type": "task",
+  "updated_at": "2026-10-12T16:31:03Z"
+}
