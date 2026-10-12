@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "zaq-w02.2"
+  ],
   "created": "2026-10-12T19:48:40Z",
   "description": "Files JidoChatBridge, EmailBridge.Attachment, CommunicationMedia. Tests first full source identity, same source used for handle and metadata, JSON roundtrip. Extend builders and issuance; pure local serialization; no new tools/Actions.",
   "id": "zaq-w02.1",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-w02] Channels durable source metadata",
   "type": "task",
-  "updated_at": "2026-10-12T19:48:40Z"
+  "updated_at": "2026-10-12T19:48:41Z"
 }
