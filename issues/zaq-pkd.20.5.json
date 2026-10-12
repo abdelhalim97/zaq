@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T18:24:51Z",
+  "description": "Implementation and existing regression execution complete. Before NEW/substantially rewritten feature E2E authoring, obtain explicit human UX approval of v2: informational/no-answer input shows user message and no assistant spinner; input re-enables after submission receipt while independent assistant streams continue; multiple same-person submissions yield one root answer; submission rejection affects only its input; stable per-message create/edit/final ordering; reload/recovery and auth scope unchanged. Then implement consolidated browser regression suite using real installed adapter and real ZAQ role boundaries with deterministic external model only. Upstream existing 402-case browser run outcome was pending at handoff; collect its completion separately. PR review and coverage handoff remain in zaq-pkd.15; repeat authoritative final gate if code changes. Action reuse N/A: human approval/testing only. Do not author new E2E before approval or treat plan approval as UX approval.",
+  "id": "zaq-pkd.20.5",
+  "labels": [],
+  "parent": "zaq-pkd.20",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-pkd.20] Human v2 widget UX acceptance and consolidated E2E",
+  "type": "task",
+  "updated_at": "2026-10-12T18:24:51Z"
+}
