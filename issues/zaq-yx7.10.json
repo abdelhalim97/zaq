@@ -23,11 +23,15 @@
     {
       "text": "User-approved follow-up2/3 implemented. Runtime target is explicit {:provider,provider} or connector map; bare-provider arity1/2 retains legacy canonical connector lookup. CommunicationBridge sync_provider_runtime/1,2 now common routing; Bridge dispatch accepts opts and owns optional start_runtime/2, sync_provider_runtime/2, build_runtime_specs/2. Macro provider defaults call common Bridge runtime spec/start/result helper; connector defaults preserve legacy overridden arity1 callbacks. Removed CommunicationBridge startup callback/normalizer and WebBridge provider startup/result helpers. WebBridge only extends build_runtime_specs/2 for provider adapter specs; adapter-facing behaviours remain local and upstream signatures unchanged. Supervisor bootstrap uses explicit target. New tests generic macro start/sync, arity1/2 consistency, opaque forwarding, absent shared specs noop, optional start fallback, no shared restart on already-running, lifecycle callback ownership and legacy override compatibility. Initial tests authored first but validation initially blocked before ExUnit by DB/Docker down; user restored service, installed libpq PATH added only to commands. Database-free tests passed. Focused104tests+2props first had restart notification failure, passed alone, then passed combined after fresh isolated restart budget with unchanged production limits/assertions/timeouts. Broad689+12 initially2fail due test dynamic Bridge facade missing new arity delegates; fixed facade forwarding. Two Credo alias issues plus ordering fixed. FINAL689tests+12properties pass seed893691, mix q clean,41relative docs paths exist,diff check clean. Rebuilt/restarted only owned worktree evaluation; fresh connector9 real Chromium scoped assets/WSS-\u003eJWT-\u003eassistant-\u003erenewal-\u003ereconnect-\u003edurable restore-\u003esigned disconnect passes zero browser errors. Evidence tmp/widget-supervised-evaluation.md and owner docs updated. No ZAQ commit/push; local upstream candidate/published-pin/final approval gates remain pending; no new feature E2E authored or finalprecommit run prematurely.",
       "timestamp": "2026-10-12T07:20:31Z"
+    },
+    {
+      "text": "User explicitly accepted moving on from unreproduced historical root browser failures; contention is possible, not proven. Latest upstream complete root history400pass2skip0flaky; scoped3browser3pass; no production workaround or test timeout/retry changes, temporary observers removed. Dispatched authorized final candidate verification/commit/push to designated upstream session ses_ed938c98dffeNy0Lv6C031hy3u with returnResult; awaiting actual immutable published SHA to replace ZAQ local-path manifest and rerun published-pin host acceptance. No merge/main switch or ZAQ publication. User-stopped evaluation server remains stopped; do not restart based on cancellation notice.",
+      "timestamp": "2026-10-12T09:35:25Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7] Reuse provider runtime startup and trusted channel scope",
   "type": "task",
-  "updated_at": "2026-10-12T07:20:31Z"
+  "updated_at": "2026-10-12T09:35:25Z"
 }
