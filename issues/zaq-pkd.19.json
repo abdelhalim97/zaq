@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T14:01:19Z",
+  "description": "Discovered integrating history B ea25d3f3a into WebBridge #836. Focused transition suite: test/zaq/engine/channel_conversations_test.exs:421 fails at Repo.delete!(conversation), execution_records_user_message_id_fkey restricts cascade deletion of admitted message. Preserve audit evidence; do not weaken assertions or drop constraints. Determine supported deletion/archive policy and whether fixture should model independent canonical messages before deleting legacy conversation; reproduce through public deletion boundary before choosing fix. Existing Conversations.delete_conversation/1 and delete_conversation_by_id/1 are candidates for reuse/extension; no new deletion operation without assessment. Isolated validation partition _history_b_transition. Action reuse pending: inspect canonical execution owner and delete APIs; domain policy decision required.",
+  "id": "zaq-pkd.19",
+  "labels": [],
+  "parent": "zaq-pkd",
+  "priority": 2,
+  "status": "open",
+  "title": "Reconcile widget conversation deletion with execution evidence",
+  "type": "bug",
+  "updated_at": "2026-10-12T14:01:19Z"
+}
