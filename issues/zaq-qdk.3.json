@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T16:30:59Z",
+  "description": "Owners: Conversations and ExecutionLifecycle. Extend existing domain APIs; private binding helpers and internal resolved-owner comparison are local-only, not composable Actions or agent tools. Existing PersistMessageHistory tool and workflow Steps do not implement execution authorization; reuse Engine entry points. Preserve exact content, capability, ownership, errors, locks, legacy behavior. Resolve active Person once per operation; never cache across boundaries.",
+  "id": "zaq-qdk.3",
+  "labels": [],
+  "parent": "zaq-qdk",
+  "priority": 2,
+  "status": "open",
+  "title": "Consolidate Engine binding and principal verification",
+  "type": "task",
+  "updated_at": "2026-10-12T16:30:59Z"
+}
