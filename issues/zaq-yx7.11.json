@@ -7,9 +7,15 @@
   "id": "zaq-yx7.11",
   "labels": [],
   "parent": "zaq-yx7",
+  "comments": [
+    {
+      "text": "Implemented normal trusted ingress startup. runtime.exs converts explicit ZAQ_TRUSTED_PROXIES literalIPv4/IPv6 list + existingPHX_HOST(hostnameonly) into channels_startup_options adapter_options.web_widget.proxy; no implicittrust when absent/blank, no defaultpublichost if opted-in, strictmalformedpeer/CIDR/wildcard/host/port rejection. SameHTTPS443 authority for dev/test/prod; prodhostwhitespace normalized consistently. Application.start forwards generic opts into existing Channels child; static supervisor unchanged. RepositoryCompose forwards optionalpeers. No BO/SSL/cookie guard or listener changes; package owns forwarded validation. IsolatedVM tests of everyenvironment plus ordinary realApplication boot prove actualadapterconstructorpropagation; IPv4 property inputspace covered. Testsfirst5fail on missingwiring/validation thenGREEN; one testfixture OTP childspec getter corrected from nonexistentElixirwrapper to :supervisor API. New realhost TLS-\u003eHTTP ngrokstyle omittedXFP/default443 firstRED400invalid_widget_proxy on publisheda30116d; consumes validated upstreamlocalpath candidate thenGREEN. Existing explicitnondefaultTLS/WSS assertions all preserved in sharedhelper: SecurePartitioned/pathisolated cookies, readonlyverify, realWSS, badCSRF/foreignOrigin403, directHTTP503, localreadiness remainsgreen even proxyoff. Final localcandidate broad710tests+13properties pass seed893691; focused49tests+2props pass; mixq clean;30deploymentdocpaths exist/diffcheckclean. Upstreamsame session explicitly switched Plan-\u003eBuild with user permission; ww-a9r finalquality/browser/publicationgates pending, no actualnewSHAyet. NativePhoenixforce_ssl seam tested upstream and documented precondition; no hostheaderfabrication/XFFtrust. Manifest temporarilylocal; locka30116d priorpublished. Guide/operations/evaluation evidence updated. No user services/evaluation restart; no ZAQcommit/push/merge; awaitingpublishedpin and repeatacceptance; actualuserngrok/browser not claimed tested.",
+      "timestamp": "2026-10-12T11:23:20Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7] Wire trusted ingress options into normal Channels startup",
   "type": "task",
-  "updated_at": "2026-10-12T11:04:07Z"
+  "updated_at": "2026-10-12T11:23:20Z"
 }
