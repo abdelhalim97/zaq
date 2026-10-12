@@ -6,14 +6,16 @@
   "blocks": [
     "zaq-w02.5"
   ],
+  "closed_at": "2026-10-12T20:08:02Z",
+  "close_reason": "Engine API hydrates both authorized initial and delta projections after Conversations returns, using confidential Channels dispatch, preserving cursors/IDs and typed infrastructure failures. InputPrompt shared with HistoryLoader hides source internals. 156 targeted doctest/property/test scenarios and mix q pass.",
   "created": "2026-10-12T19:48:43Z",
   "description": "Files Engine.Api, InputPrompt, HistoryLoader. Tests first admission/read outside locks, deltas/cursors, failures and source metadata hidden from prompts. Extend API orchestration and shared formatting; existing author-only materialization remains.",
   "id": "zaq-w02.4",
   "labels": [],
   "parent": "zaq-w02",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[zaq-w02] Authorized history hydration and Agent formatting",
   "type": "task",
-  "updated_at": "2026-10-12T19:48:46Z"
+  "updated_at": "2026-10-12T20:08:02Z"
 }
