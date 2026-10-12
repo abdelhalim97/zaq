@@ -3,7 +3,9 @@
   "blocked_by": [
     "zaq-emb.31.22.1"
   ],
-  "blocks": [],
+  "blocks": [
+    "zaq-emb.31.22.5"
+  ],
   "created": "2026-10-12T02:00:12Z",
   "description": "Step 4 depends 1. RequestTransformer/HistoryLoader protect root input plus steering/tool exchanges via existing canonical references; background evicted only; mandatory oversize explicit error. Tests first pressure after steering, multiple corrections tool-call/result pairs and bounded properties order/completeness; real native integration. Reuse context window estimator and HistoryLoader merge, local-only runtime projection no Action. Mock external model only; update module/service docs in step 5.",
   "id": "zaq-emb.31.22.4",
@@ -13,5 +15,5 @@
   "status": "open",
   "title": "[zaq-emb.31.22] Protect active execution during trimming",
   "type": "task",
-  "updated_at": "2026-10-12T02:00:30Z"
+  "updated_at": "2026-10-12T02:00:33Z"
 }
