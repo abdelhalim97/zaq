@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T19:48:43Z",
+  "description": "Files Engine.Api, InputPrompt, HistoryLoader. Tests first admission/read outside locks, deltas/cursors, failures and source metadata hidden from prompts. Extend API orchestration and shared formatting; existing author-only materialization remains.",
+  "id": "zaq-w02.4",
+  "labels": [],
+  "parent": "zaq-w02",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-w02] Authorized history hydration and Agent formatting",
+  "type": "task",
+  "updated_at": "2026-10-12T19:48:43Z"
+}
