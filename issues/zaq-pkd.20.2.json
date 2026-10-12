@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T16:58:35Z",
+  "description": "Reuse Agent.Api RequestControl/HistorySync and Executor Status synchronous Channels boundary. Move answering start notification after native ask accepted; opt-in consumer-neutral submission notifications preserve queued/no answer and asynchronous errors without inspecting opaque transport context or introducing new execution owner. Inputs existing Incoming/Event actor opts; confidential admission unchanged; outputs safe lifecycle status through existing upsert, no root/child IDs to widget. Test queued child/no status create, native busy race, terminal admission error and started ordering with real role boundaries where possible. Extend existing Status path; no Action or tools.",
+  "id": "zaq-pkd.20.2",
+  "labels": [],
+  "parent": "zaq-pkd.20",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-pkd.20] Ordered native start and submission outcome notifications",
+  "type": "task",
+  "updated_at": "2026-10-12T16:58:35Z"
+}
