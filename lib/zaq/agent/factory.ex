@@ -94,22 +94,39 @@ defmodule Zaq.Agent.Factory do
 
   def request_state(_, _), do: {:error, :stale_runtime}
 
-  @doc "Overlays native terminal evidence on sanitized retained presentation, read-only."
-  @spec inspect_request(String.t(), map()) :: map()
-  def inspect_request(id, observation) do
-    case request_state(observation[:runtime_pid], id) do
-      {:ok, %{status: :completed}} ->
-        Map.put(observation, :status, :completed)
+  @doc "Reads one live incarnation's bound actor/scope and exact native request, without presentation snapshots."
+  @spec request_target(map(), String.t() | nil) :: {:ok, map()} | {:error, term()}
+  def request_target(%{runtime_pid: pid} = candidate, request_id \\ nil) do
+    with true <- Process.alive?(pid),
+         {:ok, %{raw_state: raw}} <- Jido.AgentServer.status(pid),
+         id when is_binary(id) <- request_id || get_in(raw, [:__strategy__, :active_request_id]),
+         request when is_map(request) <- get_in(raw, [:requests, id]),
+         true <- is_nil(request_id) or id == request_id,
+         true <-
+           not candidate.canonical_execution or is_binary(candidate.execution_user_message_id),
+         true <- is_nil(candidate.lease_token) or candidate.lease_request_id == id do
+      scope = raw[:execution_scope]
 
-      {:ok, %{status: status, error: error}} when status in [:failed, :timeout] ->
-        status =
-          if error == :cancelled, do: :cancelled, else: :failed
-
-        Map.put(observation, :status, status)
-
-      _ ->
-        observation
+      if is_nil(candidate.requested_scope) or candidate.requested_scope == scope do
+        {:ok,
+         candidate
+         |> Map.drop([:requested_scope, :lease_request_id])
+         |> Map.merge(%{
+           request_id: id,
+           actor: raw[:execution_actor],
+           execution_scope: scope,
+           accepting?:
+             request.status == :pending and
+               get_in(raw, [:__strategy__, :active_request_id]) == id
+         })}
+      else
+        {:error, :not_found}
+      end
+    else
+      _ -> {:error, :not_found}
     end
+  catch
+    :exit, _ -> {:error, :stale_runtime}
   end
 
   @impl true
@@ -365,9 +382,17 @@ defmodule Zaq.Agent.Factory do
         |> Keyword.put_new(:timeout, 300_000)
         |> put_runtime_tool_context(skill_integration)
         |> put_context_window(config)
+        |> put_execution_boundary()
 
       ask_stream(server, query, ask_opts)
     end
+  end
+
+  defp put_execution_boundary(opts) do
+    root = Ecto.UUID.generate()
+    refs = Map.put(Keyword.get(opts, :extra_refs, %{}), :execution_root, root)
+    context = Map.put(Keyword.get(opts, :tool_context, %{}), :execution_root, root)
+    opts |> Keyword.put(:extra_refs, refs) |> Keyword.put(:tool_context, context)
   end
 
   defp context_window_config(%ConfiguredAgent{} = configured_agent) do

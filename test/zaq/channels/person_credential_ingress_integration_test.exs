@@ -411,6 +411,9 @@ defmodule Zaq.Channels.PersonCredentialIngressIntegrationTest do
         llm_responder: responder,
         agent_attrs: %{
           job: "MARKER_INGRESS_AGENT_X. Consult Y, then answer.",
+          # This identity journey must fit the full active nested-tool exchange.
+          # Budget-overflow behavior is covered by RequestTransformer regressions.
+          model_max_context_tokens: 20_000,
           enabled_tool_keys: ["workflow.run_agent"]
         }
       )

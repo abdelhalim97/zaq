@@ -18,6 +18,8 @@ defmodule Zaq.Agent.ServerManager do
     including lazy restart behavior when fingerprint-relevant settings change.
   - Graceful/forced draining and stop semantics for in-flight requests.
   - Internal tracking of server ownership, monitors, and cleanup on process down.
+  - Live incarnation snapshots and exact-PID history-lease request binding for
+    native controls; no retained stream presentation or request archive.
 
   Interaction boundaries:
 
@@ -54,14 +56,12 @@ defmodule Zaq.Agent.ServerManager do
   @lifecycle_call_timeout 60_000
   @jido_instance Zaq.Agent.Jido
   @jido_registry Jido.registry_name(@jido_instance)
-  @requests :zaq_agent_request_observations
-  @request_identity ~w(agent runtime_pid consumer_pid server_id owner_node actor execution_scope execution_user_message_id execution_id)a
-  @terminal_observations [:completed, :failed, :cancelled]
 
   @type state :: %{
           fingerprints: %{optional(String.t()) => binary()},
           agent_servers: %{optional(integer()) => MapSet.t(String.t())},
           server_to_agent: %{optional(String.t()) => integer()},
+          runtime_bindings: %{optional(String.t()) => map()},
           credential_dependencies: %{optional(String.t()) => map()},
           draining: %{optional(String.t()) => reference()},
           monitors: %{optional(String.t()) => reference()},
@@ -203,50 +203,22 @@ defmodule Zaq.Agent.ServerManager do
     GenServer.call(__MODULE__, {:credential_dependency, server_id}, @lifecycle_call_timeout)
   end
 
-  @doc "Stores immutable request targeting and sanitized presentation, never native admission authority."
-  @spec observe_request(String.t(), map()) :: :ok | {:error, term()}
-  def observe_request(id, attrs) when is_binary(id) and is_map(attrs),
-    do: GenServer.call(__MODULE__, {:observe_request, id, attrs})
-
-  def observe_request(_, _), do: :ok
-
-  @doc "Reads retained request-specific presentation without consulting or mutating a runtime."
-  @spec request_observation(term()) :: {:ok, map()} | {:error, :not_found}
-  def request_observation(id) when is_binary(id) do
-    case request_lookup(id) do
-      [{^id, observation}] -> {:ok, observation}
+  @doc "Snapshots tracked live incarnations, not retained requests; native reads happen outside the manager."
+  @spec runtime_candidates(map(), String.t() | nil, term()) :: {:ok, list()} | {:error, term()}
+  def runtime_candidates(actor, scope \\ nil, runtime \\ nil) do
+    case ExecutionActor.identity(actor) do
+      {:ok, _} -> GenServer.call(__MODULE__, {:runtime_candidates, actor, scope, runtime})
       _ -> {:error, :not_found}
     end
   end
 
-  def request_observation(_), do: {:error, :not_found}
+  @doc "Binds the native request ID once to its process-owned completion lease."
+  def bind_native_history_request(server_id, token, request_id),
+    do: GenServer.call(__MODULE__, {:bind_native_history_request, server_id, token, request_id})
 
-  @doc "Returns exact ownership bindings; completed presentation is not an activity filter."
-  @spec request_bindings(String.t(), map(), term()) :: {:ok, list()} | {:error, term()}
-  def request_bindings(scope, actor, runtime \\ nil) do
-    case ExecutionActor.identity(actor) do
-      {:ok, identity} ->
-        matches =
-          request_entries()
-          |> Enum.filter(fn {id, request} ->
-            is_binary(id) and request[:execution_scope] == scope and
-              ExecutionActor.identity(request[:actor]) == {:ok, identity} and
-              matching_request_runtime?(request, runtime)
-          end)
-
-        {:ok, matches}
-
-      _ ->
-        {:error, :not_found}
-    end
-  end
-
-  @doc "Forgets an explicitly selected observation; runtime cleanup does not evict inspection."
-  @spec forget_request(term()) :: :ok
-  def forget_request(id) when is_binary(id),
-    do: GenServer.call(__MODULE__, {:forget_request, id})
-
-  def forget_request(_), do: :ok
+  @doc "Revalidates exact live targeting without resolving a reusable name in the control caller."
+  def current_request_target(target),
+    do: GenServer.call(__MODULE__, {:current_request_target, target})
 
   @doc "Claims exclusive history admission on an exact actor-bound runtime incarnation."
   def begin_history_request(server_id, pid, actor) when is_binary(server_id) and is_pid(pid),
@@ -332,13 +304,13 @@ defmodule Zaq.Agent.ServerManager do
   @impl true
   def init(_opts) do
     stop_surviving_servers()
-    :ets.new(@requests, [:named_table, :protected, :set, read_concurrency: true])
 
     {:ok,
      %{
        fingerprints: %{},
        agent_servers: %{},
        server_to_agent: %{},
+       runtime_bindings: %{},
        credential_dependencies: %{},
        draining: %{},
        monitors: %{},
@@ -347,29 +319,36 @@ defmodule Zaq.Agent.ServerManager do
   end
 
   @impl true
-  def handle_call({:observe_request, id, attrs}, _from, state) do
-    current =
-      case request_observation(id) do
-        {:ok, observation} -> observation
-        _ -> %{}
-      end
+  def handle_call({:runtime_candidates, actor, scope, runtime}, _from, state) do
+    {:ok, principal} = ExecutionActor.identity(actor)
 
-    result =
-      case observation_conflict(current, attrs) do
-        :ok ->
-          :ets.insert(@requests, {id, Map.merge(current, attrs)})
-          :ok
+    candidates =
+      Enum.flat_map(state.runtime_bindings, fn entry ->
+        snapshot_candidate(entry, state, principal, scope, runtime)
+      end)
 
-        error ->
-          error
-      end
-
-    {:reply, result, state}
+    {:reply, {:ok, candidates}, state}
   end
 
-  def handle_call({:forget_request, id}, _from, state) do
-    :ets.delete(@requests, id)
-    {:reply, :ok, state}
+  def handle_call({:bind_native_history_request, id, token, request_id}, {owner, _}, state) do
+    with {:ok, entry} <- HistoryLifecycle.owned_entry(state.history, id, token, owner),
+         true <- is_binary(request_id),
+         true <- is_nil(entry.lease[:request_id]) or entry.lease.request_id == request_id do
+      entry = %{entry | lease: Map.put(entry.lease, :request_id, request_id)}
+      {:reply, :ok, %{state | history: Map.put(state.history, id, entry)}}
+    else
+      {:error, _} = error -> {:reply, error, state}
+      _ -> {:reply, {:error, :history_binding_conflict}, state}
+    end
+  end
+
+  def handle_call({:current_request_target, target}, _from, state) do
+    current? =
+      Map.has_key?(state.server_to_agent, target.server_id) and
+        safe_whereis(target.server_id) == target.runtime_pid and
+        current_target_lease?(state.history[target.server_id], target)
+
+    {:reply, if(current?, do: :ok, else: {:error, :stale_runtime}), state}
   end
 
   def handle_call(
@@ -828,6 +807,7 @@ defmodule Zaq.Agent.ServerManager do
              model: model_spec,
              runtime_config: runtime_config,
              execution_actor: actor,
+             execution_scope: Keyword.get(opts, :execution_scope, server_id),
              history_binding: Keyword.get(opts, :history_binding),
              tool_context:
                Map.merge(runtime_config.tool_context, %{
@@ -1309,6 +1289,7 @@ defmodule Zaq.Agent.ServerManager do
         state
         | fingerprints: Map.delete(state.fingerprints, server_id),
           server_to_agent: Map.delete(state.server_to_agent, server_id),
+          runtime_bindings: Map.delete(state.runtime_bindings, server_id),
           draining: Map.delete(state.draining, server_id)
       }
       |> delete_credential_dependency(server_id)
@@ -1336,6 +1317,17 @@ defmodule Zaq.Agent.ServerManager do
 
   defp initialize_history_cursor(state, server_id, opts) do
     {:ok, principal} = ExecutionActor.identity(Keyword.get(opts, :actor))
+
+    state = %{
+      state
+      | runtime_bindings:
+          Map.put(state.runtime_bindings, server_id, %{
+            pid: safe_whereis(server_id),
+            principal: principal,
+            scope: Keyword.get(opts, :execution_scope, server_id),
+            canonical_execution: Keyword.get(opts, :canonical_execution, false)
+          })
+    }
 
     Map.put(
       state,
@@ -1496,12 +1488,6 @@ defmodule Zaq.Agent.ServerManager do
     |> MapSet.to_list()
   end
 
-  defp request_lookup(key) do
-    :ets.lookup(@requests, key)
-  rescue
-    ArgumentError -> []
-  end
-
   defp history_incarnation_id(history, pid) do
     case Enum.filter(history, fn {_id, entry} -> entry.pid == pid end) do
       [{id, _}] -> {:ok, id}
@@ -1522,37 +1508,60 @@ defmodule Zaq.Agent.ServerManager do
 
   defp matching_reservation(_, _), do: {:error, :history_binding_conflict}
 
-  defp request_entries do
-    :ets.tab2list(@requests)
-  rescue
-    ArgumentError -> []
-  end
+  defp candidate_runtime?(_agent_id, _pid, nil), do: true
+  defp candidate_runtime?(_agent_id, pid, expected) when is_pid(expected), do: pid == expected
 
-  defp matching_request_runtime?(_request, nil), do: true
-  defp matching_request_runtime?(request, pid) when is_pid(pid), do: request[:runtime_pid] == pid
-
-  defp matching_request_runtime?(%{agent: %{id: id}}, %{agent_id: expected}),
+  defp candidate_runtime?(id, _pid, %{agent_id: expected}),
     do: to_string(id) == to_string(expected)
 
-  defp matching_request_runtime?(_, _), do: false
+  defp candidate_runtime?(_agent_id, _pid, _runtime), do: false
 
-  defp observation_conflict(current, attrs) do
-    cond do
-      observation_owner_changed?(current, attrs) ->
-        {:error, :ownership_conflict}
+  defp snapshot_candidate(
+         {id, %{pid: pid, principal: principal, scope: bound_scope}},
+         state,
+         principal,
+         scope,
+         runtime
+       ) do
+    agent_id = state.server_to_agent[id]
 
-      current[:status] in @terminal_observations and
-          Map.get(attrs, :status, current[:status]) != current[:status] ->
-        {:error, :terminal_request}
-
-      true ->
-        :ok
+    if (is_nil(scope) or scope == bound_scope) and candidate_runtime?(agent_id, pid, runtime) and
+         is_pid(pid) and safe_whereis(id) == pid do
+      [
+        candidate_binding(id, agent_id, pid, scope, state.history[id])
+        |> Map.put(:canonical_execution, state.runtime_bindings[id].canonical_execution)
+      ]
+    else
+      []
     end
   end
 
-  defp observation_owner_changed?(current, attrs) do
-    Enum.any?(@request_identity, fn key ->
-      not is_nil(current[key]) and Map.has_key?(attrs, key) and current[key] != attrs[key]
-    end)
+  defp snapshot_candidate(_entry, _state, _principal, _scope, _runtime), do: []
+
+  defp candidate_binding(id, agent_id, pid, scope, history) do
+    lease = matching_lease(history, pid)
+    binding = get_in(lease, [:details, :history, :binding])
+
+    %{
+      server_id: id,
+      runtime_pid: pid,
+      agent: %{id: agent_id},
+      requested_scope: scope,
+      lease_token: get_in(lease, [:token]),
+      lease_request_id: get_in(lease, [:request_id]),
+      consumer_pid: get_in(lease, [:owner]),
+      execution_user_message_id: get_in(binding, [:user_message_id]),
+      execution_id: get_in(binding, [:execution_id])
+    }
   end
+
+  defp matching_lease(%{pid: pid, lease: lease}, pid), do: lease
+  defp matching_lease(_history, _pid), do: nil
+
+  defp current_target_lease?(_entry, %{lease_token: nil}), do: true
+
+  defp current_target_lease?(%{pid: pid, lease: %{token: token, request_id: id}}, target),
+    do: pid == target.runtime_pid and token == target.lease_token and id == target.request_id
+
+  defp current_target_lease?(_entry, _target), do: false
 end

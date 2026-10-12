@@ -173,13 +173,13 @@ Each module broadcasts its own stage — orchestrators broadcast nothing:
 - `RequestControl` is the shared internal control boundary: Engine-authorized
   principal/grant checks, exact native-request/PID targeting, durable input queueing and
   Jido invocation live there rather than being duplicated by execution consumers.
-- Inspect/steer/inject require the binding's same trusted principal; a request ID
-  alone never grants private state or control. A supplied execution scope must
-  match the immutable ServerManager binding scope. Inspection dispatches confidential
+- Steer/inject require the live runtime's same trusted principal; a request ID
+  alone never grants control. A supplied execution scope must match the runtime
+  binding. Controls without a fresh canonical input dispatch confidential
   `:authorize_execution_control` to Engine, rechecking the literal active Person
   and current grants. New canonical steer/inject inputs pass `:admit_execution`
-  once, then use their recorded admission rather than reauthorizing the root. No raw admission
-  token is added to inspection state. Runtime PID and actual Jido ID fences remain
+  once, then use their recorded admission rather than reauthorizing the root.
+  Runtime PID and actual Jido ID fences remain
   authoritative for steering/injection. Non-Person legacy controls require the
   same explicit kind/subject principal as their registered owner.
 - Canonical controls require a separately Engine-admitted `conversation_binding`
@@ -209,13 +209,19 @@ Each module broadcasts its own stage — orchestrators broadcast nothing:
 - A provider-ingressed explicit input from the active root's Person uses that
   same control path before creating new status messages. Lookup matches canonical
   transcript/Person scope and immutable configured-agent identity. ServerManager
-  retains bindings and presentation; Factory reads exact native request state.
+  snapshots live actor/scope/configured-agent incarnations; Factory reads the native
+  active ID and status outside the manager. Canonical root UUIDs and the bound Jido
+  request ID come from the exact process-owned history lease, not archived traces.
   Stream-derived phase labels never decide activity or authorize controls.
   Exact-incarnation admission pins protect already accepted targeting; native admission remains authoritative
   after discovery (which does not eliminate check-then-steer races). Busy admission
   races in Executor fall back to the exact active PID/Jido request; legacy
   unscoped runs retain busy rejection. Queued receipts stop the return hop and
   never finalize a second public answer.
+- `InputPrompt` shares attachment formatting between ordinary execution and incoming
+  steering. Admission checks the original content before formatting the native
+  payload with the exact runtime's opaque aliases. Stable receipt UUIDs prevent
+  canonical refresh from duplicating that attachment-bearing input.
 - `Zaq.Agent.Api` is the role boundary entrypoint used by `NodeRouter.dispatch/1`
 - Channel requests require an Engine admission binding with non-empty conversation ID,
   user-message ID and finalization token. Missing or malformed bindings return
@@ -604,22 +610,16 @@ without safe permission mutation support return `:unsupported`.
   the next request's cold history consistent with the persisted history that excludes the
   failed turn. Cleanup is incarnation-fenced: a stale failing request cannot stop a newer
   replacement process registered under the same opaque runtime name.
-- Stores sanitized request presentation and immutable targeting in `ServerManager`;
-  the separate RequestRegistry process/module has been removed.
-- Executor supplies the actual Jido request handle to StreamEvents. Production
-  observation keys use its ID; the incoming correlation ID is retained separately,
-  alongside runtime PID, owning node, actor and execution scope. Legacy direct
-  stream consumers without a handle retain their incoming-ID compatibility path.
-- Presentation updates are serialized and cannot replace established ownership fields
-  or reopen a completed, failed or cancelled request after a trailing flush.
-  These checks are runtime consistency fences, not authorization: control entry
-  points still require trusted actor/scope checks.
-- Production steer/inject calls target the recorded runtime PID and actual request
+- Executor supplies the actual Jido request handle to StreamEvents for stream and
+  receipt correlation; legacy direct stream consumers retain their incoming-ID
+  compatibility path. Stream reduction, broadcasts and final private diagnostics
+  remain, but no application-owned request-observations archive is retained.
+- Production steer/inject calls target the live runtime PID and actual request
   ID, not a reusable server name. Dead/removed incarnations are rejected; native
   expected-request controls enforce acceptance without a presentation status gate.
-  Inspection overlays native terminal status on retained presentation, preserving
-  all segment/buffer/tool details through runtime teardown. Observations live until
-  ServerManager restarts, are protected against outside writes, and never expose tokens.
+  Live-chat information uses outgoing response metadata; history inspection uses
+  Engine-authorized persisted `Message` / `ExecutionRecord` data. The unused Agent
+  `:inspect_request` action has been removed.
 
 ### Provider Spec (`Zaq.Agent.ProviderSpec`)
 - Generic facade for provider normalization, model specs and runtime options
@@ -737,6 +737,12 @@ without safe permission mutation support return `:unsupported`.
 - Does not enforce model context-window limits. It only bounds DB reads; outbound LLM projection owns request-size enforcement.
 
 ### Context Window (`Zaq.Agent.ContextWindow.*`)
+- Factory attaches a request-local execution-root reference to the native input
+  and runtime context. RequestTransformer carries that boundary through history
+  projection: the original task, consumed corrections and tool exchanges are all
+  mandatory. It evicts background first and returns `:mandatory_payload_too_large`
+  when the complete active execution cannot fit; a new steering user message never
+  makes the original task evictable.
 - `RequestEstimator` estimates a full outbound request from messages, tools, schemas, options, model metadata, and structured-output config using the runtime fixed character/token coefficient.
 - Binary content-part data (including skill PDFs and images) is counted using its base64 representation, matching ReqLLM's JSON encoding without modifying model-bound bytes. This is a textual size heuristic, not a provider-specific media token count.
 - `RequestTransformer` is registered as the Jido ReAct `request_transformer` and runs before every model turn.

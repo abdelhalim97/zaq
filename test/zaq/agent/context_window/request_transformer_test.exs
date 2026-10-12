@@ -2,11 +2,72 @@ defmodule Zaq.Agent.ContextWindow.RequestTransformerTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
+  alias Jido.AI.Context, as: AIContext
   alias Jido.AI.Context.Entry
   alias Jido.AI.Reasoning.ReAct.Config
   alias ReqLLM.Message.ContentPart
   alias Zaq.Agent.ContextWindow.RequestEstimator
   alias Zaq.Agent.ContextWindow.RequestTransformer
+
+  test "steering cannot make the original task and its tool exchange evictable" do
+    context =
+      AIContext.new()
+      |> AIContext.append_user("Original task", refs: %{execution_root: "root"})
+      |> AIContext.append(%Entry{
+        role: :assistant,
+        content: "",
+        tool_calls: [%{id: "active-call", name: "lookup", arguments: %{}}]
+      })
+      |> AIContext.append(%Entry{
+        role: :tool,
+        content: String.duplicate("large active result ", 1_000),
+        tool_call_id: "active-call"
+      })
+      |> AIContext.append_user("Use the second option")
+
+    assert {:error, {:context_window_exceeded, :mandatory_payload_too_large}} =
+             RequestTransformer.transform_request(
+               %{messages: AIContext.to_messages(context)},
+               %{context: context},
+               config(1),
+               %{context_window: window(100), execution_root: "root"}
+             )
+  end
+
+  property "budgeting preserves every active correction in order and evicts only background" do
+    check all(
+            corrections <-
+              list_of(string(:alphanumeric, min_length: 1, max_length: 40),
+                min_length: 1,
+                max_length: 6
+              )
+          ) do
+      active =
+        Enum.reduce(
+          corrections,
+          AIContext.new()
+          |> AIContext.append_user("Root", refs: %{execution_root: "root"}),
+          &AIContext.append_user(&2, &1)
+        )
+
+      context = %{
+        active
+        | entries:
+            active.entries ++ [%Entry{role: :user, content: String.duplicate("old", 2_000)}]
+      }
+
+      expected = AIContext.to_messages(active)
+      budget = RequestEstimator.estimate(%{messages: expected}, window(1))
+
+      assert {:ok, %{messages: ^expected}} =
+               RequestTransformer.transform_request(
+                 %{messages: AIContext.to_messages(context)},
+                 %{context: context},
+                 config(1),
+                 %{context_window: window(budget + 1), execution_root: "root"}
+               )
+    end
+  end
 
   defp config(max_tokens \\ 10, output \\ nil),
     do: struct(Config, llm: %{max_tokens: max_tokens}, output: output)

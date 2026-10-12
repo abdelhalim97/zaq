@@ -17,7 +17,7 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
   alias Jido.AI.PendingInputServer
   alias Zaq.Accounts
   alias Zaq.Accounts.People
-  alias Zaq.Agent.{Api, RequestControl}
+  alias Zaq.Agent.{Factory, RequestControl}
   alias Zaq.Agent.ServerManager
   alias Zaq.Channels.EmailBridge
   alias Zaq.Channels.EmailBridge.ImapAdapter
@@ -864,10 +864,16 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
     send(first_worker, :release_steering_llm)
     assert_receive {:steering_llm_barrier, final_worker}, 5_000
     on_exit(fn -> send(final_worker, :release_steering_llm) end)
-    await_registry_phase(registry, :tool_completed, "sleep-two")
     :erlang.trace(registry, false, [:receive])
     assert {:ok, {request_id, state}} = RequestControl.find_native_request(scope, actor)
-    assert state.status == :tool_completed
+
+    await_native_phase(
+      state.runtime_pid,
+      request_id,
+      :tool_completed,
+      "sleep-two",
+      System.monotonic_time(:millisecond) + 15_000
+    )
 
     # Delay only the real stream consumer, not Jido's terminal transition. This
     # exercises the native refusal with stale registry state, not a fabricated
@@ -889,20 +895,8 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
 
     # Native discovery must not mistake lagging presentation for acceptance.
     assert {:error, :not_found} = RequestControl.find_native_request(scope, actor)
-    assert {:ok, retained} = ServerManager.request_observation(request_id)
-    assert retained.status == :tool_completed
-    assert retained.tool_calls == state.tool_calls
-
-    inspection =
-      Api.handle_event(
-        Zaq.Event.new(%{request_id: request_id}, :agent, actor: actor),
-        :inspect_request,
-        nil
-      )
-
-    assert {:ok, inspected} = inspection.response
-    assert inspected.status == :completed
-    assert Map.drop(inspected, [:status]) == Map.drop(retained, [:status])
+    assert {:ok, %{status: :completed}} = Factory.request_state(state.runtime_pid, request_id)
+    assert :ets.whereis(:zaq_agent_request_observations) == :undefined
 
     spanish_correction(ctx.config)
     refute_receive {:steering_followup_model, _}, 100
@@ -967,8 +961,16 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
     send(first_worker, :release_steering_llm)
     assert_receive {:steering_llm_barrier, final_worker}, 5_000
     on_exit(fn -> send(final_worker, :release_steering_llm) end)
-    await_registry_phase(manager, :tool_completed, "sleep-two")
-    assert {:ok, {_id, state}} = RequestControl.find_native_request(scope, actor)
+    assert {:ok, {id, state}} = RequestControl.find_native_request(scope, actor)
+
+    await_native_phase(
+      state.runtime_pid,
+      id,
+      :tool_completed,
+      "sleep-two",
+      System.monotonic_time(:millisecond) + 15_000
+    )
+
     assert :erlang.suspend_process(state.consumer_pid)
 
     on_exit(fn ->
@@ -1130,7 +1132,7 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
     end
   end
 
-  defp await_steering_phase(phase, registry, scope, actor) do
+  defp await_steering_phase(phase, _registry, scope, actor) do
     {status, worker} =
       case phase do
         :first_sleep ->
@@ -1152,22 +1154,40 @@ defmodule Zaq.Channels.HistoryStrategyFullFlowTest do
       end
 
     call_id = if phase == :second_sleep, do: "sleep-two", else: "sleep-one"
-    await_registry_phase(registry, status, call_id)
     assert {:ok, {id, state}} = RequestControl.find_native_request(scope, actor)
-    assert state.status == status
+
+    await_native_phase(
+      state.runtime_pid,
+      id,
+      status,
+      call_id,
+      System.monotonic_time(:millisecond) + 15_000
+    )
+
     {id, state, worker}
   end
 
-  defp await_registry_phase(registry, status, call_id) do
-    assert_receive {:trace, ^registry, :receive,
-                    {:"$gen_call", _, {:observe_request, _id, %{status: ^status} = attrs}}},
-                   15_000
+  defp await_native_phase(pid, id, status, call_id, deadline) do
+    assert {:ok, %{raw_state: raw}} = Jido.AgentServer.status(pid)
 
-    :sys.get_state(registry)
+    kind =
+      %{tool_running: :tool_started, tool_completed: :tool_completed, streaming: :llm_delta}[
+        status
+      ]
 
-    if status in [:tool_running, :tool_completed] and
-         not Enum.any?(attrs.tool_calls, &(&1["id"] == call_id)),
-       do: await_registry_phase(registry, status, call_id)
+    events = get_in(raw, [:__strategy__, :request_traces, id, :events]) || []
+
+    unless Enum.any?(events, fn event ->
+             event.kind == kind and
+               (kind == :llm_delta or
+                  (Map.get(event, :tool_call_id) || Map.get(event.data, :tool_call_id)) == call_id)
+           end) do
+      assert System.monotonic_time(:millisecond) < deadline,
+             "native #{kind} for #{call_id} was not observed"
+
+      Process.sleep(10)
+      await_native_phase(pid, id, status, call_id, deadline)
+    end
   end
 
   defp steering_llm_handler(owner, phase) do

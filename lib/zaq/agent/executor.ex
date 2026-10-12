@@ -30,7 +30,6 @@ defmodule Zaq.Agent.Executor do
   require Logger
 
   alias Zaq.Agent
-  alias Zaq.Contracts.Record
 
   alias Zaq.Agent.{
     Answering,
@@ -38,8 +37,8 @@ defmodule Zaq.Agent.Executor do
     Factory,
     HistoryLoader,
     HistorySync,
+    InputPrompt,
     LogprobsAnalyzer,
-    OpaqueAliases,
     RequestControl,
     ServerManager,
     StreamEvents
@@ -207,7 +206,7 @@ defmodule Zaq.Agent.Executor do
              HistorySync.admit(execution_opts, server_id, runtime_pid, actor),
            question <-
              question
-             |> append_attachments(incoming.attachments, server_id)
+             |> InputPrompt.append_attachments(incoming.attachments, server_id)
              |> timestamp_question(),
            _ <-
              Event.new(
@@ -473,6 +472,8 @@ defmodule Zaq.Agent.Executor do
   defp ensure_agent_server(server_manager_module, configured_agent, server_id, opts, actor) do
     server_manager_module.ensure_server(configured_agent, server_id, Keyword.get(opts, :context),
       actor: actor,
+      execution_scope: Keyword.get(opts, :scope),
+      canonical_execution: Keyword.get(opts, :canonical_execution, false),
       history_session: Keyword.get(opts, :history_session),
       history_binding: history_binding(opts),
       history_cursors: (Keyword.get(opts, :execution_history) || %{})[:cursors]
@@ -583,9 +584,24 @@ defmodule Zaq.Agent.Executor do
           else: error
 
       result ->
+        bind_native_request(result, context.opts)
+    end
+  end
+
+  defp bind_native_request({:ok, %{request: %{id: id}}} = result, opts) do
+    case get_in(Keyword.get(opts, :execution_history, %{}), [:lease_ref]) do
+      {server_id, _pid, token} ->
+        case ServerManager.bind_native_history_request(server_id, token, id) do
+          :ok -> result
+          error -> error
+        end
+
+      _ ->
         result
     end
   end
+
+  defp bind_native_request(result, _opts), do: result
 
   defp consume_or_queue(events, incoming, opts) do
     {context, stream_opts} = Keyword.pop(opts, :busy_context)
@@ -619,7 +635,8 @@ defmodule Zaq.Agent.Executor do
              incoming.content,
              :steer_request,
              Keyword.get(opts, :conversation_binding),
-             followup?: Keyword.get(opts, :live_followup, false)
+             followup?: Keyword.get(opts, :live_followup, false),
+             attachments: incoming.attachments
            ) do
       {:queued,
        Outgoing.from_pipeline_result(incoming, %{
@@ -1049,21 +1066,6 @@ defmodule Zaq.Agent.Executor do
   end
 
   defp timestamp_question(content), do: content
-
-  defp append_attachments(content, attachments, scope)
-       when is_binary(content) and is_list(attachments) and attachments != [] do
-    metadata =
-      Enum.map(attachments, fn attachment ->
-        case OpaqueAliases.alias_record_metadata(attachment, scope) do
-          {:ok, metadata} -> metadata
-          {:error, _reason} -> Record.metadata(attachment)
-        end
-      end)
-
-    Enum.join([content, "Attachments:", Jason.encode!(metadata)], "\n")
-  end
-
-  defp append_attachments(content, _attachments, _scope), do: content
 
   defp status_mod(opts) do
     Keyword.get(opts, :status_module, Zaq.Agent.Status)

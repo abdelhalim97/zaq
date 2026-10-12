@@ -23,7 +23,6 @@ defmodule Zaq.Agent.Api do
   alias Zaq.Agent.{
     ErrorMessage,
     Executor,
-    Factory,
     HistorySync,
     MCP,
     Pipeline,
@@ -89,19 +88,6 @@ defmodule Zaq.Agent.Api do
 
       other ->
         invalid_request_response(event, other)
-    end
-  end
-
-  def handle_event(%Event{} = event, :inspect_request, _context) do
-    with {:ok, request_id} <- request_id_request(event.request),
-         {:ok, state} <- RequestControl.authorize(event, request_id) do
-      %{event | response: {:ok, Factory.inspect_request(request_id, state)}}
-    else
-      {:error, :missing_request_id} ->
-        %{event | response: {:error, {:invalid_request, :missing_request_id}}}
-
-      {:error, reason} ->
-        %{event | response: {:error, reason}}
     end
   end
 

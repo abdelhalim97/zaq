@@ -13,6 +13,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   alias Zaq.Channels.CommunicationBridge
   alias Zaq.Channels.JidoChatBridge
   alias Zaq.Channels.MattermostAdmin
+  alias Zaq.Contracts.Record
   alias Zaq.Engine.Api
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.ChannelHistoryMembership
@@ -175,9 +176,11 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   for {steering_mode, retained_root?} <- [
         {:explicit_control, true},
         {:provider_mention, true},
+        {:attachment_control, true},
         {:explicit_control, false}
       ] do
     @steering_mode steering_mode
+    @tag steering_mode: steering_mode
     @retained_root retained_root?
     @tag :authorized_execution
     @tag :input_consumption
@@ -275,6 +278,19 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
       steering =
         Incoming.new(%{
           content: "@zaq Retain the arithmetic tool result",
+          attachments:
+            if(@steering_mode == :attachment_control,
+              do: [
+                %Record{
+                  id: "correction-record",
+                  kind: :file,
+                  name: "correction.pdf",
+                  mime_type: "application/pdf",
+                  materialization_handle: "correction-signed-handle"
+                }
+              ],
+              else: []
+            ),
           channel_id: "shared-room",
           author_id: "alice",
           author_name: "Alice",
@@ -288,6 +304,26 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
 
       binding =
         case @steering_mode do
+          :attachment_control ->
+            assert {:ok, _} = HistoryIngress.capture(steering)
+            assert {:ok, binding} = Conversations.admit_incoming(steering)
+
+            assert {:ok, projection} =
+                     Conversations.admit_execution(binding, actor, steering.content)
+
+            control = Zaq.Event.new(steering, :agent, actor: actor)
+
+            assert {:queued, _} =
+                     RequestControl.queue_incoming(
+                       control,
+                       steering,
+                       projection,
+                       binding,
+                       ctx.agent.id
+                     )
+
+            binding
+
           :explicit_control ->
             assert {:ok, _} = HistoryIngress.capture(steering)
             assert {:ok, binding} = Conversations.admit_incoming(steering)
@@ -352,6 +388,14 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
       assert_receive {:history_llm, continuation}, 5_000
       refute Jason.encode!(continuation["input"]) =~ "FORBIDDEN_"
       assert Jason.encode!(continuation["input"]) =~ steering.content
+
+      if @steering_mode == :attachment_control do
+        payload = Jason.encode!(continuation["input"])
+        assert length(Regex.scan(~r/correction\.pdf/, payload)) == 1
+        refute payload =~ "correction-signed-handle"
+        assert Repo.get!(Message, binding.user_message_id).content == steering.content
+      end
+
       assert length(Regex.scan(~r/Passive refresh A/, Jason.encode!(continuation["input"]))) == 1
 
       assert length(
@@ -841,7 +885,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     runtime_monitor = Process.monitor(ledger.pid)
     owner_monitor = Process.monitor(ledger.lease.owner)
 
-    {:ok, {request_id, _}} =
+    {:ok, {_request_id, _}} =
       RequestControl.find_native_request(
         scope,
         %{person: %{id: ctx.person.id}},
@@ -867,9 +911,11 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     assert_receive {:DOWN, ^runner_monitor, :process, _, _}, 5_000
     assert_receive {:DOWN, ^http_monitor, :process, ^http, _}, 5_000
     assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 5_000
-    assert {:ok, request} = ServerManager.request_observation(request_id)
-    refute Map.has_key?(request, :history_removed)
-    assert request.status == :completed
+    assert :ets.whereis(:zaq_agent_request_observations) == :undefined
+
+    assert {:error, :not_found} =
+             RequestControl.find_native_request(scope, %{person: %{id: ctx.person.id}})
+
     assert Repo.get_by!(ExecutionRecord, user_message_id: input.id).status == "completed"
     assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 1
 
@@ -1329,7 +1375,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   @tag :refresh_budget
   @tag :authorized_execution
   @tag :input_consumption
-  test "refreshed budget pressure drops only background and preserves the active two-tool exchange",
+  test "steering plus refreshed budget pressure preserves the whole active two-tool execution",
        ctx do
     assert {:ok, _} =
              Zaq.Permissions.grant(
@@ -1354,6 +1400,16 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
                "message" => content
              })
 
+    for index <- 1..2 do
+      assert {{:ok, _}, _} =
+               MattermostHistoryFixture.post(ctx.config, "human", true, %{
+                 "id" => "budget-correction-#{index}",
+                 "message" => "@zaq Preserve the original task correction #{index}"
+               })
+
+      assert_receive :history_input_queued, 5_000
+    end
+
     send(worker, :release_history_llm)
     assert_receive {:history_llm, second}, 5_000
     assert_receive {:history_llm, third}, 5_000
@@ -1362,9 +1418,21 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
       refute Jason.encode!(request["input"]) =~ "EVICTABLE_REFRESH_BACKGROUND"
       assert List.first(request["input"]) == List.first(initial["input"])
       assert Enum.at(request["input"], 1) == List.last(initial["input"])
+      payload = Jason.encode!(request["input"])
+
+      for index <- 1..2 do
+        assert length(
+                 Regex.scan(
+                   Regex.compile!("Preserve the original task correction #{index}"),
+                   payload
+                 )
+               ) == 1
+      end
     end
 
-    [_, _, call1, output1, call2, output2] = third["input"]
+    [call1, output1, call2, output2] =
+      Enum.filter(third["input"], &(&1["type"] in ["function_call", "function_call_output"]))
+
     assert call1["type"] == "function_call"
     assert output1["type"] == "function_call_output"
     assert call1["call_id"] == output1["call_id"]
@@ -1377,7 +1445,13 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     answer = await_answer(transcript.id)
     assert answer.content == "Cumulative history answer"
     assert Repo.get_by!(Message, external_message_id: "budget-background").content == content
-    assert Repo.aggregate(ExecutionRecord, :count) == 1
+    assert Repo.aggregate(ExecutionRecord, :count) == 3
+
+    for index <- 1..2 do
+      input = Repo.get_by!(Message, external_message_id: "budget-correction-#{index}")
+      assert Repo.get_by!(ExecutionRecord, user_message_id: input.id).status == "consumed"
+    end
+
     assert Repo.aggregate(from(m in Message, where: m.role == "assistant"), :count) == 1
   end
 
@@ -1408,7 +1482,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         end
 
       tags[:input_consumption] ->
-        consumption_llm_handler(owner)
+        consumption_llm_handler(owner, tags[:steering_mode] == :attachment_control)
 
       tags[:authorized_execution] ->
         ToolCallingLLMStub.handler(
@@ -1718,12 +1792,10 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     end
   end
 
-  defp assert_rejected_control_receipt(ctx, state, actor) do
-    # A stale registry handle must be refused by the real active Jido runtime.
-    # Exercise the queue -> runtime rejection -> receipt persistence path without
-    # substituting Factory, RequestControl, NodeRouter or the execution store.
+  defp assert_rejected_control_receipt(ctx, _state, actor) do
+    # A nonexistent native ID is rejected before queueing, without fabricating
+    # application-owned bindings. Completion-after-queue is covered separately.
     stale_id = "stale-control-#{System.unique_integer([:positive])}"
-    assert :ok = ServerManager.observe_request(stale_id, state)
 
     input =
       Incoming.new(%{
@@ -1748,15 +1820,16 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
         actor: actor
       )
 
-    assert %{response: {:error, _}} = Zaq.Agent.Api.handle_event(event, :steer_request, nil)
+    assert %{response: {:error, :not_found}} =
+             Zaq.Agent.Api.handle_event(event, :steer_request, nil)
+
     receipt = Repo.get_by!(ExecutionRecord, user_message_id: binding.user_message_id)
-    assert receipt.status == "unconsumed"
-    assert receipt.outcome["reason"] == "runtime_rejected"
+    assert receipt.status == "pending"
+    assert receipt.root_execution_id == nil
     assert receipt.public_answer_message_id == nil
-    assert :ok = ServerManager.forget_request(stale_id)
   end
 
-  defp consumption_llm_handler(owner) do
+  defp consumption_llm_handler(owner, attachment?) do
     state = start_supervised!({Agent, fn -> :initial end}, id: make_ref())
     args = %{"value" => 2, "amount" => 3}
     call_id = "receipt-call-#{System.unique_integer([:positive])}"
@@ -1801,8 +1874,9 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
           assert output["type"] == "function_call_output"
           assert output["call_id"] == call_id
 
-          assert MultiAgentOpenAIStub.latest_user_message(%{"input" => [correction]}) ==
-                   "@zaq Retain the arithmetic tool result"
+          content = MultiAgentOpenAIStub.latest_user_message(%{"input" => [correction]})
+
+          assert_correction_content(content, attachment?)
 
           [result] = MultiAgentOpenAIStub.tool_results(request)
           send(owner, {:llm_tool_result, "add", result.output})
@@ -1819,6 +1893,18 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
       5_000 -> flunk("no real Engine delivery event was observed")
     end
   end
+
+  defp assert_correction_content(content, true) do
+    ["@zaq Retain the arithmetic tool result", metadata] =
+      String.split(content, "\nAttachments:\n")
+
+    [record] = Jason.decode!(metadata)
+    assert record["name"] == "correction.pdf"
+    assert String.starts_with?(record["materialization_handle"], "mat_")
+  end
+
+  defp assert_correction_content(content, false),
+    do: assert(content == "@zaq Retain the arithmetic tool result")
 
   defp observe_history_commit(owner) do
     handler = {__MODULE__, owner}

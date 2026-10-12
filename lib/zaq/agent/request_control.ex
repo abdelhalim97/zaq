@@ -6,7 +6,7 @@ defmodule Zaq.Agent.RequestControl do
   control invocation. It never creates public answers or interprets provider data.
   """
 
-  alias Zaq.Agent.{Answering, Factory, HistorySync, ServerManager}
+  alias Zaq.Agent.{Answering, Factory, HistorySync, InputPrompt, ServerManager}
   alias Zaq.Engine.Messages.Outgoing
   alias Zaq.Event
   alias Zaq.Identity.ActorNormalizer
@@ -22,7 +22,7 @@ defmodule Zaq.Agent.RequestControl do
   end
 
   defp authorize_target(event, request_id) do
-    with {:ok, state} when is_map(state) <- ServerManager.request_observation(request_id),
+    with {:ok, state} <- find_request(event.actor, nil, nil, request_id),
          {:ok, identity} <- ExecutionActor.identity(event.actor),
          {:ok, ^identity} <- ExecutionActor.identity(state[:actor]),
          :ok <- matching_scope(event.request, state) do
@@ -55,12 +55,20 @@ defmodule Zaq.Agent.RequestControl do
              state[:runtime_pid],
              event.opts[:history_session]
            ),
+         :ok <- ServerManager.current_request_target(state),
          {:ok, runtime} <- runtime(state) do
       followup? = opts[:followup?] == true
 
       case input_opts(event, state, content, request_id, binding, followup?) do
         {:ok, input_opts} ->
-          invoke_control(factory, runtime, content, action, input_opts)
+          payload =
+            InputPrompt.append_attachments(
+              content,
+              Keyword.get(opts, :attachments, []),
+              state.server_id
+            )
+
+          invoke_control(factory, runtime, payload, action, input_opts)
           |> retain_rejection(event, state, input_opts)
           |> followup_disposition(
             state,
@@ -147,7 +155,8 @@ defmodule Zaq.Agent.RequestControl do
     case find_native_request(scope, event.actor, %{agent_id: agent_id}) do
       {:ok, {request_id, _state}} ->
         case control(event, request_id, incoming.content, :steer_request, binding,
-               followup?: true
+               followup?: true,
+               attachments: incoming.attachments
              ) do
           {:ok, _} ->
             {:queued,
@@ -182,16 +191,32 @@ defmodule Zaq.Agent.RequestControl do
   @spec find_native_request(String.t(), map(), term()) ::
           {:ok, {String.t(), map()}} | {:error, term()}
   def find_native_request(scope, actor, runtime \\ nil) do
-    with {:ok, bindings} <- ServerManager.request_bindings(scope, actor, runtime) do
-      bindings
-      |> Enum.filter(fn {id, state} ->
-        match?({:ok, %{accepting?: true}}, Factory.request_state(state[:runtime_pid], id))
-      end)
+    with {:ok, target} <- find_request(actor, scope, runtime, nil),
+         do: {:ok, {target.request_id, target}}
+  end
+
+  defp find_request(actor, scope, runtime, request_id) do
+    with {:ok, identity} <- ExecutionActor.identity(actor),
+         {:ok, candidates} <- ServerManager.runtime_candidates(actor, scope, runtime) do
+      candidates
+      |> Enum.flat_map(&native_target(&1, identity, request_id))
       |> case do
-        [request] -> {:ok, request}
+        [target] -> {:ok, target}
         [] -> {:error, :not_found}
         _ -> {:error, :ambiguous_request}
       end
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  defp native_target(candidate, identity, request_id) do
+    with {:ok, target} <- Factory.request_target(candidate, request_id),
+         {:ok, ^identity} <- ExecutionActor.identity(target.actor),
+         true <- not is_nil(request_id) or target.accepting? do
+      [target]
+    else
+      _ -> []
     end
   end
 

@@ -9,6 +9,7 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
   alias Zaq.Agent
   alias Zaq.Agent.Answering
   alias Zaq.Agent.Executor
+  alias Zaq.Agent.Factory
   alias Zaq.Agent.HistorySync
   alias Zaq.Agent.ServerManager
   alias Zaq.Channels.CommunicationBridge
@@ -286,18 +287,13 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
     assert {:ok, state} = Jido.AgentServer.state(runtime)
     [request_id] = Map.keys(state.agent.state.requests)
     refute request_id == correlation_id
-    assert {:ok, registered} = ServerManager.request_observation(request_id)
-    assert registered.runtime_pid == runtime
-    assert registered.correlation_id == correlation_id
-    assert registered.owner_node == node(runtime)
-    assert registered.status == :completed
-    assert {:error, :not_found} = ServerManager.request_observation(correlation_id)
+    assert {:ok, %{status: :completed}} = Factory.request_state(runtime, request_id)
+    assert {:error, :not_found} = Factory.request_state(runtime, correlation_id)
+    assert :ets.whereis(:zaq_agent_request_observations) == :undefined
 
-    # Presentation is retained independently of native request eviction/teardown.
+    # No application archive remains after teardown.
     assert :ok = ServerManager.stop_server(configured_agent)
-    assert {:ok, retained} = ServerManager.request_observation(request_id)
-    assert retained == registered
-    assert {:error, :not_found} = ServerManager.request_observation(correlation_id)
+    assert :ets.whereis(:zaq_agent_request_observations) == :undefined
   end
 
   test "canonical admission survives access loss before the real configured runtime is created" do

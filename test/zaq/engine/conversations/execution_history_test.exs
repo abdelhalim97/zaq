@@ -8,7 +8,6 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
   alias Zaq.Agent.Api, as: AgentApi
   alias Zaq.Agent.ContextWindow.RequestTransformer
   alias Zaq.Agent.HistorySync
-  alias Zaq.Agent.ServerManager
   alias Zaq.Agent.StreamEvents
   alias Zaq.Channels.CommunicationBridge
   alias Zaq.Engine.{ChannelConfig, Conversations, HistoryIngress}
@@ -743,37 +742,20 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert Repo.get!(Message, binding.user_message_id).trace == []
   end
 
-  test "request inspection revalidates the literal Person and current canonical grants", ctx do
+  test "execution control revalidates the literal Person and current canonical grants", ctx do
     {binding, _} = admitted(ctx)
     {:ok, permission} = grant(ctx)
-    request_id = "authorized-control-#{System.unique_integer([:positive])}"
 
-    state = %{
-      actor: actor(ctx.alice),
-      execution_scope: "canonical-scope",
-      status: :streaming,
-      execution_user_message_id: binding.user_message_id,
-      runtime_pid: self(),
-      server_id: "private"
-    }
+    assert :ok =
+             Conversations.authorize_execution_control(binding.user_message_id, actor(ctx.alice))
 
-    assert :ok = ServerManager.observe_request(request_id, state)
-    event = Event.new(%{request_id: request_id}, :agent, actor: actor(ctx.alice))
-    assert %{response: {:ok, ^state}} = AgentApi.handle_event(event, :inspect_request, nil)
-    unadmitted = %{event | request: %{request_id: request_id, content: "Unadmitted input"}}
-
-    assert %{response: {:error, :admission_required}} =
-             AgentApi.handle_event(unadmitted, :steer_request, nil)
-
-    assert %{response: {:error, :unauthorized}} =
-             AgentApi.handle_event(%{event | actor: actor(ctx.bob)}, :inspect_request, nil)
+    assert {:error, :unauthorized} =
+             Conversations.authorize_execution_control(binding.user_message_id, actor(ctx.bob))
 
     assert :ok = Permissions.revoke(resource(ctx), permission)
 
-    assert %{response: {:error, :unauthorized}} =
-             AgentApi.handle_event(event, :inspect_request, nil)
-
-    assert :ok = ServerManager.forget_request(request_id)
+    assert {:error, :unauthorized} =
+             Conversations.authorize_execution_control(binding.user_message_id, actor(ctx.alice))
   end
 
   test "queued input is not consumption proof and root termination seals outstanding receipts",
