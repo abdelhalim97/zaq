@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T19:48:42Z",
+  "description": "Files CommunicationMedia, Channels.Api/Events. Tests first reconstruction actor mismatch/malformed/version/batch/no-download. Extend existing handle issuer, new confidential internal operation no tool exposure; source fields opaque elsewhere.",
+  "id": "zaq-w02.3",
+  "labels": [],
+  "parent": "zaq-w02",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-w02] Confidential Channels lazy hydration",
+  "type": "task",
+  "updated_at": "2026-10-12T19:48:42Z"
+}
