@@ -143,6 +143,94 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     assert Repo.get!(ExecutionRecord, binding.execution_id) == before
   end
 
+  property "mutating any execution binding coordinate cannot authorize or read another scope",
+           ctx do
+    {binding, _} = admitted(ctx)
+    grant(ctx)
+    before = Repo.get!(ExecutionRecord, binding.execution_id)
+
+    check all(
+            field <-
+              member_of([:conversation_id, :user_message_id, :execution_id, :finalization_token]),
+            replacement <- member_of([nil, "", "invalid", Ecto.UUID.generate()]),
+            max_runs: 24
+          ) do
+      candidate = Map.put(binding, field, replacement)
+
+      # Omitting execution_id is a supported compatibility lookup when there is
+      # exactly one input-bound execution; it is not a different coordinate.
+      unless field == :execution_id and is_nil(replacement) do
+        assert {:error, :unauthorized} =
+                 Conversations.admit_execution(candidate, actor(ctx.alice), "Current input")
+
+        assert {:error, :unauthorized} =
+                 Conversations.execution_history(candidate, actor(ctx.alice))
+
+        assert Repo.get!(ExecutionRecord, binding.execution_id) == before
+      end
+    end
+  end
+
+  test "conversation and execution ownership must both match the active principal", ctx do
+    {binding, _} = admitted(ctx)
+    grant(ctx)
+    execution = Repo.get!(ExecutionRecord, binding.execution_id)
+    assert {:ok, moved} = Conversations.update_execution_owner(execution, ctx.bob.id)
+
+    for person <- [ctx.alice, ctx.bob] do
+      assert {:error, :unauthorized} =
+               Conversations.admit_execution(binding, actor(person), "Current input")
+
+      assert {:error, :unauthorized} = Conversations.execution_history(binding, actor(person))
+
+      assert {:error, :unauthorized} =
+               Conversations.authorize_execution_control(binding.user_message_id, actor(person))
+    end
+
+    assert Repo.get!(ExecutionRecord, binding.execution_id) == moved
+  end
+
+  test "execution binding verification resolves its principal once before transcript policy",
+       ctx do
+    {binding, _} = admitted(ctx)
+    grant(ctx)
+
+    for operation <- [
+          fn -> Conversations.admit_execution(binding, actor(ctx.alice), "Current input") end,
+          fn -> Conversations.execution_history(binding, actor(ctx.alice)) end,
+          fn ->
+            Conversations.authorize_execution_control(binding.user_message_id, actor(ctx.alice))
+          end
+        ] do
+      {result, queries} = QueryRecorder.capture(operation)
+      assert result == :ok or match?({:ok, %{kind: :canonical}}, result)
+
+      person_reads =
+        Enum.filter(queries, fn query ->
+          String.contains?(query.query, ~s(FROM "people")) and query.params == [ctx.alice.id]
+        end)
+
+      # One fresh owner resolution plus TranscriptHistory's independent Person
+      # existence check. Execution ownership must reuse the resolved principal.
+      assert length(person_reads) == 2
+    end
+  end
+
+  test "an inactive principal cannot authorize execution or read with an earlier capability",
+       ctx do
+    {binding, _} = admitted(ctx)
+    grant(ctx)
+    assert {:ok, _} = Conversations.admit_execution(binding, actor(ctx.alice), "Current input")
+    accepted = Repo.get!(ExecutionRecord, binding.execution_id)
+    assert {:ok, _} = People.update_person(ctx.alice, %{status: "inactive"})
+
+    assert {:error, :unauthorized} =
+             Conversations.admit_execution(binding, actor(ctx.alice), "Current input")
+
+    assert {:error, :unauthorized} = Conversations.execution_history(binding, actor(ctx.alice))
+    assert Repo.get!(ExecutionRecord, binding.execution_id) == accepted
+  end
+
   test "projects attributed root and local history once without current input or siblings", ctx do
     root = incoming(ctx, ctx.bob, "root", nil, "Project root")
     assert {:ok, _} = HistoryIngress.capture(root)

@@ -943,6 +943,24 @@ Distributed server invalidation remains a later consumer integration.
 
 ### Conversations Context (`Zaq.Engine.Conversations`)
 
+#### Message lifecycle gates
+
+These gates authorize different operations; a stored message is not permission to
+execute or read history. Existing public names remain compatible.
+
+| Gate | Entry point / owner | Checks and effects |
+| --- | --- | --- |
+| Capture | `HistoryIngress` → `TranscriptHistory` | Verify trusted source, connector, People, audience and placement; store factual content idempotently where source identity exists. No execution authorization. |
+| Prepare execution | `Conversations.admit_incoming/1` | Bind the exact input to its conversation, mint its capability and prepare a provisional execution. `admitted?` means newly prepared, not authorized to execute. |
+| Authorize execution (admission) | `Conversations.admit_execution/3` | Under the input lock, verify binding, exact content, active principal, ownership and current transcript access; record write-once admission evidence. |
+| Read context | `Conversations.execution_history/2,3` | Verify binding and active ownership afresh, then read each source through current transcript permissions. No admission writes. |
+| Acquire runtime lease | Agent `HistorySync` / `ServerManager` | Reserve the exact runtime incarnation and incorporated cursors; this is concurrency control, not an Engine permission grant. |
+| Finalize execution | `Conversations.finalize_incoming/4` | Verify capability, active execution owner and public-root state; persist one terminal outcome idempotently. Does not authorize new history reads. |
+
+Execution admission is the only gate that records `admitted_at`. Accepted input
+receipts and session-local projections retain their existing lifecycle semantics;
+they are not reusable grants for later public invocations.
+
 `admit_execution/3` validates the exact input, content, capability and active Person
 under the admitted-input lock, reuses the effective transcript-read policy, and
 records write-once `ExecutionRecord.admitted_at`. Factual capture and provisional

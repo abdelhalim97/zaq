@@ -2,7 +2,7 @@ defmodule Zaq.Agent.HistorySync do
   @moduledoc """
   Internal coordinator for authorized history at handled request boundaries.
 
-  API owns outcome persistence; ServerManager owns exclusive admission and exact
+  API owns outcome persistence; ServerManager owns exclusive runtime leases and exact
   runtime incarnations; Engine owns grants and association cursors. Completion
   sessions remain local process-owned references, never message metadata or tool
   capabilities. An unfinished session disposes its runtimes rather than retaining
@@ -32,7 +32,7 @@ defmodule Zaq.Agent.HistorySync do
     end
   end
 
-  @doc "Carries an Engine admission only within its owning live completion session."
+  @doc "Carries Engine execution authorization only within its owning live completion session."
   def execution_admission(opts, binding, actor, content) do
     session = Keyword.get(opts, :history_session)
     key = {binding, ExecutionActor.identity(actor), content}
@@ -40,11 +40,11 @@ defmodule Zaq.Agent.HistorySync do
 
     case admissions && Map.fetch(admissions, key) do
       {:ok, projection} -> {:ok, projection}
-      _ -> fetch_admission(opts, binding, actor, content, admissions)
+      _ -> authorize_execution(opts, binding, actor, content, admissions)
     end
   end
 
-  defp fetch_admission(opts, binding, actor, content, admissions) do
+  defp authorize_execution(opts, binding, actor, content, admissions) do
     event =
       Event.new(%{binding: binding, content: content}, :engine,
         actor: actor,
@@ -102,14 +102,14 @@ defmodule Zaq.Agent.HistorySync do
     end
   end
 
-  @doc "Acquires canonical admission and uses the incorporated cursor as the fixed turn cursor."
+  @doc "Acquires a runtime lease for authorized history and fixes the turn's incorporated cursors."
   def admit(opts, server_id, pid, actor) do
     case Keyword.get(opts, :execution_history) do
       nil ->
         {:ok, opts}
 
       history ->
-        with {:ok, lease} <- admit_lease(opts, server_id, pid, actor, history) do
+        with {:ok, lease} <- acquire_runtime_lease(opts, server_id, pid, actor, history) do
           history =
             history
             |> Map.put(:cursors, lease.cursors)
@@ -120,7 +120,7 @@ defmodule Zaq.Agent.HistorySync do
     end
   end
 
-  @doc "Reserves live followup admission inside the caller's existing completion session."
+  @doc "Reserves a live followup runtime lease inside the caller's existing completion session."
   @spec reserve_followup(reference(), map(), map(), String.t(), pos_integer()) ::
           {:ok, map()} | {:error, term()}
   def reserve_followup(session, disposition, actor, input_id, timeout) do
@@ -169,7 +169,7 @@ defmodule Zaq.Agent.HistorySync do
     end
   end
 
-  defp admit_lease(opts, server_id, pid, actor, history) do
+  defp acquire_runtime_lease(opts, server_id, pid, actor, history) do
     details = %{
       session: Keyword.fetch!(opts, :history_session),
       history: history,
