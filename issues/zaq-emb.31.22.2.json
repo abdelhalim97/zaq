@@ -11,9 +11,15 @@
   "id": "zaq-emb.31.22.2",
   "labels": [],
   "parent": "zaq-emb.31.22",
+  "comments": [
+    {
+      "text": "Removed observations table/API (observe/read/bindings/forget), unused Agent inspect action and retained Factory inspector, StreamEvents snapshots. Stream reduction/correlation/receipts/traces/telemetry unchanged. Production source/test scan finds no removed API references. Tests migrated to real native targeting; native100 eviction, full2100-delta trace truncation/completion, suspended shutdown and persisted literal Person/grant checks retained. Focused332 tests/14properties passes; q clean. Archive-only ownership properties removed in favor of live snapshot principal/scope property; fake stale observation now rejected before queue, with real after-queue closure journey maintained.",
+      "timestamp": "2026-10-12T03:19:10Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-emb.31.22] Remove request observations archive",
   "type": "task",
-  "updated_at": "2026-10-12T03:19:09Z"
+  "updated_at": "2026-10-12T03:19:10Z"
 }
