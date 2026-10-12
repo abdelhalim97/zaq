@@ -7,9 +7,15 @@
   "id": "zaq-pkd.19",
   "labels": [],
   "parent": "zaq-pkd",
+  "comments": [
+    {
+      "text": "Resolved validation fixture mismatch without altering production deletion policy: the missing-conversation test now detaches its canonical message from the legacy coordinate via Ecto changeset before removing the conversation, preserving TranscriptMessage and ExecutionRecord evidence. Existing prepare/initialize denial and no-replacement assertions unchanged; added explicit evidence-retention assertions. ChannelConversations suite 1 property/21 tests PASS. Awaiting final integrated gate; no commit/push.",
+      "timestamp": "2026-10-12T17:55:11Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Reconcile widget conversation deletion with execution evidence",
   "type": "bug",
-  "updated_at": "2026-10-12T14:01:19Z"
+  "updated_at": "2026-10-12T17:55:11Z"
 }
