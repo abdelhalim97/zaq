@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Julien",
   "blocked_by": [
     "zaq-pkd.20.2"
   ],
@@ -12,8 +12,8 @@
   "labels": [],
   "parent": "zaq-pkd.20",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[zaq-pkd.20] Direct widget delivery and RequestOwner removal",
   "type": "task",
-  "updated_at": "2026-10-12T16:59:10Z"
+  "updated_at": "2026-10-12T17:07:59Z"
 }
