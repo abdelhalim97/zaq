@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "zaq-emb.31.22.1"
+  ],
   "blocks": [],
   "created": "2026-10-12T02:00:05Z",
   "description": "Step 3 depends 1. Share Executor attachment metadata/opaque-alias prompt formatting with RequestControl; retain canonical raw content for Engine authorization. Tests first busy attachment correction model payload usable scoped reference exactly once, invalid admission rejected, ordinary execution unchanged. Files Executor RequestControl shared formatting owner and existing real channel integration. Reuse OpaqueAliases Record.metadata Engine admission/receipt; no new Action or provider branch. Mock external LLM/transport only. Document shared payload contract.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-emb.31.22] Attachment-bearing steering",
   "type": "task",
-  "updated_at": "2026-10-12T02:00:05Z"
+  "updated_at": "2026-10-12T02:00:29Z"
 }
