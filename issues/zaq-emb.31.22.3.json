@@ -11,6 +11,12 @@
   "id": "zaq-emb.31.22.3",
   "labels": [],
   "parent": "zaq-emb.31.22",
+  "comments": [
+    {
+      "text": "Extracted existing Executor formatter into local-only InputPrompt; RequestControl uses it only after original-content authorization and queueing. Incoming and busy paths pass attachments with exact target server alias scope; receipt UUIDs unchanged. Canonical real tool-calling regression passes: raw content admission, one attachment in next model payload, opaque handle alias, original Message.content unchanged, consumed receipt with no public answer. Native legacy steer/inject regression passes. Existing formatter fallback test retained. q and focused groups pass. Test handler retains exact text-only assertion and explicitly parses attachment-mode payload instead of expecting old text-only value.",
+      "timestamp": "2026-10-12T03:19:12Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-emb.31.22] Attachment-bearing steering",
