@@ -3,7 +3,9 @@
   "blocked_by": [
     "zaq-w02.1"
   ],
-  "blocks": [],
+  "blocks": [
+    "zaq-w02.3"
+  ],
   "created": "2026-10-12T19:48:40Z",
   "description": "Files Record, HistoryIngress, TranscriptHistory, Conversations. Tests first JSON sanitization/property, no handle/bytes, attachment-only and duplicate old/new delivery. Extend existing metadata/capture; no provider interpretation in Engine; trusted canonical storage only.",
   "id": "zaq-w02.2",
@@ -13,5 +15,5 @@
   "status": "open",
   "title": "[zaq-w02] Engine metadata-only attachment persistence",
   "type": "task",
-  "updated_at": "2026-10-12T19:48:41Z"
+  "updated_at": "2026-10-12T19:48:43Z"
 }
