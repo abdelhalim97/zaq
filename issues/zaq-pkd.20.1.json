@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T16:58:24Z",
+  "description": "Approved user plan: separate submission ack from assistant streams, support v2 widget Response/Delivery while keeping BO v1 unchanged. Trusted optional conversation/message transport correlation in Delivery, opaque in generic routing context. Evidence: Delivery/Response existing constructors and safe serialization; reuse extend those boundary value objects locally, no Action or tool exposure. Contract: widget receipts no assistant ID, public message events independent stable ID, no native execution details. Test constructor versions/privacy/scope round trips and receipts first. Depends on inspected widget session ses_ecef514b0ffegZqQ4Lh1HJhrgu contract; no deps source edits.",
+  "id": "zaq-pkd.20.1",
+  "labels": [],
+  "parent": "zaq-pkd.20",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-pkd.20] Public v2 submission and transport correlation contracts",
+  "type": "task",
+  "updated_at": "2026-10-12T16:58:24Z"
+}
