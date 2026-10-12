@@ -19,11 +19,15 @@
     {
       "text": "Latest hostmanaged regression seed893691:706tests+12properties with ONLY1failure at newhostmanaged readinessassertion. Realhost no-widgetproxy pages/session/SecurePartitioned scopedcookies/readonlyverify/WSS/forgedCSRF403/foreignOrigin403/directHTTP503 pass; spoofedclientheader fixture sanitization passes. New no-defaulttrust test proves publicHTTPS URL + XFP alone without endpointrewrite stays503/noCookie; configuredhost malformed/comma schemes503/noCookie. Existingoptionalwidgetproxy/default443omit and explicitnondefaultfixtures unchanged/green. mixq rerun clean; diffcheckclean;31docpaths exist; lock and fetchedHEAD verified2559489739a394f9ad57d8263ed4b2cab546f4a3. Guide/evaluation explicitly record hostmanaged readinesslimitation (not green); earlierlocalcandidate710pass history superseded. Await investigation-only sameupstreamsession outcome; finalprecommit/approval not requested while regressionfails. User services/stopped evaluation untouched; changes uncommitted/unpublished.",
       "timestamp": "2026-10-12T11:46:50Z"
+    },
+    {
+      "text": "User explicitly approved sameupstreamsession implementation and publication of LOCALFEEDLIVENESS readiness: HTTPonly guardedfeed mayReady, not securitycertification. Upstreamww-2ou published remoteverifiedb66645544a0b4d3d0cb4debfe8741bbe3ad3e466 parent25594897; noforceSSLclassification/startupflags/widgetproxyrequired and no guardschanged. Upstreamprecommit297tests/quality/scopedbrowser3/cookiehost28+2skips/distributedauth pass. ZAQ testsfirst oldpublished2RED hostmanagedreadiness + newactualHTTPonly securefeedreadiness; sameassertionsGREENlocal38tests+1property, broad707tests+12properties. Replaced localmanifest with immutableb666455 pin; fetchedHEAD/lock/manifestverified; repeatpublishedbroad707tests+12properties0failures seed893691; mixqclean/diffcheckclean/31doclinkpathsvalid. NativeTLS, explicitnondefaultproxy, default443omitproxy and hostmanagedno-proxy realWSS/CSRF/foreignOrigin/SecurePartitioned/read-only checks unchanged/passed. NewHTTPonlyfeed test proves None+Partitioned page/session exact503https_required/noCookie yetReady with session/externalnotchecked; stoppingendpointUnknown. No-url-as-HTTPSproof and malformedhostscheme reject tests pass. Reverted ourenv/runtime/application/Compose proxywiring entirely; existingBridge/scoped work preserved. Guide/evaluation updatedlocalfeed semantics/current immutableacceptance. Selfreview endpointdiff: generic standardPlug.RewriteOn using existinghostforce_ssl config before adapterguard, no handrolledtrust/browserconfig. No user services or stoppedeval restarted, no ZAQcommit/push/merge/main switch. Overall zaq-yx7.8 UX/WebKit/coverage/review/finalprecommit gates remainpending; no finalhumanapproval requested here.",
+      "timestamp": "2026-10-12T12:19:38Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-yx7] Wire trusted ingress options into normal Channels startup",
   "type": "task",
-  "updated_at": "2026-10-12T11:46:50Z"
+  "updated_at": "2026-10-12T12:19:38Z"
 }
