@@ -2,6 +2,11 @@ defmodule Zaq.Engine.Conversations do
   @moduledoc """
   Context module for managing conversations, messages, ratings, and shares.
 
+  Factual capture, provisional execution preparation (`admit_incoming`), execution
+  authorization (`admit_execution`), context reads and outcome finalization are
+  separate gates. Only execution authorization records admission evidence; a
+  prepared binding or stored message is not a permission grant.
+
   All functions in this module operate on `Zaq.Repo` directly. BO LiveViews
   must call these functions via `Zaq.NodeRouter.dispatch/1` with `%Zaq.Event{}`.
   """
@@ -52,20 +57,17 @@ defmodule Zaq.Engine.Conversations do
   def list_canonical_messages(person, transcript_id, opts \\ []),
     do: TranscriptHistory.list(person, transcript_id, opts)
 
-  @doc "Validates an Engine admission capability and returns only authorized execution history."
+  @doc "Verifies the execution binding and reads context with fresh permissions; never records admission."
   @spec execution_history(map(), term(), keyword()) :: {:ok, map()} | {:error, term()}
   def execution_history(binding, actor, opts \\ [])
 
   def execution_history(binding, actor, opts) when is_map(binding) do
     with {:ok, conversation_id} <- Ecto.UUID.cast(binding[:conversation_id]),
          {:ok, input_id} <- Ecto.UUID.cast(binding[:user_message_id]),
-         token when is_binary(token) <- binding[:finalization_token],
-         %Message{conversation_id: ^conversation_id, role: "user"} = input <-
-           Repo.get(Message, input_id),
-         true <- valid_finalization_token?(input, token, binding[:execution_id]),
-         %Conversation{} = conversation <- Repo.get(Conversation, conversation_id),
-         {:ok, person} <- execution_history_owner(conversation, actor),
-         :ok <- ExecutionLifecycle.authorize(input, actor, binding[:execution_id]) do
+         %Message{} = input <- Repo.get(Message, input_id),
+         :ok <- verify_execution_binding(input, %{binding | conversation_id: conversation_id}),
+         {:ok, conversation, person} <-
+           verified_execution_owner(input, actor, binding[:execution_id]) do
       project_execution_history(input, conversation, person, opts)
     else
       _ -> {:error, :unauthorized}
@@ -110,18 +112,40 @@ defmodule Zaq.Engine.Conversations do
   def admit_execution(_binding, _actor, _content), do: {:error, :unauthorized}
 
   defp admit_execution_locked(input_id, binding, actor, content) do
-    with %Message{role: "user"} = input <- lock_admitted_message(input_id),
-         true <- input.conversation_id == binding[:conversation_id],
-         token when is_binary(token) <- binding[:finalization_token],
-         true <-
-           valid_finalization_token?(input, token, binding[:execution_id]),
+    with %Message{} = input <- lock_admitted_message(input_id),
+         :ok <- verify_execution_binding(input, binding),
          :ok <- matching_control_content(input, content: content),
-         %Conversation{} = conversation <- Repo.get(Conversation, input.conversation_id),
-         {:ok, person} <- execution_history_owner(conversation, actor),
-         :ok <- ExecutionLifecycle.authorize(input, actor, binding[:execution_id]) do
+         {:ok, conversation, person} <-
+           verified_execution_owner(input, actor, binding[:execution_id]) do
       input
       |> ExecutionHistory.project_admission(conversation, person)
       |> record_admission(input, binding[:execution_id])
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  # The caller selects/locks the input. Reads normalize their conversation UUID;
+  # authorization retains its existing literal binding comparison under the lock.
+  defp verify_execution_binding(%Message{role: "user"} = input, binding) do
+    with true <- input.conversation_id == binding[:conversation_id],
+         token when is_binary(token) <- binding[:finalization_token],
+         true <- valid_finalization_token?(input, token, binding[:execution_id]) do
+      :ok
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp verify_execution_binding(_input, _binding), do: {:error, :unauthorized}
+
+  # Resolve a fresh active principal once, but compare both record owners. The
+  # resulting Person is local to this operation, not a transferable permission.
+  defp verified_execution_owner(input, actor, execution_id) do
+    with %Conversation{} = conversation <- Repo.get(Conversation, input.conversation_id),
+         {:ok, person} <- execution_history_owner(conversation, actor),
+         :ok <- ExecutionLifecycle.authorize_resolved_person(input, person, execution_id) do
+      {:ok, conversation, person}
     else
       _ -> {:error, :unauthorized}
     end
@@ -150,9 +174,7 @@ defmodule Zaq.Engine.Conversations do
   def authorize_execution_control(input_id, actor, execution_id) when is_binary(input_id) do
     with {:ok, id} <- Ecto.UUID.cast(input_id),
          %Message{} = input <- Repo.get(Message, id),
-         %Conversation{} = conversation <- Repo.get(Conversation, input.conversation_id),
-         {:ok, person} <- execution_history_owner(conversation, actor),
-         :ok <- ExecutionLifecycle.authorize(input, actor, execution_id),
+         {:ok, conversation, person} <- verified_execution_owner(input, actor, execution_id),
          {:ok, _projection} <- ExecutionHistory.project(input, conversation, person) do
       :ok
     else
@@ -257,11 +279,8 @@ defmodule Zaq.Engine.Conversations do
   end
 
   defp execution_scope(input, actor, execution_id) do
-    with %Conversation{} = conversation <- Repo.get(Conversation, input.conversation_id),
-         {:ok, person} <- execution_history_owner(conversation, actor),
-         :ok <- ExecutionLifecycle.authorize(input, actor, execution_id) do
-      ExecutionHistory.scope(input, conversation, person)
-    else
+    case verified_execution_owner(input, actor, execution_id) do
+      {:ok, conversation, person} -> ExecutionHistory.scope(input, conversation, person)
       _ -> {:error, :unauthorized}
     end
   end
@@ -672,6 +691,10 @@ defmodule Zaq.Engine.Conversations do
 
   @doc """
   Resolves the canonical conversation and persists an incoming user message before execution.
+
+  This prepares an execution binding, not execution authorization. `admitted?`
+  reports whether a new input was prepared; the provisional record has no
+  `admitted_at` until `admit_execution/3` authorizes it.
 
   The returned IDs are trusted Engine references. When the provider supplies a message ID,
   redelivery within the same conversation reuses the previously admitted message.

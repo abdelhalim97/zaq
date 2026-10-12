@@ -670,6 +670,12 @@ without safe permission mutation support return `:unsupported`.
 - `build/1` — converts history map to sorted `[LangChain.Message.t()]` list; handles `:user` and `:bot` roles
 
 ### History Loader (`Zaq.Agent.HistoryLoader`)
+- The [Engine lifecycle gates](engine.md#message-lifecycle-gates) distinguish
+  execution authorization from factual capture, context reads and finalization.
+  Agent runtime lease acquisition is a separate concurrency boundary, not another
+  implementation of Engine permission policy. Compatibility names such as
+  `HistorySync.admit/4` still acquire that lease; `execution_admission/4` obtains
+  and carries Engine authorization within the live session.
 - Loads initial context for runtime agent cold starts
 - Canonical input authorization runs once before Agent status/guard side effects
   through confidential Engine `:admit_execution`. `HistorySync` carries that result
@@ -696,7 +702,7 @@ without safe permission mutation support return `:unsupported`.
   request-boundary synchronization: it accepts only an exact PID and operation ID, rejects
   active runs before dispatch, and verifies Jido's applied-operation receipt and
   resulting context rather than treating a queued command as success. Its caller
-  must serialize admission across the operation. ServerManager's
+  must serialize runtime lease acquisition across the operation. ServerManager's
   `begin_history_request/3` and `complete_history_request/4` maintain an exact-PID,
   process-owned lease and incorporated cursor ledger, releasing queued callers
   only after native apply confirmation. Abandoned owners or failed application
@@ -705,7 +711,7 @@ without safe permission mutation support return `:unsupported`.
   Engine outcome persistence; session references and leases never enter outgoing
   metadata. After successful persistence, it rereads authorized additions, binds
   the native final answer to its persisted UUID, merges without duplicating inputs
-  or tool pairs, and confirms idle application before releasing admission. Capped
+  or tool pairs, and confirms idle application before releasing the runtime lease. Capped
   pages publish only their read cursors, never unseen captured ends. On verified
   access loss, completion binds the persisted answer using already-authorized context
   and releases accepted waiters without fetching forbidden additions. Failed runs,

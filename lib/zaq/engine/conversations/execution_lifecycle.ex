@@ -1,6 +1,6 @@
 defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
   @moduledoc """
-  Persists private execution state within Conversations' admission/finalization
+  Persists private execution state within Conversations' preparation/authorization/finalization
   transactions. Callers hold the admitted-message lock; this module never creates
   public messages, transcript placements, accounting jobs or delivery attempts.
   """
@@ -37,7 +37,7 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
   defp select_execution([execution]), do: {:ok, execution}
   defp select_execution(_), do: {:error, :ambiguous_execution}
 
-  @doc "Creates the private root for a newly admitted canonical Person input."
+  @doc "Prepares a provisional private root; this does not record execution authorization."
   def admit(%{person_id: id}, input, token, {:ok, _provider, _account_key})
       when is_integer(id) and id > 0 and is_binary(token) do
     %ExecutionRecord{}
@@ -96,6 +96,21 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
     end
   end
 
+  @doc """
+  Checks execution ownership using the active Person freshly resolved by Conversations.
+
+  Internal to the current Engine operation: the caller already validated the actor
+  and conversation owner. This snapshot is not an admission capability and must not
+  be retained for later requests. Nil only supports inputs without a private record.
+  """
+  def authorize_resolved_person(input, person, execution_id) do
+    case fetch(input, execution_id) do
+      {:ok, nil} -> :ok
+      {:ok, execution} -> matching_active_owner(execution, person)
+      error -> error
+    end
+  end
+
   @doc "Authorizes a public-answer root, never a private steering receipt."
   def authorize_finalization(input, actor, execution_id \\ nil) do
     case fetch(input, execution_id) do
@@ -117,13 +132,15 @@ defmodule Zaq.Engine.Conversations.ExecutionLifecycle do
 
   defp authorize_owner(execution, actor) do
     with {:ok, %{person: %{id: id}}} <- ExecutionActor.validate(actor),
-         true <- id == execution.person_id,
-         %Person{status: "active"} <- Repo.get(Person, id) do
-      :ok
+         %Person{} = person <- Repo.get(Person, id) do
+      matching_active_owner(execution, person)
     else
       _ -> {:error, :unauthorized}
     end
   end
+
+  defp matching_active_owner(%{person_id: id}, %Person{id: id, status: "active"}), do: :ok
+  defp matching_active_owner(_execution, _person), do: {:error, :unauthorized}
 
   @doc "Returns whether the locked input belongs to the new private storage contract."
   def private?(input),
