@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Julien",
   "blocked_by": [],
   "blocks": [
     "zaq-pkd.20.2"
@@ -10,8 +10,8 @@
   "labels": [],
   "parent": "zaq-pkd.20",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[zaq-pkd.20] Public v2 submission and transport correlation contracts",
   "type": "task",
-  "updated_at": "2026-10-12T16:59:01Z"
+  "updated_at": "2026-10-12T16:59:14Z"
 }
