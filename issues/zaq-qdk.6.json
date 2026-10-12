@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "zaq-qdk.5"
+  ],
   "blocks": [],
   "created": "2026-10-12T16:31:05Z",
   "description": "Run isolated changed tests and mix q per code step, inspect diff for boundaries/duplication and run final mix precommit. Preserve existing concurrency/property coverage. No new browser E2E scope, schema or public dispatch change. Numerical coverage phase remains post-review per workflow; no commit/push without authorization.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-qdk.6] Validate completed admission refactor",
   "type": "task",
-  "updated_at": "2026-10-12T16:31:06Z"
+  "updated_at": "2026-10-12T16:31:07Z"
 }
