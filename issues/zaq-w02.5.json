@@ -4,14 +4,16 @@
     "zaq-w02.4"
   ],
   "blocks": [],
+  "closed_at": "2026-10-12T20:39:57Z",
+  "close_reason": "End-to-end media-only capture -\u003e delayed native tool call -\u003e provider-native fetch -\u003e model image consumption passes before/after runtime restart. Integration also caught and fixed canonical history alias/tool scope mismatch. Added exact IMAP hydration and JSON/provenance property checks, per-attachment unavailable and truthful transport failures; updated four service docs. Focused suite: 6 doctests, 14 properties, 565 tests pass. mix q passes. Final mix precommit passes: 17 doctests, 181 properties, 9483 tests, 0 failures, 1 skip (114 excluded). Initial full run transient unrelated credentials setup deadlock passed isolated 8 tests and complete gate rerun. No commit/push/merge yet; current branch authorized, PR #842 linked. Numerical coverage phase remains review-gated.",
   "created": "2026-10-12T19:48:45Z",
   "description": "Tests first media-only capture -\u003e delayed prompt -\u003e scoped alias -\u003e real materializer/provider edge -\u003e model projection; restart and legacy/unauthorized scenarios. Update materialization/channels/agent/engine service docs and module docs. mix q per issue, isolated regressions, final mix precommit. No new UI or browser E2E required.",
   "id": "zaq-w02.5",
   "labels": [],
   "parent": "zaq-w02",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[zaq-w02] Integrated validation and documentation",
   "type": "task",
-  "updated_at": "2026-10-12T19:48:46Z"
+  "updated_at": "2026-10-12T20:39:57Z"
 }
