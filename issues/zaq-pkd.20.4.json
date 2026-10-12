@@ -3,7 +3,9 @@
   "blocked_by": [
     "zaq-pkd.20.3"
   ],
-  "blocks": [],
+  "blocks": [
+    "zaq-pkd.20.5"
+  ],
   "created": "2026-10-12T16:58:56Z",
   "description": "Widget session builds/pushes new branch in its existing worktree; inspect returned SHA, update pinned dependency normally (never edit deps source). Update docs/services/web-bridge.md owner and links; test adapter real runtime and split-role behavior, run mix q and isolated tests per issue. Existing webbridge browser journey execution; record human UX approval before new feature E2E authoring. Final PR review/coverage lifecycle and mix precommit before final approval. Related prior FK regression zaq-pkd.19 remains separate. Reuse assessment N/A for dependency/docs/validation. Dependency chain .1 -\u003e .2 -\u003e .3 -\u003e .4; Mermaid graph LR A[contracts]--\u003eB[Agent notifications]--\u003eC[bridge removal]--\u003eD[upstream pin and validation]. No ZAQ commit/push authorization implied; user explicitly authorizes upstream widget new-branch push.",
   "id": "zaq-pkd.20.4",
@@ -13,5 +15,5 @@
   "status": "in_progress",
   "title": "[zaq-pkd.20] Upstream pin, documentation and integrated validation",
   "type": "task",
-  "updated_at": "2026-10-12T17:24:49Z"
+  "updated_at": "2026-10-12T18:24:56Z"
 }
