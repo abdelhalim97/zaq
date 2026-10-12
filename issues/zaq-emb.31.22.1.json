@@ -6,6 +6,7 @@
     "zaq-emb.31.22.3",
     "zaq-emb.31.22.4"
   ],
+  "closed_at": "2026-10-12T03:19:08Z",
   "created": "2026-10-12T01:59:47Z",
   "description": "Step 1. Files ServerManager Factory RequestControl Executor HistorySync. Tests first: native same-owner targeting, foreign actor/scope/request/PID rejection, completion/replacement races, legacy controls and access-loss admission. Extend existing runtime tracking and native Factory state; canonical binding from exact live lease, legacy bound actor. No archive or new registry, no tool Action. Native status outside manager callback; same-PID final revalidation and expected_request_id. Preserve errors and minimal pending completion binding. Mock external LLM only. Update API/module contracts with step 5.",
   "id": "zaq-emb.31.22.1",
@@ -18,8 +19,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-emb.31.22] Live runtime targeting",
   "type": "task",
-  "updated_at": "2026-10-12T03:19:07Z"
+  "updated_at": "2026-10-12T03:19:08Z"
 }
