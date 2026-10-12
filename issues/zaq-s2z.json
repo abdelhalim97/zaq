@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T17:06:51Z",
+  "description": "Observed in admission-refactor final validation (zaq-qdk), no changes to these tests. Default MIX_ENV=test mix precommit seed83543 max_cases16:9472tests179properties17doctests6failures, all PostgreSQL40P01 in People permissions/profile/credentials/OAuth test paths. Serialized same gate --max-cases1 seed76701:9472tests179properties17doctests0failures,1skipped114excluded. Inspect shared TRUNCATE fixture setup and async ownership before proposing changes; serialized success does not establish root cause/fix. Admission-specific integration/concurrency tests pass at normal parallelism. Preserve assertions/no automatic retries; no unrelated code modified.",
+  "id": "zaq-s2z",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Investigate concurrent People and OAuth test fixture deadlocks",
+  "type": "bug",
+  "updated_at": "2026-10-12T17:06:51Z"
+}
