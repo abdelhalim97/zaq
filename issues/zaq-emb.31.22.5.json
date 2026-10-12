@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T02:00:20Z",
+  "description": "Step 5 depends 2 3 4 (necessary join separate runtime deletion, attachments, budget contracts). Update Agent/message lifecycle docs and module docs, no historical audit rewriting. Run isolated regression groups mix q per issue; existing browser matrix (no new UI journeys so existing approval retained), final mix precommit before final human approval. Retain persisted ExecutionRecord inspection, steering receipt/access loss/handoff/legacy/native concurrency tests. Verification reuses production APIs, no mocks internal and no new Action; docs changes not executable. No commit/push/merge authorized.",
+  "id": "zaq-emb.31.22.5",
+  "labels": [],
+  "parent": "zaq-emb.31.22",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-emb.31.22] Integrated validation and documentation",
+  "type": "task",
+  "updated_at": "2026-10-12T02:00:20Z"
+}
