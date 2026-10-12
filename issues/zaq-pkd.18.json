@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-12T13:53:43Z",
+  "description": "User authorized merging origin/feature/issue-768-history-b-execution into current refactor/webbridge and retargeting PR #836. Preserve local config/dev.exs via scoped stash/restore. Keep upstream simplifications, dependency pins and consolidated migration. Verify merge ancestry, retained config correction, affected tests and mix q; investigate widget queued-message compatibility and escalate protocol decisions rather than invent semantics. Action reuse: N/A for Git integration; any compatibility follow-up must reuse existing admission/steering through NodeRouter, retain Channels-only transport ownership. Do not push without authorization.",
+  "id": "zaq-pkd.18",
+  "labels": [],
+  "parent": "zaq-pkd",
+  "priority": 2,
+  "status": "open",
+  "title": "Integrate history B into WebBridge stack",
+  "type": "task",
+  "updated_at": "2026-10-12T13:53:43Z"
+}
