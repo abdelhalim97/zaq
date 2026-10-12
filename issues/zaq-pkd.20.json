@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Julien",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-10-12T14:01:32Z",
@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "zaq-pkd",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Handle queued steering acknowledgements in widget transport",
   "type": "bug",
-  "updated_at": "2026-10-12T14:01:32Z"
+  "updated_at": "2026-10-12T16:58:14Z"
 }
