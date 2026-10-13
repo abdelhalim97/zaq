@@ -2,6 +2,8 @@
   "assignee": "Julien",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-10-13T09:05:36Z",
+  "close_reason": "Both integration rounds preserved ancestry/features; latest targete26ad33e0 merged locally as76635062d, focused1112tests and9browser journeys PASS; final precommit exit0 and hooks PASS. Local user config unchanged; publication intentionally awaits authorization. Overall review/coverage/UX gates remain separate.",
   "created": "2026-10-12T13:53:43Z",
   "description": "User authorized merging origin/feature/issue-768-history-b-execution into current refactor/webbridge and retargeting PR #836. Preserve local config/dev.exs via scoped stash/restore. Keep upstream simplifications, dependency pins and consolidated migration. Verify merge ancestry, retained config correction, affected tests and mix q; investigate widget queued-message compatibility and escalate protocol decisions rather than invent semantics. Action reuse: N/A for Git integration; any compatibility follow-up must reuse existing admission/steering through NodeRouter, retain Channels-only transport ownership. Do not push without authorization.",
   "id": "zaq-pkd.18",
@@ -22,8 +24,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Integrate history B into WebBridge stack",
   "type": "task",
-  "updated_at": "2026-10-13T09:05:17Z"
+  "updated_at": "2026-10-13T09:05:36Z"
 }
