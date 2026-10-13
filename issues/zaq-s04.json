@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-13T12:20:11Z",
+  "description": "Approved plan: migrate single-connector legacy links, require explicit connector scope, remove runtime compatibility, centralize platforms, scope routing management and preserve notification delivery scope. Current PR branch authorized; no commit/push.",
+  "id": "zaq-s04",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "[#842] Complete connector-scoped People administration",
+  "type": "epic",
+  "updated_at": "2026-10-13T12:20:11Z"
+}
