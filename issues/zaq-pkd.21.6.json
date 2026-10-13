@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-13T09:29:59Z",
+  "description": "Update engine/channels/web-bridge docs and active source/test links, keep historical records unchanged. Run isolated issue suites +mix q after each step, inspect full seam for duplication/permission leaks, existing9browser journeys. No new UX behavior expected; human-approved v2 consolidated new E2E remains .20.5, review/coverage remains .15; do not mark gates waived. Final mix precommit timeout900000 (lower concurrency if machine load requires, never weaken assertions); explicit exit code and summaries. Publish only cleanup files commit referring .21 then normal push refactor/webbridge (user authorized land); no force, no main, no merge PR. Reverify remote unchanged/reconcile safely before push and preserve config/dev.exs SHA256. N/A reuse docs/validation. DAG .1-\u003e.2-\u003e.3-\u003e.4-\u003e.5-\u003e.6.",
+  "id": "zaq-pkd.21.6",
+  "labels": [],
+  "parent": "zaq-pkd.21",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-pkd.21] Documentation, regression gate and authorized publication",
+  "type": "task",
+  "updated_at": "2026-10-13T09:29:59Z"
+}
