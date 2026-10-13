@@ -6,14 +6,16 @@
   "blocks": [
     "zaq-pkd.21.6"
   ],
+  "closed_at": "2026-10-13T10:05:41Z",
+  "close_reason": "Engine.Api fixed operations now compose established IdentityResolver/Conversations directly. Deleted production ChannelConversations; no replacement coordinator. Original test assertions preserved in renamed private_channel_boundary suite using test-only event-construction helper (no persistence/auth logic); new owner-level API tests remain separate. No production source/dependent docs references remain. Real widget tests cover both sync/async steering receipts, workflow-only no answer and persisted root answer; installed package and BO tests in570test suite passed. mix q PASS. No widget public protocol/pin or WebBridge route changes.",
   "created": "2026-10-13T09:29:48Z",
   "description": "Keep closed Engine.Api :channel_conversations initialize/history/prepare vocabulary; compose IdentityResolver+Conversations with safe boundary error projection and shared validation, no arbitrary invocation. WebBridge NodeRouter ingress public contract unchanged, retain pre-dispatch ID/delivery correlation and native execution owners. Delete original module only when replacement real-boundary tests pass; migrate test aliases/calls to authoritative domain APIs+Engine event composition, not a replacement production coordinator. Test fixed operations/nil identity/no bypass/sync+async/queued/no-answer and existing BO parity. Reuse domain primitives exclusively; no new Action/tool/public protocol. Docs owner references next.",
   "id": "zaq-pkd.21.5",
   "labels": [],
   "parent": "zaq-pkd.21",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-pkd.21] Thin Engine boundary and delete ChannelConversations",
   "type": "task",
-  "updated_at": "2026-10-13T10:05:32Z"
+  "updated_at": "2026-10-13T10:05:41Z"
 }
