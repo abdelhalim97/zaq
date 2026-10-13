@@ -15,11 +15,15 @@
     {
       "text": "Simplification: remove notification-specific preflight event/callbacks and associated obsolete tests. Scope remains on recipient/outgoing. Reuse Channels deliver_outgoing and connector send_reply selection once, retain eligibility errors and fallback logging via generic delivery responses. EmailBridge owns selection; no Engine transport mapping or profile-email send fallback.",
       "timestamp": "2026-10-13T18:18:28Z"
+    },
+    {
+      "text": "Removed :delivery_available event, shared resolve_delivery_config callback machinery, WebBridge notification override, notification-target test file and obsolete preflight test/stub. Notifications use ordinary enabled connector/bridge filtering, retain email and original scope, and call existing :deliver_outgoing. API validates origin only; EmailBridge alone chooses SMTP in send_reply. Added real ACL-import→Person scoped default link→Notifications→Channels.Api→EmailBridge regression, only SMTP transport stubbed. 757 tests +14 properties green, no profile-email notification fallback.",
+      "timestamp": "2026-10-13T18:46:30Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.4] Scoped notification delivery eligibility",
   "type": "task",
-  "updated_at": "2026-10-13T18:18:28Z"
+  "updated_at": "2026-10-13T18:46:30Z"
 }
