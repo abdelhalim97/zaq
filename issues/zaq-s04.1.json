@@ -14,11 +14,15 @@
     {
       "text": "Strict People schema and new backfill migration implemented; profiles/discovery/merges no longer invent unscoped links. New contract/migration tests pass, including actual test-DB migration. Existing tests/fixtures require explicit connector updates; validation remains open. Shared ChannelConfig management query introduced for strict validation. Graph E2E fan-in is intentional: People and notification journeys both precede finalization. No commits/push authorized.",
       "timestamp": "2026-10-13T12:55:51Z"
+    },
+    {
+      "text": "User approved boundary correction and treats migrations absent from main as unconsumed. Verified origin/main: connector-scope and native-identity migrations are unmerged; NormalizePersonEmails exists on main and must remain consumed. Reuse assessment: extend existing CommunicationBridge/Bridge config+delivery seam with connector-owned platform/direction/topic metadata and shared delivery resolution used by preflight+actual delivery; reuse EmailBridge SMTP policy and IncomingMessageRouting persistence. No new Action/tool or parallel notification transport mechanism. Engine/UI receive generic platform/direction/topic metadata only; preserve recipient platform and origin scope. Fold mandatory scope into original scope migration and identity backfill into original identity migration; delete our augmentation migration. Tests: fresh stack/old data replay, exact scope preservation on outgoing/logs, disabled/mismatch/session-only, generic routing topics. No commit/push.",
+      "timestamp": "2026-10-13T15:39:38Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-s04.1] Migration and strict People contracts",
   "type": "task",
-  "updated_at": "2026-10-13T12:55:51Z"
+  "updated_at": "2026-10-13T15:39:38Z"
 }
