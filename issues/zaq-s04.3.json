@@ -11,9 +11,15 @@
   "id": "zaq-s04.3",
   "labels": [],
   "parent": "zaq-s04",
+  "comments": [
+    {
+      "text": "Simplification: remove PersonChannelRouting module; incoming-message management discovery and scoped form commands belong to existing IncomingMessageRouting, reuse AgentRouting conversion and persistence. PeopleGateway preserves transaction for channel + rules. Existing regression tests retained/moved to owner, not a parallel routing engine.",
+      "timestamp": "2026-10-13T18:18:27Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.3] Connector selection and atomic routing administration",
   "type": "task",
-  "updated_at": "2026-10-13T12:20:26Z"
+  "updated_at": "2026-10-13T18:18:27Z"
 }
