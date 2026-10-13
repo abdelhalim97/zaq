@@ -6,14 +6,16 @@
   "blocks": [
     "zaq-pkd.21.3"
   ],
+  "closed_at": "2026-10-13T09:47:16Z",
+  "close_reason": "Shared resolve_channel_sender/1 and read-only authorize_channel_sender/2 implemented under IdentityResolver; message discovery shares discover_person and connector fetch validation, enrichment unchanged, no synthetic Incoming or callbacks. Red missing APIs preceded changes; readiness/message parity and invalid/disabled-before-discovery regression pass within170tests/2properties suite (only later restoration nil-query fix pending). mix q PASS default scheduler; reduced-scheduler duplicate check timed out once under load, no checks disabled. Read-only authorization added to defend newly public domain primitives from caller-supplied Person spoofing.",
   "created": "2026-10-13T09:29:15Z",
   "description": "Implement resolve_channel_sender(scope) returning active Person or safe unauthorized. Reuse provider/config/enabled connector validation and People discovery operation already used by message resolve/2, without synthetic Incoming, provider profile fetch or new identity owner. Preserve ordinary message enrichment/legacy identity behavior. Tests first invalid ID/provider/disabled/archived/inactive, connector-local sender and message parity. Owners IdentityResolver; docs channels/engine responsibility references with integration step. Reuse extend existing resolver validation/discovery, no standalone tool or business Action; internal trusted lifecycle.",
   "id": "zaq-pkd.21.2",
   "labels": [],
   "parent": "zaq-pkd.21",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-pkd.21] Share scoped sender discovery in IdentityResolver",
   "type": "task",
-  "updated_at": "2026-10-13T09:33:32Z"
+  "updated_at": "2026-10-13T09:47:16Z"
 }
