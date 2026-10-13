@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-13T12:20:16Z",
+  "description": "Tests first: connector required, scoped display/edit, forged target rejection, routing rollback and disabled management. Extend PeopleGateway channel commands for transactional save plus routing; reuse AgentRouting validation and IncomingMessageRouting.apply_rule_commands persistence. UI caches reference datasets; no DB during validate. Approved DS components. Docs owners updated.",
+  "id": "zaq-s04.3",
+  "labels": [],
+  "parent": "zaq-s04",
+  "priority": 2,
+  "status": "open",
+  "title": "Connector selection and atomic routing administration",
+  "type": "task",
+  "updated_at": "2026-10-13T12:20:16Z"
+}
