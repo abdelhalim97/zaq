@@ -11,11 +11,15 @@
     {
       "text": "Merged origin/feature/issue-768-history-b-execution ea25d3f3a cleanly into refactor/webbridge as b6417e814. Upstream simplifications/migration/dependency pins retained; duplicate dev DB correction retained. Scoped stash restored original local config/dev.exs edit; merge commit excludes it. mix deps.get PASS, mix q PASS, cached diff --check PASS; commit hooks qf/docs/Credo PASS. Isolated focused suite (_history_b_transition): 7 properties,330 tests,1 failure in deleted-conversation fixture blocked by execution-record FK; tracked zaq-pkd.19. Widget queued disposition compatibility tracked zaq-pkd.20; protocol decision not silently implemented. psql existing /opt/homebrew/opt/libpq/bin used via per-command PATH. PR retarget attempt blocked by gh unauthenticated. No push; no E2E/final precommit; do not claim transition fully validated. Pending publication and PR #836 retarget to feature/issue-768-history-b-execution.",
       "timestamp": "2026-10-12T14:02:55Z"
+    },
+    {
+      "text": "User approved integration in current worktree. New target e26ad33e0 contains19b3acd86 execution verification cleanup and e26ad33e0 attachment hydration. HEAD38ca8c320 remains public v2 widget feature. Merge-tree preview finds only lib/zaq/engine/api.ex conflict; six files overlap overall. User config/dev.exs unchanged upstream and remains uncommitted (SHA25636698c368bf49c403e96932053ef7101ca3b36e7bc2658e40569ae237b0932b3), no stash required. Reuse N/A for Git integration; retain native HistorySync/Engine admission and fresh materialization handles plus consumer-neutral Status notifications, direct Channels transport, independent submission/message lifecycles, removed RequestOwner and d7ed897f widget pin. Validate affected suites, existing browser journeys and final precommit. No new business operations or tool exposure.",
+      "timestamp": "2026-10-13T08:18:57Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Integrate history B into WebBridge stack",
   "type": "task",
-  "updated_at": "2026-10-12T14:02:55Z"
+  "updated_at": "2026-10-13T08:18:57Z"
 }
