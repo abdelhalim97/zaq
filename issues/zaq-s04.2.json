@@ -15,11 +15,15 @@
     {
       "text": "Simplification: reuse Bridge.bridge_for config registration exclusively. Remove communication_platform and fetch_communication_config; connector metadata owns transport mapping, existing BO Communication Channels labels shared for presentation without rewriting Person identifiers. Tests for configured bridge and no unconfigured fallback. No new Action.",
       "timestamp": "2026-10-13T18:18:26Z"
+    },
+    {
+      "text": "Removed communication_platform/fetch_communication_config and guessed bridge selection. Bridge.connector_profile delegates through existing bridge_for configuration; only exact provider IDs are compared for unregistered management connectors, never guessed modules. Extracted existing BO labels into ChannelProvider, shared by Communication Channels index/details and People selector; labels never rewrite stored identifiers. Zero WebBridge diff (widget/session-specific additions removed).",
+      "timestamp": "2026-10-13T18:46:28Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.2] Platform and management discovery",
   "type": "task",
-  "updated_at": "2026-10-13T18:18:26Z"
+  "updated_at": "2026-10-13T18:46:28Z"
 }
