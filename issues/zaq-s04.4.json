@@ -19,11 +19,15 @@
     {
       "text": "Removed :delivery_available event, shared resolve_delivery_config callback machinery, WebBridge notification override, notification-target test file and obsolete preflight test/stub. Notifications use ordinary enabled connector/bridge filtering, retain email and original scope, and call existing :deliver_outgoing. API validates origin only; EmailBridge alone chooses SMTP in send_reply. Added real ACL-import→Person scoped default link→Notifications→Channels.Api→EmailBridge regression, only SMTP transport stubbed. 757 tests +14 properties green, no profile-email notification fallback.",
       "timestamp": "2026-10-13T18:46:30Z"
+    },
+    {
+      "text": "Applied approved cleanup: generic CommunicationBridge.binding_connector/2; People retains atomic persistence. Removed connector_profile; reuse provider_to_bridge_key plus minimal incoming routing metadata. Reused ProviderCatalog labels and single management query. Consolidated tests into real EmailBridge delivery and BO forged-save/reload flows; removed superseded modules and mocked scope test. Existing Actions/events reused; connector helpers local-only, no tool exposure. mix q passed; 1581 tests +23 properties passed (21 excluded). Historical replay remains 4 failures: obsolete unscoped writes and mixed-platform property people_email_index. Consumed migration untouched; final gate blocked pending replay resolution and existing UX/review/coverage gates.",
+      "timestamp": "2026-10-13T20:15:51Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.4] Scoped notification delivery eligibility",
   "type": "task",
-  "updated_at": "2026-10-13T18:46:30Z"
+  "updated_at": "2026-10-13T20:15:51Z"
 }
