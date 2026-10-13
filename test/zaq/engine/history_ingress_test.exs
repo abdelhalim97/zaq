@@ -1162,11 +1162,12 @@ defmodule Zaq.Engine.HistoryIngressTest do
     assert Repo.get!(Message, captured.message_id).attachments == [
              %{
                "id" => "file-1",
+               "kind" => "file",
                "name" => "report.pdf",
                "mime_type" => "application/pdf",
                "size" => 12
              },
-             %{"name" => "sparse"}
+             %{"name" => "sparse", "kind" => "file"}
            ]
   end
 

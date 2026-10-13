@@ -226,6 +226,78 @@ defmodule Zaq.Contracts.Record do
     |> Map.new(fn {key, value} -> {Atom.to_string(key), metadata_value(value)} end)
   end
 
+  @doc """
+  Returns bounded durable attachment metadata, never runtime capabilities or bytes.
+
+  The source payload is opaque to this contract; its owning service validates it
+  before hydration. Other provider attributes, paths and URLs are not persisted.
+  """
+  @spec attachment_metadata(t() | map() | term()) :: map()
+  def attachment_metadata(record) when is_map(record) do
+    descriptor =
+      Enum.reduce([{"id", 4096}, {"name", 512}, {"mime_type", 255}], %{}, fn {key, max}, acc ->
+        put_attachment_string(acc, key, public_value(record, key), max)
+      end)
+
+    descriptor =
+      case public_value(record, "size") do
+        size when is_integer(size) and size >= 0 -> Map.put(descriptor, "size", size)
+        _ -> descriptor
+      end
+
+    descriptor =
+      if public_value(record, "kind") in [:file, "file"],
+        do: Map.put(descriptor, "kind", "file"),
+        else: descriptor
+
+    case attachment_source(public_value(record, "attributes")) do
+      nil -> descriptor
+      source -> Map.put(descriptor, "attributes", %{"materialization_source" => source})
+    end
+  end
+
+  def attachment_metadata(_record), do: %{}
+
+  defp put_attachment_string(acc, key, value, max)
+       when is_binary(value) and byte_size(value) <= max do
+    if String.valid?(value), do: Map.put(acc, key, value), else: acc
+  end
+
+  defp put_attachment_string(acc, _key, _value, _max), do: acc
+
+  defp attachment_source(%{"materialization_source" => source}) when is_map(source) do
+    with true <- durable_source_value?(source, 0),
+         {:ok, json} <- Jason.encode(source),
+         true <- byte_size(json) <= 16_384,
+         {:ok, decoded} <- Jason.decode(json) do
+      decoded
+    else
+      _ -> nil
+    end
+  rescue
+    _ in [Protocol.UndefinedError, ArgumentError] -> nil
+  end
+
+  defp attachment_source(_attributes), do: nil
+
+  defp durable_source_value?(_value, depth) when depth > 6, do: false
+
+  defp durable_source_value?(value, depth) when is_map(value) and map_size(value) <= 32 do
+    Enum.all?(value, fn {key, item} ->
+      is_binary(key) and
+        key not in ~w(content raw materialization_handle provenance_ref token password credentials event api_key access_token refresh_token secret private_key) and
+        durable_source_value?(item, depth + 1)
+    end)
+  end
+
+  defp durable_source_value?(value, depth) when is_list(value) and length(value) <= 32,
+    do: Enum.all?(value, &durable_source_value?(&1, depth + 1))
+
+  defp durable_source_value?(value, _depth),
+    do:
+      (is_binary(value) and byte_size(value) <= 4096) or is_number(value) or
+        value in [nil, true, false]
+
   defp metadata_value(value) when is_atom(value), do: Atom.to_string(value)
   defp metadata_value(%__MODULE__{} = value), do: metadata(value)
   defp metadata_value(value) when is_list(value), do: Enum.map(value, &metadata_value/1)

@@ -3,8 +3,33 @@ defmodule Zaq.Channels.EmailBridge.AttachmentTest do
   use ExUnitProperties
 
   alias Zaq.Channels.EmailBridge.Attachment
+  alias Zaq.Channels.Materializers.CommunicationMedia
   alias Zaq.Contracts.Record
   alias Zaq.Materialization.Handle
+
+  test "durable source metadata contains the same complete locator as the runtime handle" do
+    record = Attachment.to_record(valid_descriptor(), valid_context(%{mailbox: " INBOX "}))
+    assert {:ok, %{locator: locator}} = Handle.verify(record.materialization_handle)
+
+    assert record.attributes["materialization_source"] == %{
+             "version" => 1,
+             "type" => "communication_media",
+             "locator" => locator
+           }
+
+    assert locator["source_author_id"] == "sender@example.com"
+    assert locator["mailbox"] == " INBOX "
+    assert locator["uid"] == 4_281
+    assert locator["section"] == "2.1"
+    assert Jason.decode!(Jason.encode!(record.attributes)) == record.attributes
+    stored = Record.attachment_metadata(record)
+    refute Map.has_key?(stored, "materialization_handle")
+
+    assert {:ok, hydrated} =
+             CommunicationMedia.hydrate(stored, %{actor: %{id: "sender@example.com"}})
+
+    assert {:ok, %{locator: ^locator}} = Handle.verify(hydrated.materialization_handle)
+  end
 
   test "returns safe defaults for invalid outer input shapes" do
     assert Attachment.to_record(nil, valid_context()) == nil

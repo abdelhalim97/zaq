@@ -50,10 +50,14 @@ Datasource file tools and communication attachments may return records with sign
 that need content should redeem materialization handles through
 `Zaq.Materialization` rather than accepting records with embedded events or
 constructing cross-service events inline. For communication media, including IMAP
-email attachments, persisted conversation history stores descriptors and signed
-handles, not bytes. Agent context may expose server-scoped short aliases for
-signed handles and provenance tokens; tool calls expand those aliases only on
-schema-declared paths before validation.
+email attachments, persisted conversation history stores durable source metadata,
+not handles or bytes. Engine-authorized canonical projections are hydrated by
+Channels before reaching Agent. `InputPrompt` formats both current Records and
+history metadata, omitting the internal source payload. History aliases use the
+same logical agent-server scope as tool callbacks, including incremental refresh
+and completion synchronization. Tool calls expand aliases only on schema-declared
+paths before validation. Legacy descriptors without trusted source facts remain
+display-only; Agent never constructs provider locators from prompt text.
 
 ---
 

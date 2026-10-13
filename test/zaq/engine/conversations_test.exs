@@ -1,4 +1,5 @@
 defmodule Zaq.Engine.ConversationsTest do
+  alias Zaq.Channels.Materializers.CommunicationMedia
   # This module exercises the globally named telemetry buffer, which shares DB
   # sandbox ownership across tests and must not run concurrently.
   use Zaq.DataCase, async: false
@@ -1015,6 +1016,11 @@ defmodule Zaq.Engine.ConversationsTest do
     end
 
     test "persists attachment metadata without bytes or events and accepts attachment-only input" do
+      source =
+        CommunicationMedia.source_metadata("mattermost", "file-1", %{
+          "source_author_id" => "attachment-user"
+        })
+
       attachment = %Record{
         id: "file-1",
         kind: :file,
@@ -1025,7 +1031,8 @@ defmodule Zaq.Engine.ConversationsTest do
         attributes: %{
           "source_type" => "communication_media",
           "provider" => "mattermost",
-          "source_id" => "file-1"
+          "source_id" => "file-1",
+          "materialization_source" => source
         },
         raw: %{token: "secret"},
         materialization_handle: "signed-handle"
@@ -1060,7 +1067,8 @@ defmodule Zaq.Engine.ConversationsTest do
       assert stored["name"] == "photo.png"
       refute Map.has_key?(stored, "content")
       refute Map.has_key?(stored, "raw")
-      assert stored["materialization_handle"] == "signed-handle"
+      refute Map.has_key?(stored, "materialization_handle")
+      assert stored["attributes"] == %{"materialization_source" => source}
     end
 
     test "falls back to normalized email thread id then message id then author" do

@@ -803,7 +803,7 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
       assert is_binary(handle)
 
-      assert image.attributes == %{
+      assert Map.delete(image.attributes, "materialization_source") == %{
                "channel_config_id" => "channel-config-1",
                "media_kind" => "image",
                "provider" => "mattermost",
@@ -811,6 +811,14 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
                "source_id" => "file-1",
                "source_message_id" => "message-1",
                "source_type" => "communication_media"
+             }
+
+      assert {:ok, %{locator: locator}} = Handle.verify(handle)
+
+      assert image.attributes["materialization_source"] == %{
+               "version" => 1,
+               "type" => "communication_media",
+               "locator" => locator
              }
 
       assert document.id == "file-2"
@@ -902,7 +910,7 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
       assert is_binary(attachment.materialization_handle)
       refute_received {:fetch_media, _, _}
 
-      assert attachment.attributes == %{
+      assert Map.delete(attachment.attributes, "materialization_source") == %{
                "provider" => "mattermost",
                "source_id" => "file-abc",
                "channel_config_id" => to_string(config.id),
@@ -915,6 +923,8 @@ defmodule Zaq.Channels.JidoChatBridgeTest do
 
       assert {:ok, %{type: "communication_media", locator: locator}} =
                Handle.verify(attachment.materialization_handle)
+
+      assert attachment.attributes["materialization_source"]["locator"] == locator
 
       assert locator["provider"] == "mattermost"
       assert locator["reference"] == "file-abc"

@@ -479,11 +479,20 @@ contract does not own People authentication or post-login redirection.
 ### Communication media attachments
 
 Communication bridges map inbound media to lazy `Zaq.Contracts.Record` values in
-`Incoming.attachments`. Persisted metadata stores the `Record.metadata/1` view:
-canonical JSON-safe descriptor fields, the signed `materialization_handle`, and
-provider-specific JSON-safe `attributes`. Attachment bytes (`content`), raw
-provider internals (`raw`), credentials, and dispatchable events are never
-serialized into message metadata.
+`Incoming.attachments`. `Record.attachment_metadata/1` persists bounded display
+fields and `attributes["materialization_source"]`, a versioned Channels-owned
+source payload. Its locator retains exact provider/config/reference and original
+author/channel/message provenance, including IMAP coordinates where applicable.
+Runtime handles, aliases, bytes, raw provider internals, credentials and events
+are excluded. Engine treats the source payload as opaque JSON-safe metadata.
+
+After successful canonical execution admission or history authorization, Engine
+API dispatches confidential `:hydrate_attachments` batches to Channels, outside
+database transactions. `CommunicationMedia.hydrate/2` reconstructs lazy Records
+and issues handles from stored source facts, preserving the original author check.
+Hydration performs no provider I/O. Legacy, malformed or unauthorized attachments
+retain display metadata with `materialization_status: "unavailable"`; transport
+failures return `:attachment_hydration_unavailable`. No URL or connector is guessed.
 
 Fetch-controlling fields are bound into a signed `materialization_handle` with
 type `communication_media`. `Zaq.Materialization` verifies the handle before the

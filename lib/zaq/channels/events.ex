@@ -97,6 +97,16 @@ defmodule Zaq.Channels.Events do
     |> node_router(opts).dispatch()
   end
 
+  @doc "Builds and dispatches internal lazy hydration for Engine-authorized stored attachments."
+  @spec build_and_dispatch_hydrate_attachments_event([map()], keyword()) :: Event.t()
+  def build_and_dispatch_hydrate_attachments_event(attachments, opts \\ []) do
+    Event.new(%{attachments: attachments}, :channels,
+      actor: Keyword.get(opts, :actor),
+      opts: [action: :hydrate_attachments, confidential: true]
+    )
+    |> node_router(opts).dispatch()
+  end
+
   @spec build_and_dispatch_data_source_watch_item_event(atom() | String.t(), map(), keyword()) ::
           Event.t()
   @doc "Builds and dispatches a provider data-source watch setup event."

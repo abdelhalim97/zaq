@@ -193,6 +193,7 @@ defmodule Zaq.Agent.Executor do
            {:ok, configured_agent} <- selected_agent_result,
            configured_agent <- apply_system_prompt_override(configured_agent, execution_opts),
            server_id <- agent_server_id(configured_agent, execution_opts),
+           execution_opts <- scope_history_aliases(execution_opts, server_id),
            {:ok, server_ref} <-
              ensure_agent_server(
                server_manager_module,
@@ -469,6 +470,21 @@ defmodule Zaq.Agent.Executor do
     "#{configured_agent.name}:#{Keyword.get(opts, :scope, "anonymous")}"
   end
 
+  defp scope_history_aliases(opts, server_id) do
+    case Keyword.get(opts, :execution_history) do
+      %{projection: projection} = history ->
+        opts
+        |> Keyword.put(
+          :context,
+          HistoryLoader.from_projection(projection.messages, opaque_alias_scope: server_id)
+        )
+        |> Keyword.put(:execution_history, %{history | scope: server_id})
+
+      _ ->
+        opts
+    end
+  end
+
   defp ensure_agent_server(server_manager_module, configured_agent, server_id, opts, actor) do
     server_manager_module.ensure_server(configured_agent, server_id, Keyword.get(opts, :context),
       actor: actor,
@@ -539,11 +555,9 @@ defmodule Zaq.Agent.Executor do
 
         {:ok, %{kind: :canonical} = projection} ->
           scope = "history:#{projection.transcript_id}:person:#{ActorNormalizer.person_id(actor)}"
-          context = HistoryLoader.from_projection(projection.messages, opaque_alias_scope: scope)
 
           {:ok,
            opts
-           |> Keyword.put(:context, context)
            |> Keyword.put(:scope, scope)
            |> Keyword.put(:execution_history, %{
              binding: request,

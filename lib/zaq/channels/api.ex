@@ -31,6 +31,7 @@ defmodule Zaq.Channels.Api do
 
   alias Zaq.Channels.DeliveryConfirmation
   alias Zaq.Channels.HttpClient
+  alias Zaq.Channels.Materializers.CommunicationMedia
   alias Zaq.Channels.MessageFormatter
   alias Zaq.ConnectorConfig.Settings
   alias Zaq.Contracts.Record
@@ -122,6 +123,28 @@ defmodule Zaq.Channels.Api do
 
     %{event | response: result}
   end
+
+  # Only Engine's authorized history projection may supply these stored facts.
+  # Unlike materialization this issues lazy capabilities without provider I/O.
+  def handle_event(
+        %Event{request: %{attachments: attachments}} = event,
+        :hydrate_attachments,
+        _context
+      )
+      when is_list(attachments) and length(attachments) <= 1000 do
+    response =
+      if Keyword.get(event.opts, :confidential) == true do
+        context = %{actor: event.actor}
+        {:ok, Enum.map(attachments, &CommunicationMedia.hydrate(&1, context))}
+      else
+        {:error, :confidential_event_required}
+      end
+
+    %{event | response: response}
+  end
+
+  def handle_event(%Event{} = event, :hydrate_attachments, _context),
+    do: %{event | response: {:error, :invalid_attachment_batch}}
 
   def handle_event(%Event{request: request} = event, :materialize_record, _context)
       when is_map(request) do

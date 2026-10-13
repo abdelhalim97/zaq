@@ -2,10 +2,9 @@ defmodule Zaq.Channels.EmailBridge.Attachment do
   @moduledoc """
   Builds lazy email attachment records from MIME section descriptors.
 
-  Attachment records persist only metadata and a signed materialization handle.
-  The handle binds the source IMAP config, mailbox, UIDVALIDITY, message UID, and
-  MIME section so later materialization can re-fetch exactly one section without
-  trusting model-visible metadata.
+  Durable metadata retains the source IMAP config, mailbox, UIDVALIDITY, message
+  UID, MIME section and original author. Runtime Records carry a signed handle;
+  history hydration reissues that handle from trusted stored source facts.
   """
 
   alias Zaq.Channels.Materializers.CommunicationMedia
@@ -24,7 +23,12 @@ defmodule Zaq.Channels.EmailBridge.Attachment do
         name: string(descriptor, :filename),
         mime_type: string(descriptor, :content_type) || "application/octet-stream",
         size: int(descriptor, :encoded_size),
-        attributes: record_attributes(descriptor, context, reference),
+        attributes:
+          record_attributes(descriptor, context, reference)
+          |> Map.put(
+            "materialization_source",
+            CommunicationMedia.source_metadata(@provider, reference, attrs)
+          ),
         materialization_handle: handle
       }
     else

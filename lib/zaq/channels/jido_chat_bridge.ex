@@ -1715,7 +1715,12 @@ defmodule Zaq.Channels.JidoChatBridge do
       name: media.filename || "attachment-#{index}",
       mime_type: media.media_type,
       size: media.size_bytes,
-      attributes: attributes,
+      attributes:
+        Map.put(
+          attributes,
+          "materialization_source",
+          CommunicationMedia.source_metadata(provider, source_id, attrs)
+        ),
       materialization_handle: handle
     }
   end
