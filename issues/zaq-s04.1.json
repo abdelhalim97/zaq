@@ -34,11 +34,15 @@
     {
       "text": "First broad precommit: 48 doctests/241 properties/10665 tests, 115 failures, 1 skipped/122 excluded; not green. Diagnosed fixture groups instead of claiming passing narrow tests covers all. Fixed real archived-default regression by retaining designated archived default as an error (never silently selecting another account). Updated strict fixture callers (routing, Record auth, resources, profile/order/auth concurrency, UpdatePerson, history), preserving every intent/assertion. Test registries now register email where profile creation requires it; transport mocks expose actual EmailBridge metadata or scoped SMTP arity. Unboxed order/auth fixtures own disabled connector configs and clean them up, avoiding runtime startup leaks. Repaired group:297 tests+1 property pass; additional workflow/history/tool/auth group:55 tests+3 properties pass; real credential/Jido delivery:20 tests+1 property pass; Mattermost shared-history group passed in 46-test run (13 other fixture failures subsequently fixed). mix q passes. Final precommit rerunning fresh _c_final2. Frozen consumed NormalizePersonEmails still unchanged: historical tests rerunning its unscoped application-code writes against current strict contracts remain an unresolved compatibility issue; do not add runtime legacy fallbacks or skip/weaken those assertions.",
       "timestamp": "2026-10-13T19:08:43Z"
+    },
+    {
+      "text": "Second broad precommit: 48 doctests/241 properties/10666 tests, 10 failures (down from115), 1 skipped/122 excluded. Six remaining nonhistorical failures fixed and verified:275 tests+2 properties pass. Read-only Person matching now reuses PersonIdentities global email authority after a profile email is cleared, not an unscoped PersonChannel query. Conversation list-time missing-person association had a real cross-connector gap: reproduced equal opaque IDs selecting another Person, then extended existing batched lookup keys/query with connector IDs; unscoped conversations stay unresolved. Added two-connector/nil-scope regression; no new module/Action/transport normalization, no inferred authorization. Fixed auth fixtures by disabling referenced connectors instead of violating strict FKs, supplied conversation/channel IDs, and let shared mock metadata delegate to the actual bridge. mix q passes; final precommit running fresh _c_final3. Four consumed NormalizePersonEmails replay tests still invoke old unscoped writes via current People/PersonChannel contracts. Migration remains byte-identical to HEAD; no assertions skipped/weakened and no runtime fallback restored. This blocks final approval and requires a separate historical-replay strategy/decision. No commit/push.",
+      "timestamp": "2026-10-13T19:23:05Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-s04.1] Migration and strict People contracts",
   "type": "task",
-  "updated_at": "2026-10-13T19:08:43Z"
+  "updated_at": "2026-10-13T19:23:05Z"
 }
