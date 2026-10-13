@@ -15,11 +15,15 @@
     {
       "text": "User approved integration in current worktree. New target e26ad33e0 contains19b3acd86 execution verification cleanup and e26ad33e0 attachment hydration. HEAD38ca8c320 remains public v2 widget feature. Merge-tree preview finds only lib/zaq/engine/api.ex conflict; six files overlap overall. User config/dev.exs unchanged upstream and remains uncommitted (SHA25636698c368bf49c403e96932053ef7101ca3b36e7bc2658e40569ae237b0932b3), no stash required. Reuse N/A for Git integration; retain native HistorySync/Engine admission and fresh materialization handles plus consumer-neutral Status notifications, direct Channels transport, independent submission/message lifecycles, removed RequestOwner and d7ed897f widget pin. Validate affected suites, existing browser journeys and final precommit. No new business operations or tool exposure.",
       "timestamp": "2026-10-13T08:18:57Z"
+    },
+    {
+      "text": "Integrated latest target e26ad33e0 into current refactor/webbridge as local merge76635062d with parents38ca8c320 ande26ad33e0. Only conflict Engine.Api alias block resolved retaining both widget connector action and upstream ChannelsEvents/Record aliases;24 disjoint upstream files retained exactly, all30 upstream changes integrated. Original v2 submission/message lifecycles, native-start/error status identity, RequestOwner removal and d7ed897f widget pin preserved. User config/dev.exs SHA256 unchanged and excluded. mix q PASS; affected upstream history/attachment + Agent/Channels/WebBridge/BO/Engine suites6doctests/22properties/1112tests PASS;9 existing browser journeys across all3 engines PASS. Preliminary final gate under heavy load failed two unmodified timing tests (StepRunner200ms/IMAP1s), both isolated65tests PASS. Reduced-concurrency precommit test phase6doctests/163properties/7749 stale tests/0failures; subprocess capture hit900s after exit0, not accepted as final gate. Rerun using process exit capture mix precommit --max-cases4 ERL_FLAGS +S4:4 completed exit0 in137.6s. No assertions changed or skipped to mask failures. Precommit hooks qf/docs/Credo and commit-message checks PASS. Latest remote target verified unchanged before commit. Both parent histories retained. No push authorized for this integration; branch ahead3 (two upstream commits plus merge), local config edit is only dirty file. Human UX/new E2E and overall coverage/review gates remain tracked separately.",
+      "timestamp": "2026-10-13T09:05:17Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Integrate history B into WebBridge stack",
   "type": "task",
-  "updated_at": "2026-10-13T08:18:57Z"
+  "updated_at": "2026-10-13T09:05:17Z"
 }
