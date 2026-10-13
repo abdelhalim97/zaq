@@ -38,11 +38,15 @@
     {
       "text": "Second broad precommit: 48 doctests/241 properties/10666 tests, 10 failures (down from115), 1 skipped/122 excluded. Six remaining nonhistorical failures fixed and verified:275 tests+2 properties pass. Read-only Person matching now reuses PersonIdentities global email authority after a profile email is cleared, not an unscoped PersonChannel query. Conversation list-time missing-person association had a real cross-connector gap: reproduced equal opaque IDs selecting another Person, then extended existing batched lookup keys/query with connector IDs; unscoped conversations stay unresolved. Added two-connector/nil-scope regression; no new module/Action/transport normalization, no inferred authorization. Fixed auth fixtures by disabling referenced connectors instead of violating strict FKs, supplied conversation/channel IDs, and let shared mock metadata delegate to the actual bridge. mix q passes; final precommit running fresh _c_final3. Four consumed NormalizePersonEmails replay tests still invoke old unscoped writes via current People/PersonChannel contracts. Migration remains byte-identical to HEAD; no assertions skipped/weakened and no runtime fallback restored. This blocks final approval and requires a separate historical-replay strategy/decision. No commit/push.",
       "timestamp": "2026-10-13T19:23:05Z"
+    },
+    {
+      "text": "Final simplification validation completed on fresh _c_final3: mix precommit exit2, 48 doctests/241 properties/10667 tests, exactly4 failures, 1 skipped/122 excluded; 483.6s. All4 failures are PersonEmailDataMigrationTest historical replay cases (blank-name preservation, distinct profile email preservation transitive true/false, mixed-platform chain property). These rerun consumed NormalizePersonEmails using obsolete unscoped writes against current strict contracts. All other selected tests passed. Quality:19253 modules/functions,94 checks,no issues. Expected noisy MCP/Finch process errors also appeared in successful unrelated tests; no causal fix claimed. Do not call final gate green or skip historical assertions. Implementation simplification is in working tree; consumed migration unchanged; no commit/push. Blocker:decide historical replay strategy before final approval.",
+      "timestamp": "2026-10-13T19:31:26Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-s04.1] Migration and strict People contracts",
   "type": "task",
-  "updated_at": "2026-10-13T19:23:05Z"
+  "updated_at": "2026-10-13T19:31:26Z"
 }
