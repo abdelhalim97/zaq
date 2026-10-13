@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Julien",
   "blocked_by": [
     "zaq-pkd.21.2"
   ],
@@ -12,8 +12,8 @@
   "labels": [],
   "parent": "zaq-pkd.21",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[zaq-pkd.21] Share conversation binding and authorized restoration",
   "type": "task",
-  "updated_at": "2026-10-13T09:30:17Z"
+  "updated_at": "2026-10-13T09:47:22Z"
 }
