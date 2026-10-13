@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-13T08:54:01Z",
+  "description": "Authorized history-only restack: preserve original tips and fork points; rebase 799 then 800,806,807,808,811,812,813,835,842 and siblings 836/843. Audit merge-resolution changes, compare incremental scope, leave PRs open and main untouched. Check/test remediation explicitly deferred by user. Action reuse: not applicable, Git history maintenance only. Use isolated rewrite branches; do not modify branches checked out in other worktrees. Publish only with explicit expected-SHA leases.",
+  "id": "zaq-emb.37",
+  "labels": [],
+  "parent": "zaq-emb",
+  "priority": 2,
+  "status": "open",
+  "title": "[#799] Rebase history PR stack onto main without landing PRs",
+  "type": "task",
+  "updated_at": "2026-10-13T08:54:01Z"
+}
