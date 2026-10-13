@@ -26,11 +26,15 @@
     {
       "text": "User approved simplification pass on existing changes, no commit/push. Reuse/extend People.create_person/update_person/discovery, add_channel and PersonIdentities claims to normalize profile email to a stored default connector; explicit ingress origin wins. Reuse SMTP notification_default selection (management binding includes disabled non-archived; sends remain live-only), no new default registry/Action. Restore generic ExternalPermissions delegation. Tests first: default/sole/disabled/ambiguous/missing, explicit inbox, update/idempotency/ownership rollback and ACL email reachability. Fold profile-only email link backfill and default initialization into original unconsumed migrations. Existing explicit bindings remain stable.",
       "timestamp": "2026-10-13T18:18:25Z"
+    },
+    {
+      "text": "Simplification implemented, uncommitted. Profile creation and actual email changes now persist normal scoped email links via the existing SMTP default (sole connector accepted including disabled); explicit inbox origin passed during discovery wins. Missing/ambiguous/default archived cases roll back profile+identity writes. Restored generic ExternalPermissions delegation. Removed earlier unnecessary global merge lock from create/add channel, preserving original row/identity behavior and concurrency regressions. Original default migration now initializes sole sender; original identity migration fills profile-only channels. Consumed NormalizePersonEmails still zero diff. Fresh _c_simple3 targeted 757 tests +14 properties passed, including concurrent merges/discovery, People/BO routing, exact SMTP scope and real Channels/EmailBridge ACL notification. Populated _c_upgrade2 upgrade replay passed, preserving existing origin/IDs/owner/preferences and binding profile-only email to default. mix q passes 94 checks/no issues. Final precommit stale suite running; historical-normalization compatibility and older broad fixtures were already pending from prior pass. No commit/push; feature UX/E2E/coverage gates remain open.",
+      "timestamp": "2026-10-13T18:46:27Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-s04.1] Migration and strict People contracts",
   "type": "task",
-  "updated_at": "2026-10-13T18:18:25Z"
+  "updated_at": "2026-10-13T18:46:27Z"
 }
