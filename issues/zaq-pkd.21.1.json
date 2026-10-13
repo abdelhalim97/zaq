@@ -4,14 +4,16 @@
   "blocks": [
     "zaq-pkd.21.2"
   ],
+  "closed_at": "2026-10-13T09:33:27Z",
+  "close_reason": "Existing private lifecycle22cases/property + widget installed/conformance suites retained. New primitive tests show5red undefined-API failures before implementation, covering shared readiness/message identity, both admission/preparation orderings, seed replay and zero premature execution, broad caller-Person sender spoofing, inactive/archived deny. All internal paths real DB/NodeRouter. Individual tests remain staged in final integration; parent step test coverage verified before code.",
   "created": "2026-10-13T09:29:05Z",
   "description": "Tests first in channel_conversations_test, identity_resolver_test, widget_conformance_test and installed widget host: lazy readiness, fresh vs explicit resume, same-sender/config isolation, literal ownership, canonical grants, no fallback on deletion, seed ordering/once/rollback, no execution for workflow-only, stable v2 receipts and native coordinates, concurrent fresh binding/replay. Internal modules real; external model only stub; SQL Sandbox isolated and properties bounded. No production edits in this step. Existing contracts remain baseline; new expected primitive tests must reproduce missing API red. Docs N/A test-only; reuse existing fixtures, no Action.",
   "id": "zaq-pkd.21.1",
   "labels": [],
   "parent": "zaq-pkd.21",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-pkd.21] Lock private-chat lifecycle contracts before refactoring",
   "type": "task",
-  "updated_at": "2026-10-13T09:30:21Z"
+  "updated_at": "2026-10-13T09:33:27Z"
 }
