@@ -180,6 +180,59 @@ defmodule ZaqWeb.WidgetHostIntegrationTest do
              WidgetRuntime.authenticate(to_string(widget.id), identity_proof, "owned-runtime")
   end
 
+  test "installed v2 adapter acknowledges no-answer submissions without a pending assistant", %{
+    widget: widget
+  } do
+    alias WebWidget.Integration.Chat
+    alias Zaq.Engine.{ChannelConfig, IncomingMessageRouting}
+    assert :ok = Zaq.System.set_global_base_url("https://zaq.example.test")
+
+    {:ok, config} =
+      %ChannelConfig{id: widget.id}
+      |> ChannelConfig.changeset(%{
+        name: widget.name,
+        provider: "web_widget",
+        kind: "retrieval",
+        enabled: true
+      })
+      |> Zaq.Repo.insert()
+
+    {:ok, _} =
+      IncomingMessageRouting.upsert_rule(%{channel_config_id: config.id}, %{routing_mode: :none})
+
+    {:ok, identity} = proof(widget)
+
+    assert {:ok, chat} =
+             Chat.open(
+               to_string(widget.id),
+               %{"identity_token" => identity},
+               Ecto.UUID.generate()
+             )
+
+    try do
+      assert {:ok, first} = Chat.submit(chat, "Informational message")
+      assert is_binary(first.conversation_id)
+      assert first.pending_submission == nil
+      assert first.state.pending_reply == nil
+      assert first.streams == %{}
+
+      assert {:ok, second} = Chat.submit(first, "Another informational message")
+      assert second.conversation_id == first.conversation_id
+      assert second.pending_submission == nil
+      assert second.state.pending_reply == nil
+      assert second.streams == %{}
+
+      assert Enum.map(second.state.messages, & &1.content) == [
+               "Informational message",
+               "Another informational message"
+             ]
+
+      refute_receive {:web_response, _, _}
+    after
+      Chat.close(chat)
+    end
+  end
+
   for name <- [
         WebWidget.Configuration,
         WebWidget.RuntimeRegistry,

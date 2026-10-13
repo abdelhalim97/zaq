@@ -256,7 +256,9 @@ defmodule Zaq.Agent.Executor do
                runtime_pid: runtime_pid,
                agent: configured_agent,
                node_router: node_router(execution_opts),
-               status_module: status_mod(execution_opts)
+               status_module: status_mod(execution_opts),
+               notify_execution_lifecycle:
+                 Keyword.get(execution_opts, :notify_execution_lifecycle, false)
              ) do
         incoming = stream_result.incoming
         answer = %{result: stream_result.answer, usage: stream_result.usage}
@@ -344,6 +346,7 @@ defmodule Zaq.Agent.Executor do
          server_manager_module
        ) do
     opts = runtime_error_opts(opts, partial)
+    incoming = partial_incoming(incoming, partial)
 
     if suppress_stream_error?(incoming, partial) do
       Logger.warning(
@@ -407,6 +410,7 @@ defmodule Zaq.Agent.Executor do
          partial
        ) do
     opts = runtime_error_opts(opts, partial)
+    incoming = partial_incoming(incoming, partial)
 
     reason =
       enrich_provider_authentication_error(
@@ -454,6 +458,9 @@ defmodule Zaq.Agent.Executor do
     do: Keyword.put(opts, :scope, scope)
 
   defp runtime_error_opts(opts, _partial), do: opts
+
+  defp partial_incoming(_incoming, %{incoming: %Incoming{} = updated}), do: updated
+  defp partial_incoming(incoming, _partial), do: incoming
 
   defp record_execution_error(dims, reason) do
     :ok =

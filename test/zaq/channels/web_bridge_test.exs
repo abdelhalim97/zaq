@@ -162,9 +162,12 @@ defmodule Zaq.Channels.WebBridgeTest do
       Delivery.new(%{
         consumer: :widget,
         topic: topic,
-        protocol_version: 1,
+        protocol_version: 2,
         channel_config_id: 123,
+        conversation_id: "chat-1",
+        message_id: "transport-answer",
         events: %{
+          typing: "response.typing",
           message_complete: "response.message.complete",
           message_failed: "response.message.failed",
           message_edit: "response.message.edit",

@@ -42,13 +42,24 @@ defmodule Zaq.Channels.Web.WidgetConformanceTest do
     end
   end
 
-  setup do
+  setup context do
     assert :ok = Zaq.System.set_global_base_url("https://zaq.example.test")
+    owner = self()
+    hold_response = Map.get(context, :hold_response, false)
+    request_count = :atomics.new(1, [])
 
     {spec, endpoint} =
       OpenAIStub.server(
         fn conn, body ->
           payload = Jason.decode!(body)
+
+          if hold_response and :atomics.add_get(request_count, 1, 1) == 1 do
+            send(owner, {:model_waiting, self()})
+
+            receive do
+              :release_response -> :ok
+            end
+          end
 
           if payload["stream"] do
             text = Jason.encode!(%{"delta" => "Widget answer"})
@@ -187,11 +198,20 @@ defmodule Zaq.Channels.Web.WidgetConformanceTest do
         mode: :async
       })
 
-    assert {:ok, %Response{type: :conversation_created, conversation_id: id}} =
+    assert {:ok,
+            %Response{
+              protocol_version: 2,
+              type: :conversation_created,
+              conversation_id: id,
+              message_id: nil
+            }} =
              AdapterFixture.ingress(message, config.id, topic)
 
-    assert_receive {:web_response, "response.typing", %Response{payload: %{active: true}}}
-    assert_receive {:web_response, "response.message_create", %Response{message_id: assistant_id}}
+    assert_receive {:web_response, "response.typing", %Response{payload: %{active: true}}}, 30_000
+
+    assert_receive {:web_response, "response.message_create",
+                    %Response{message_id: assistant_id}},
+                   30_000
 
     assert_receive {:web_response, "response.message_complete",
                     %Response{
@@ -203,5 +223,131 @@ defmodule Zaq.Channels.Web.WidgetConformanceTest do
 
     refute_receive {:web_response, "response.message_complete", _}
     refute_receive {:web_response, "response.message_failed", _}
+  end
+
+  test "workflow-only routing acknowledges a submission without creating an assistant", %{
+    config: config,
+    topic: topic
+  } do
+    {:ok, _} =
+      IncomingMessageRouting.upsert_rule(%{channel_config_id: config.id}, %{
+        routing_mode: :none,
+        configured_agent_id: nil
+      })
+
+    {:ok, message} =
+      Message.new(%{
+        request_id: "workflow-only",
+        message_id: Ecto.UUID.generate(),
+        timestamp: DateTime.utc_now(),
+        content: "An informational message",
+        channel: "default",
+        mode: :async
+      })
+
+    assert {:ok,
+            %Response{type: :conversation_created, message_id: nil, payload: %{accepted: true}}} =
+             AdapterFixture.ingress(message, config.id, topic)
+
+    refute_receive {:web_response, "response.message_create", _}
+    refute_receive {:web_response, "response.message_complete", _}
+    assert Repo.aggregate(Zaq.Engine.Conversations.ExecutionRecord, :count) == 0
+
+    sync_message = %{
+      message
+      | mode: :sync,
+        request_id: "sync-workflow-only",
+        message_id: Ecto.UUID.generate()
+    }
+
+    assert %Response{type: :status, message_id: nil, payload: %{accepted: true}} =
+             AdapterFixture.ingress(sync_message, config.id, topic)
+
+    refute_received {:web_response, _, _}
+  end
+
+  @tag hold_response: true
+  test "a busy same-Person submission acknowledges steering without a separate answer", %{
+    config: config,
+    topic: topic
+  } do
+    {:ok, first} =
+      Message.new(%{
+        request_id: "root-question",
+        message_id: Ecto.UUID.generate(),
+        timestamp: DateTime.utc_now(),
+        content: "Say hello",
+        channel: "default",
+        mode: :async
+      })
+
+    assert {:ok, %Response{conversation_id: conversation, message_id: nil}} =
+             AdapterFixture.ingress(first, config.id, topic)
+
+    assert_receive {:web_response, "response.message_create",
+                    %Response{request_id: "root-question", message_id: assistant}},
+                   30_000
+
+    assert_receive {:model_waiting, model}, 30_000
+
+    {:ok, second} =
+      Message.new(%{
+        request_id: "additional-input",
+        message_id: Ecto.UUID.generate(),
+        timestamp: DateTime.utc_now(),
+        content: "Keep it brief",
+        channel: "default",
+        conversation_id: conversation,
+        mode: :sync
+      })
+
+    assert %Response{type: :status, message_id: nil, payload: %{accepted: true, created: false}} =
+             AdapterFixture.ingress(second, config.id, topic)
+
+    {:ok, third} =
+      Message.new(%{
+        request_id: "async-additional-input",
+        message_id: Ecto.UUID.generate(),
+        timestamp: DateTime.utc_now(),
+        content: "No extra explanation",
+        channel: "default",
+        conversation_id: conversation,
+        mode: :async
+      })
+
+    assert {:ok,
+            %Response{type: :status, message_id: nil, payload: %{accepted: true, created: false}}} =
+             AdapterFixture.ingress(third, config.id, topic)
+
+    refute_receive {:web_response, "response.message_create",
+                    %Response{request_id: "additional-input"}}
+
+    assert_receive {:web_response, "response.status",
+                    %Response{
+                      request_id: "async-additional-input",
+                      message_id: nil,
+                      payload: %{accepted: true}
+                    }},
+                   30_000
+
+    refute_receive {:web_response, "response.message_create",
+                    %Response{request_id: "async-additional-input"}}
+
+    send(model, :release_response)
+
+    assert_receive {:web_response, "response.message_complete",
+                    %Response{request_id: "root-question", message_id: ^assistant}},
+                   30_000
+
+    refute_receive {:web_response, "response.message_complete",
+                    %Response{request_id: "additional-input"}}
+
+    refute_receive {:web_response, "response.message_complete",
+                    %Response{request_id: "async-additional-input"}}
+
+    scope = %{channel_config_id: config.id, sender_id: "verified-parent-user"}
+    assert {:ok, history} = ChannelConversations.history(scope, conversation)
+    assert Enum.count(history, &(&1.role == "assistant")) == 1
+    assert Enum.any?(history, &(&1.content == "Keep it brief"))
   end
 end

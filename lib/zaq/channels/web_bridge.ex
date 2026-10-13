@@ -10,8 +10,8 @@ defmodule Zaq.Channels.WebBridge do
   use `:upsert_message` and final results use `send_reply/2`; both publish only
   normalized semantic responses.
 
-  Widgets use config-bound adapter context and a temporary request owner for
-  async acceptance/streaming or a single sync terminal. Idle widget init creates
+  Widgets use config-bound adapter context and direct transport delivery for
+  independent submission receipts and assistant streams. Idle widget init creates
   no chat. Transport runtimes are constructed by the dynamically registered
   adapter through the existing Bridge lifecycle. This bridge binds the shared
   protocol and ingress sink; transport policy and readiness belong to the adapter.
@@ -29,7 +29,7 @@ defmodule Zaq.Channels.WebBridge do
   alias Zaq.Channels.{Bridge, CommunicationBridge}
   alias Zaq.Channels.Web.{Command, Context, Delivery, Response}
   alias Zaq.Channels.Web.Message, as: WebMessage
-  alias Zaq.Channels.Web.RequestOwner
+  alias Zaq.Channels.Web.SyncReply
   alias Zaq.Engine.Conversations.{Conversation, MessageRating}
   alias Zaq.Engine.Conversations.Message, as: ConversationMessage
   alias Zaq.Engine.Messages.{Incoming, Outgoing}
@@ -423,7 +423,8 @@ defmodule Zaq.Channels.WebBridge do
     [
       history: context.history,
       skip_permissions: MapSet.member?(context.capabilities, :skip_permissions),
-      node_router: Keyword.get(sink_opts, :node_router, NodeRouter)
+      node_router: Keyword.get(sink_opts, :node_router, NodeRouter),
+      notify_execution_lifecycle: context.consumer == :widget
     ]
   end
 
@@ -487,33 +488,30 @@ defmodule Zaq.Channels.WebBridge do
          sink_opts
        ) do
     with :ok <- validate_widget_events(delivery),
-         {:ok, incoming, actor} <- prepare_message(message, context, sink_opts, nil),
-         {:ok, owner} <-
-           DynamicSupervisor.start_child(
-             Zaq.Channels.BridgeSupervisor,
-             {RequestOwner,
-              delivery: delivery,
-              mode: message.mode,
-              request_id: message.request_id,
-              conversation_id: incoming.routing_context.conversation_id,
-              created: is_nil(message.conversation_id),
-              timeout: widget_timeout(message.mode)}
-           ) do
-      internal = RequestOwner.delivery(owner)
-
-      attributes =
-        Map.put(incoming.routing_context.attributes, "web_delivery", Delivery.reference(internal))
-
-      incoming = %{
-        incoming
-        | routing_context: %{incoming.routing_context | attributes: attributes}
+         {:ok, incoming, actor} <- prepare_message(message, context, sink_opts, nil) do
+      delivery = %{
+        delivery
+        | conversation_id: incoming.routing_context.conversation_id,
+          message_id: Ecto.UUID.generate()
       }
 
-      internal_context = %{context | delivery: internal}
+      dispatch = fn destination ->
+        attributes =
+          Map.put(
+            incoming.routing_context.attributes,
+            "web_delivery",
+            Delivery.reference(destination)
+          )
 
-      RequestOwner.run(owner, fn ->
-        dispatch_widget_message(incoming, internal_context, sink_opts, actor)
-      end)
+        scoped = %{
+          incoming
+          | routing_context: %{incoming.routing_context | attributes: attributes}
+        }
+
+        dispatch_widget_message(scoped, %{context | delivery: destination}, sink_opts, actor)
+      end
+
+      widget_reply(message, delivery, dispatch, sink_opts)
     end
   rescue
     _error -> {:error, :dispatch_error}
@@ -534,13 +532,55 @@ defmodule Zaq.Channels.WebBridge do
         pipeline_opts(context, sink_opts),
         actor,
         node_router_opts(sink_opts, :async) ++
-          [channel_config_id: incoming.routing_context.channel_config_id]
+          [
+            channel_config_id: incoming.routing_context.channel_config_id,
+            include_routing_disposition: true
+          ]
       )
 
     case result do
-      %Outgoing{} = outgoing -> send_reply(outgoing, %{})
-      result -> result
+      {:ok, :no_answer} ->
+        {:ok, response} =
+          Response.new(%{
+            protocol_version: 2,
+            request_id: metadata_value(incoming.metadata, :request_id),
+            conversation_id: context.delivery.conversation_id,
+            type: :status,
+            payload: %{accepted: true, created: false}
+          })
+
+        {:ok, response}
+
+      _ ->
+        result
     end
+  end
+
+  defp widget_reply(%WebMessage{mode: :sync} = message, delivery, dispatch, sink_opts) do
+    response = SyncReply.run(delivery, message.request_id, dispatch, widget_timeout(sink_opts))
+    %{response | payload: Map.put(response.payload, :created, is_nil(message.conversation_id))}
+  end
+
+  defp widget_reply(message, delivery, dispatch, _sink_opts) do
+    case dispatch.(delivery) do
+      {:error, _} = error -> error
+      _ -> {:ok, submission_receipt(message, delivery)}
+    end
+  end
+
+  defp submission_receipt(message, delivery) do
+    created = is_nil(message.conversation_id)
+
+    {:ok, response} =
+      Response.new(%{
+        protocol_version: 2,
+        request_id: message.request_id,
+        conversation_id: delivery.conversation_id,
+        type: if(created, do: :conversation_created, else: :status),
+        payload: %{accepted: true, created: created}
+      })
+
+    response
   end
 
   defp validate_widget_events(delivery) do
@@ -559,15 +599,10 @@ defmodule Zaq.Channels.WebBridge do
       else: {:error, :incomplete_event_mapping}
   end
 
-  defp widget_timeout(mode) do
-    {key, default} =
-      if mode == :sync,
-        do: {:web_widget_sync_timeout_ms, 30_000},
-        else: {:web_widget_async_timeout_ms, 300_000}
-
-    case Application.get_env(:zaq, key, default) do
+  defp widget_timeout(opts) do
+    case Zaq.Config.get(:zaq, :web_widget_sync_timeout_ms, 30_000, opts) do
       value when is_integer(value) and value > 0 and value <= 900_000 -> value
-      _ -> default
+      _ -> 30_000
     end
   end
 
@@ -653,16 +688,22 @@ defmodule Zaq.Channels.WebBridge do
 
     case dispatch_channel_conversations(request, context, sink_opts) do
       {:ok, messages} when is_list(messages) ->
-        response(command, :conversation_history, command.conversation_id, %{messages: messages})
+        response(
+          command,
+          :conversation_history,
+          command.conversation_id,
+          %{messages: messages},
+          2
+        )
 
       {:ok, %{conversation_id: id} = details} ->
-        response(command, :widget_initialized, id, details)
+        response(command, :widget_initialized, id, details, 2)
 
       {:error, reason} ->
-        error_response(command, reason)
+        error_response(command, reason, 2)
 
       _ ->
-        error_response(command, :conversation_unavailable)
+        error_response(command, :conversation_unavailable, 2)
     end
   end
 
@@ -807,21 +848,23 @@ defmodule Zaq.Channels.WebBridge do
   defp actor_user_id(%{"user_id" => id}) when is_integer(id) and id > 0, do: {:ok, id}
   defp actor_user_id(_actor), do: {:error, :unauthorized}
 
-  defp response(command, type, conversation_id, payload) do
+  defp response(command, type, conversation_id, payload, version \\ 1) do
     case Response.new(%{
+           protocol_version: version,
            request_id: command.request_id,
            type: type,
            conversation_id: conversation_id,
            payload: payload
          }) do
       {:ok, response} -> response
-      {:error, _reason} -> error_response(command, :invalid_response_payload)
+      {:error, _reason} -> error_response(command, :invalid_response_payload, version)
     end
   end
 
-  defp error_response(command, reason) do
+  defp error_response(command, reason, version \\ 1) do
     {:ok, response} =
       Response.new(%{
+        protocol_version: version,
         request_id: command.request_id,
         type: :error,
         conversation_id: command.conversation_id,
@@ -870,6 +913,32 @@ defmodule Zaq.Channels.WebBridge do
 
   defp delivery_from_routing_context(_routing_context), do: {:ok, nil}
 
+  defp deliver_final(%Outgoing{metadata: %{execution_disposition: "queued"}}, %Delivery{
+         consumer: :widget
+       }),
+       do: {:ok, %{delivered: false}}
+
+  defp deliver_final(%Outgoing{} = outgoing, %Delivery{consumer: :widget} = delivery) do
+    metadata = if is_map(outgoing.metadata), do: outgoing.metadata, else: %{}
+    started = Helper.present?(metadata_value(metadata, :status_message_id))
+    failed = metadata_value(metadata, :error) == true
+
+    if failed and not started do
+      with :ok <-
+             widget_event(
+               delivery,
+               metadata_value(metadata, :request_id),
+               :error,
+               %{code: :submission_rejected},
+               nil
+             ) do
+        {:ok, %{delivered: true}}
+      end
+    else
+      deliver_widget_answer(outgoing, delivery, started, failed)
+    end
+  end
+
   defp deliver_final(%Outgoing{} = outgoing, %Delivery{} = delivery) do
     metadata = if is_map(outgoing.metadata), do: outgoing.metadata, else: %{}
 
@@ -898,6 +967,53 @@ defmodule Zaq.Channels.WebBridge do
     end
   end
 
+  defp deliver_widget_answer(outgoing, delivery, started, failed) do
+    request_id = metadata_value(outgoing.metadata, :request_id)
+    type = if failed, do: :message_failed, else: :message_complete
+
+    with :ok <- ensure_widget_message(delivery, request_id, started),
+         :ok <- widget_event(delivery, request_id, :typing, %{active: false}),
+         :ok <-
+           widget_event(
+             delivery,
+             request_id,
+             type,
+             final_payload(outgoing, outgoing.metadata, :widget)
+           ) do
+      {:ok,
+       %{
+         delivered: true,
+         confirmation: :confirmed,
+         message_id: metadata_value(outgoing.metadata, :assistant_message_id)
+       }}
+    end
+  end
+
+  defp ensure_widget_message(_delivery, _request_id, true), do: :ok
+
+  defp ensure_widget_message(delivery, request_id, false) do
+    with :ok <- widget_event(delivery, request_id, :typing, %{active: true}) do
+      widget_event(delivery, request_id, :message_create, %{body: ""})
+    end
+  end
+
+  defp deliver_status(request, %Delivery{consumer: :widget} = delivery) do
+    stage = status_stage(Map.get(request, :intent_meta))
+    request_id = Map.get(request, :request_id)
+    started = Helper.present?(Map.get(request, :message_id))
+
+    with :ok <- widget_status(request, delivery, request_id, stage, started) do
+      message_id = if stage == :execution_started or started, do: delivery.message_id
+
+      {:ok,
+       %{
+         action: :updated,
+         message_id: message_id,
+         update_intent: Map.get(request, :update_intent)
+       }}
+    end
+  end
+
   defp deliver_status(request, %Delivery{} = delivery) do
     request_id = Map.get(request, :request_id)
     body = Map.get(request, :body)
@@ -906,6 +1022,68 @@ defmodule Zaq.Channels.WebBridge do
       do_deliver_status(request, request_id, body, delivery)
     else
       {:ok, %{action: :noop, message_id: nil, update_intent: Map.get(request, :update_intent)}}
+    end
+  end
+
+  defp widget_status(_request, delivery, request_id, :execution_started, _started),
+    do: ensure_widget_message(delivery, request_id, false)
+
+  defp widget_status(_request, delivery, request_id, :submission_accepted, _started),
+    do: widget_event(delivery, request_id, :status, %{accepted: true, created: false}, nil)
+
+  defp widget_status(_request, delivery, request_id, :submission_rejected, _started),
+    do: widget_event(delivery, request_id, :error, %{code: :submission_rejected}, nil)
+
+  defp widget_status(_request, delivery, request_id, :failed, true) do
+    with :ok <- widget_event(delivery, request_id, :typing, %{active: false}) do
+      widget_event(delivery, request_id, :message_failed, %{
+        body: "Unable to save the response",
+        error: true
+      })
+    end
+  end
+
+  defp widget_status(_request, delivery, request_id, :failed, false),
+    do: widget_event(delivery, request_id, :error, %{code: :persistence_failed}, nil)
+
+  defp widget_status(
+         %{update_intent: :stream_delta, body: body},
+         delivery,
+         request_id,
+         _stage,
+         true
+       ),
+       do: widget_event(delivery, request_id, :message_edit, %{body: body})
+
+  defp widget_status(_request, delivery, request_id, stage, true) do
+    widget_event(delivery, request_id, :message_step, %{
+      kind: :activity,
+      state: :running,
+      step_id: "activity:#{stage}",
+      label: activity_label(stage)
+    })
+  end
+
+  defp widget_status(_request, _delivery, _request_id, _stage, false), do: :ok
+
+  defp activity_label(:retrieving), do: "Retrieving information"
+  defp activity_label(:answering), do: "Preparing answer"
+  defp activity_label(_stage), do: "Working"
+
+  defp widget_event(delivery, request_id, type, payload),
+    do: widget_event(delivery, request_id, type, payload, delivery.message_id)
+
+  defp widget_event(delivery, request_id, type, payload, message_id) do
+    with {:ok, response} <-
+           Response.new(%{
+             protocol_version: 2,
+             request_id: request_id,
+             conversation_id: delivery.conversation_id,
+             message_id: message_id,
+             type: type,
+             payload: payload
+           }) do
+      broadcast_response(delivery, response)
     end
   end
 
@@ -932,7 +1110,7 @@ defmodule Zaq.Channels.WebBridge do
   end
 
   defp broadcast_response(%Delivery{} = delivery, %Response{} = response) do
-    with {:ok, event_name} <- Delivery.event_name(delivery, response.type) do
+    with {:ok, event_name} <- response_event(delivery, response) do
       Phoenix.PubSub.broadcast(
         Zaq.PubSub,
         delivery.topic,
@@ -940,6 +1118,18 @@ defmodule Zaq.Channels.WebBridge do
       )
     end
   end
+
+  defp response_event(%Delivery{consumer: :widget} = delivery, %Response{
+         type: :status,
+         payload: %{accepted: true}
+       }) do
+    case Delivery.event_name(delivery, :status) do
+      {:ok, _} = event -> event
+      _ -> {:ok, "response.status"}
+    end
+  end
+
+  defp response_event(delivery, response), do: Delivery.event_name(delivery, response.type)
 
   defp final_payload(outgoing, metadata, :widget) do
     %{

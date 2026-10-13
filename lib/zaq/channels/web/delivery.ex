@@ -24,16 +24,26 @@ defmodule Zaq.Channels.Web.Delivery do
     :error
   ]
 
-  @allowed_fields [:consumer, :topic, :protocol_version, :events, :channel_config_id]
+  @allowed_fields [
+    :consumer,
+    :topic,
+    :protocol_version,
+    :events,
+    :channel_config_id,
+    :conversation_id,
+    :message_id
+  ]
   @enforce_keys [:consumer, :topic, :protocol_version, :events]
-  defstruct @enforce_keys ++ [:channel_config_id]
+  defstruct @enforce_keys ++ [:channel_config_id, :conversation_id, :message_id]
 
   @type t :: %__MODULE__{
           consumer: :bo | :widget,
           topic: String.t(),
           protocol_version: pos_integer(),
           events: map(),
-          channel_config_id: pos_integer() | nil
+          channel_config_id: pos_integer() | nil,
+          conversation_id: String.t() | nil,
+          message_id: String.t() | nil
         }
 
   @doc "Builds a trusted adapter delivery descriptor."
@@ -43,17 +53,24 @@ defmodule Zaq.Channels.Web.Delivery do
          {:ok, consumer} <- consumer(Validation.fetch(attrs, :consumer)),
          {:ok, topic} <-
            Validation.identifier(Validation.fetch(attrs, :topic), :topic, required: true),
-         {:ok, protocol_version} <- protocol_version(Validation.fetch(attrs, :protocol_version)),
+         {:ok, protocol_version} <-
+           protocol_version(Validation.fetch(attrs, :protocol_version), consumer),
          {:ok, events} <- events(Validation.fetch(attrs, :events)),
          {:ok, channel_config_id} <-
-           channel_config_id(Validation.fetch(attrs, :channel_config_id)) do
+           channel_config_id(Validation.fetch(attrs, :channel_config_id)),
+         {:ok, conversation_id} <-
+           Validation.identifier(Validation.fetch(attrs, :conversation_id), :conversation_id),
+         {:ok, message_id} <-
+           Validation.identifier(Validation.fetch(attrs, :message_id), :message_id) do
       {:ok,
        %__MODULE__{
          consumer: consumer,
          topic: topic,
          protocol_version: protocol_version,
          events: events,
-         channel_config_id: channel_config_id
+         channel_config_id: channel_config_id,
+         conversation_id: conversation_id,
+         message_id: message_id
        }}
     end
   end
@@ -88,6 +105,8 @@ defmodule Zaq.Channels.Web.Delivery do
       "topic" => delivery.topic,
       "protocol_version" => delivery.protocol_version,
       "channel_config_id" => delivery.channel_config_id,
+      "conversation_id" => delivery.conversation_id,
+      "message_id" => delivery.message_id,
       "events" =>
         Map.new(delivery.events, fn {semantic, external} ->
           {Atom.to_string(semantic), external_name(external)}
@@ -106,6 +125,8 @@ defmodule Zaq.Channels.Web.Delivery do
              topic: Map.get(reference, "topic"),
              protocol_version: Map.get(reference, "protocol_version"),
              channel_config_id: Map.get(reference, "channel_config_id"),
+             conversation_id: Map.get(reference, "conversation_id"),
+             message_id: Map.get(reference, "message_id"),
              events: events
            }) do
       {:ok, delivery}
@@ -128,9 +149,11 @@ defmodule Zaq.Channels.Web.Delivery do
   defp consumer(consumer) when consumer in [:bo, :widget], do: {:ok, consumer}
   defp consumer(_consumer), do: {:error, {:invalid_field, :consumer}}
 
-  defp protocol_version(nil), do: {:ok, 1}
-  defp protocol_version(1), do: {:ok, 1}
-  defp protocol_version(_version), do: {:error, {:invalid_field, :protocol_version}}
+  defp protocol_version(nil, :widget), do: {:ok, 2}
+  defp protocol_version(2, :widget), do: {:ok, 2}
+  defp protocol_version(nil, :bo), do: {:ok, 1}
+  defp protocol_version(1, :bo), do: {:ok, 1}
+  defp protocol_version(_version, _consumer), do: {:error, {:invalid_field, :protocol_version}}
 
   defp events(nil), do: {:ok, %{}}
 

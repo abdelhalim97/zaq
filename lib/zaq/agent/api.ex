@@ -431,6 +431,7 @@ defmodule Zaq.Agent.Api do
     HistorySync.with_session(fn session ->
       event = %{event | opts: Keyword.put(event.opts, :history_session, session)}
       result = fun.(event)
+      report_submission_outcome(event, result)
 
       %{
         result
@@ -443,6 +444,34 @@ defmodule Zaq.Agent.Api do
       }
     end)
   end
+
+  defp report_submission_outcome(%Event{request: %Incoming{} = incoming} = event, result) do
+    with true <-
+           Keyword.get(
+             Keyword.get(event.opts, :pipeline_opts, []),
+             :notify_execution_lifecycle,
+             false
+           ),
+         {stage, message} <- submission_notification(result.response) do
+      status = Keyword.get(event.opts, :status_module, Status)
+      router = Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
+      status.broadcast(incoming, stage, message, router)
+    else
+      _ -> :ok
+    end
+  end
+
+  defp report_submission_outcome(_event, _result), do: :ok
+
+  defp submission_notification(%Outgoing{metadata: %{execution_disposition: "queued"}}),
+    do: {:submission_accepted, "Submission accepted"}
+
+  defp submission_notification({:error, {:persist_failed, _}}), do: nil
+
+  defp submission_notification({:error, _}),
+    do: {:submission_rejected, "Submission rejected"}
+
+  defp submission_notification(_response), do: nil
 
   defp do_dispatch_pipeline(event, incoming) do
     pipeline_opts = Keyword.get(event.opts, :pipeline_opts, [])
@@ -487,7 +516,9 @@ defmodule Zaq.Agent.Api do
             event: event,
             live_followup: not Keyword.get(event.opts, :followup_attempted, false),
             history_reservation: Keyword.get(event.opts, :history_reservation),
-            history_session: Keyword.fetch!(event.opts, :history_session)
+            history_session: Keyword.fetch!(event.opts, :history_session),
+            notify_execution_lifecycle:
+              Keyword.get(pipeline_opts, :notify_execution_lifecycle, false)
           )
       end
 
@@ -635,6 +666,13 @@ defmodule Zaq.Agent.Api do
 
         {:error, reason} ->
           log_persist_failure(event, reason)
+
+          incoming = %{
+            incoming
+            | metadata:
+                Map.merge(incoming.metadata, Map.take(outgoing.metadata, [:status_message_id]))
+          }
+
           broadcast_persist_failure(event, incoming, reason, node_router_mod)
           %{event | response: {:error, {:persist_failed, reason}}, next_hop: nil}
       end

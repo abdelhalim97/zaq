@@ -288,7 +288,8 @@ defmodule Zaq.Agent.Pipeline do
         event: Keyword.get(opts, :event),
         live_followup: Keyword.get(opts, :live_followup, false),
         history_reservation: Keyword.get(opts, :history_reservation),
-        history_session: Keyword.get(opts, :history_session)
+        history_session: Keyword.get(opts, :history_session),
+        notify_execution_lifecycle: Keyword.get(opts, :notify_execution_lifecycle, false)
       )
 
     case outgoing do
@@ -326,6 +327,7 @@ defmodule Zaq.Agent.Pipeline do
       tool_calls: Map.get(outgoing.metadata, :tool_calls, []),
       execution_disposition: Map.get(outgoing.metadata, :execution_disposition),
       root_request_id: Map.get(outgoing.metadata, :root_request_id),
+      status_message_id: Map.get(outgoing.metadata, :status_message_id),
       error: Map.get(outgoing.metadata, :error, false)
     })
   end

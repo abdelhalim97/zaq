@@ -70,6 +70,8 @@ defmodule Zaq.Agent.StreamEvents do
       incoming: incoming,
       node_router: Keyword.get(opts, :node_router, Zaq.NodeRouter),
       status_module: Keyword.get(opts, :status_module, Status),
+      notify_execution_lifecycle: Keyword.get(opts, :notify_execution_lifecycle, false),
+      execution_started: false,
       request_id: actual_request_id(Keyword.get(opts, :request), incoming),
       actor: Keyword.get(opts, :actor),
       execution_scope: Keyword.get(opts, :execution_scope),
@@ -101,6 +103,23 @@ defmodule Zaq.Agent.StreamEvents do
   end
 
   defp handle_event(event, state), do: handle_event(kind(event), event, state)
+
+  defp handle_event(
+         :request_started,
+         _event,
+         %{notify_execution_lifecycle: true, execution_started: false} = state
+       ) do
+    incoming =
+      state.status_module.broadcast(
+        state.incoming,
+        :execution_started,
+        "Preparing answer",
+        state.node_router,
+        update_intent: :status
+      )
+
+    %{state | incoming: incoming, execution_started: true}
+  end
 
   defp handle_event(:llm_started, event, state), do: upsert_llm_call(state, event, nil)
   defp handle_event(:llm_delta, event, state), do: handle_llm_delta(event, state)

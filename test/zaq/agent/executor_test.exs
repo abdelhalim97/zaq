@@ -193,6 +193,26 @@ defmodule Zaq.Agent.ExecutorTest do
     def dispatch(%Zaq.Event{} = event), do: %{event | response: :ok}
   end
 
+  defmodule NativeFailureFactory do
+    def ask_with_config(_server, _content, _agent, _opts) do
+      {:ok,
+       %{
+         request: :request,
+         events: [
+           %{kind: :request_started, at_ms: 0, data: %{}},
+           %{kind: :request_failed, at_ms: 1, data: %{error: :cancelled}}
+         ]
+       }}
+    end
+  end
+
+  defmodule NativeStartStatus do
+    def broadcast(incoming, _stage, _message, _router), do: incoming
+
+    def broadcast(incoming, :execution_started, _message, _router, _opts),
+      do: put_in(incoming.metadata[:status_message_id], "native-assistant")
+  end
+
   def start_runtime(opts \\ []) do
     ExUnit.Callbacks.start_supervised!(%{
       id: make_ref(),
@@ -221,6 +241,21 @@ defmodule Zaq.Agent.ExecutorTest do
   ]
 
   @base_incoming %Incoming{content: "q", channel_id: "c", provider: :web}
+
+  test "native failure retains the started assistant identity from the partial stream" do
+    outgoing =
+      Executor.run(
+        @incoming,
+        Keyword.merge(@base_opts,
+          factory_module: NativeFailureFactory,
+          status_module: NativeStartStatus,
+          notify_execution_lifecycle: true
+        )
+      )
+
+    assert outgoing.metadata.error == true
+    assert outgoing.metadata.status_message_id == "native-assistant"
+  end
 
   test "a missing runtime returns an execution error before asking the factory" do
     outgoing =

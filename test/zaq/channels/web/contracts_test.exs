@@ -220,6 +220,40 @@ defmodule Zaq.Channels.Web.ContractsTest do
   end
 
   describe "Delivery.new/1" do
+    test "widget v2 carries trusted response correlation without promising an answer" do
+      assert {:ok, delivery} =
+               Delivery.new(%{
+                 consumer: :widget,
+                 topic: "widget:session",
+                 channel_config_id: 7,
+                 protocol_version: 2,
+                 conversation_id: "conversation-1",
+                 message_id: "assistant-1",
+                 events: %{message_complete: "response.message.complete"}
+               })
+
+      assert {:ok, ^delivery} = delivery |> Delivery.reference() |> Delivery.from_reference()
+
+      assert {:ok, receipt} =
+               Response.new(%{
+                 protocol_version: 2,
+                 request_id: "request-1",
+                 conversation_id: "conversation-1",
+                 type: :status,
+                 payload: %{accepted: true, created: false}
+               })
+
+      assert receipt.message_id == nil
+      assert receipt.protocol_version == 2
+    end
+
+    test "widget delivery rejects the superseded v1 contract while BO remains v1" do
+      assert Delivery.bo("chat:session").protocol_version == 1
+
+      assert {:error, {:invalid_field, :protocol_version}} =
+               Delivery.new(%{consumer: :widget, topic: "widget:session", protocol_version: 1})
+    end
+
     test "normalizes a trusted BO delivery descriptor" do
       assert {:ok, delivery} =
                Delivery.new(%{

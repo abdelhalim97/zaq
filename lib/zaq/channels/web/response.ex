@@ -27,6 +27,10 @@ defmodule Zaq.Channels.Web.Response do
     :actor,
     :credentials,
     :execution_record,
+    :execution_id,
+    :root_execution_id,
+    :root_request_id,
+    :execution_disposition,
     :finalization_token,
     :private_trace,
     :token
@@ -59,7 +63,7 @@ defmodule Zaq.Channels.Web.Response do
           | :error
 
   @type t :: %__MODULE__{
-          protocol_version: 1,
+          protocol_version: 1 | 2,
           request_id: String.t(),
           type: response_type(),
           conversation_id: String.t() | nil,
@@ -99,6 +103,7 @@ defmodule Zaq.Channels.Web.Response do
 
   defp protocol_version(nil), do: {:ok, 1}
   defp protocol_version(1), do: {:ok, 1}
+  defp protocol_version(2), do: {:ok, 2}
   defp protocol_version(_version), do: {:error, {:invalid_field, :protocol_version}}
 
   defp type(type) when type in @types, do: {:ok, type}

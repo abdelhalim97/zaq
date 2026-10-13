@@ -1,6 +1,6 @@
 # WebBridge protocol
 
-This is the detailed owner for the implemented **version 1** BO/widget protocol.
+This is the detailed owner for the implemented **widget version 2 / BO version 1** protocol.
 The adapter-facing values are [`Zaq.Channels.Web.*`](../../lib/zaq/channels/web/),
 not Engine `Incoming`/`Outgoing`. [`WebBridge`](../../lib/zaq/channels/web_bridge.ex)
 validates/translates them and preserves existing Engine admission/finalization.
@@ -22,8 +22,9 @@ See [Channels](channels.md), [Engine](engine.md) and the
 Constructors accept known atom/string map keys and reject unknown fields.
 Required identifiers are nonblank strings, trimmed and bounded to 255 bytes.
 Invalid optional identifiers normalize to nil. Message/Command are not versioned
-wire envelopes; Delivery/Response support `protocol_version: 1` (the default).
-Other explicit versions are rejected. Use the published constructors rather than
+wire envelopes. Widget Delivery defaults to `protocol_version: 2` and rejects version 1;
+BO Delivery remains version 1. Response supports both versions, defaulting to 1 for
+BO callers; WebBridge explicitly produces version 2 for widgets. Use the published constructors rather than
 an independent payload schema. Inbound message edit is unsupported. Legacy BO flat
 payloads and standalone result/status tuples are no longer accepted.
 
@@ -127,14 +128,18 @@ proofs or credentials in browser configuration, canonical routing context or his
 ## Delivery, responses and lifecycle
 
 Delivery fields are required `consumer` (`:bo` / `:widget`), required `topic`,
-`events` (semantic-to-adapter-name map, default `%{}`), optional `protocol_version` (default 1) and
+`events` (semantic-to-adapter-name map, default `%{}`), optional `protocol_version` (widget 2 / BO 1) and
 optional positive `channel_config_id` (required for widget scope). Event names are
 nonblank strings or nonboolean/nonnil atoms. Unknown semantic keys are rejected.
 Widget messages require mappings for typing, create, edit, step, complete, failed and
 error before creating the chat. Command/acceptance responses are returned directly
 and must also be encoded by the adapter; they do not depend on PubSub subscription.
+The bridge binds optional trusted `conversation_id` and `message_id` to the descriptor
+after preparation. Only Channels interprets these correlation fields; generic role
+code carries the serialized reference opaquely. A reserved transport ID does not
+promise that an assistant message will be produced.
 
-Responses contain `protocol_version: 1`, required `request_id`, required semantic
+Responses contain the consumer's `protocol_version`, required `request_id`, required semantic
 `type`, optional `conversation_id`/`message_id` and `payload` map (default `%{}`). Public payload
 projection precedes recursive rejection of actor/credential/token/private execution
 fields. Widget finals exclude BO traces, raw tool calls and agent metadata.
@@ -149,7 +154,7 @@ fields. Widget finals exclude BO traces, raw tool calls and agent metadata.
 | `:message_create` | Empty assistant `body`, stable transport ID | Not emitted by BO descriptor |
 | `:message_edit` | Full current `body`; replacement snapshot, never append-only delta | `:status_update` |
 | `:message_step` | Fixed public `label`, `kind: :activity`, `state: :running`, `step_id`; no raw reasoning | Not emitted by BO descriptor |
-| `:message_complete` / `:message_failed` | Public `body`, `error`, persisted assistant/user references, `created`; safe dispatch failure can use `code: :dispatch_error` | `:pipeline_result` |
+| `:message_complete` / `:message_failed` | Public `body`, `error`, persisted assistant/user references; sync return adds `created` | `:pipeline_result` |
 | `:status` | Resumed async acceptance: `accepted: true`, `created: false`; internal activity is projected into steps | `:status_update` |
 | `:error` | Safe `code`; timeout also includes `outcome: :unknown` | `:pipeline_result` for delivery errors |
 
@@ -166,22 +171,38 @@ and `updated_at`. BO history messages project `id`, `role`, `content`, `sources`
 and `inserted_at`; rating fields are `id`, `rating`, `reason` and `comment`.
 These BO information fields are not the widget's public projection.
 
-One temporary RequestOwner subscribes to a private unpredictable cluster PubSub topic
-before dispatch, on the ingress Channels node. Only a serializable Delivery snapshot
-crosses Engine/Agent role hops, never its PID or dispatch function. Async returns a
-creation/accepted receipt; live order is typing active → assistant create → optional
-updates/steps → typing inactive → one terminal. Transport assistant IDs stay stable
-across these updates; persisted assistant/user IDs are separate payload references.
-Transcript and private execution-record IDs are not interchangeable with chat/message IDs.
+Submission and assistant-message lifecycles are independent. Async returns a
+creation/status receipt with `accepted: true`, the request/conversation IDs and **no
+assistant message ID**. This acknowledges submission dispatch, not native input
+consumption, generation or a promised answer. Workflow-only inputs, provider replays
+and accepted steering can produce no independent assistant message. An additional
+accepted status may use `response.status` when no explicit status mapping exists.
 
-Sync returns one terminal Response and publishes no duplicate terminal to the original
-adapter destination. `:web_widget_sync_timeout_ms` defaults to 30,000 milliseconds;
-`:web_widget_async_timeout_ms` bounds live-owner retention to 300,000 milliseconds.
-Positive settings are bounded to 900,000 milliseconds, otherwise defaults apply.
-Timeout is an unknown outcome, not cancellation or permission to retry. Accepted Engine
-work may complete later. Owners stop on completion/failure/expiry; duplicate live terminal
-fallbacks are suppressed. PubSub is best effort, not durable replay or exactly-once
-execution. Reconnect/owner loss/timeout recovery uses authorized canonical history.
+Async responses go directly to the adapter's existing authorized subscription; there
+is no per-message transport owner or relay. Native `request_started` is projected
+through Agent's existing Status boundary to typing active → assistant create. Only
+then do stream edits and safe activity steps follow. Generic pre-admission statuses
+create no placeholder. A final persisted answer without a streamed start first creates
+its public assistant message; an early failure instead produces a request-scoped
+`:error` with no assistant ID. Queued acknowledgements are never empty completions.
+Engine/Agent retain admission, steering, runtime ownership, synchronization and
+finalization. They do not interpret widget destinations or public event names.
+
+Transport assistant IDs stay stable across create/edit/step/terminal; persisted
+assistant/user IDs remain separate payload references. The adapter independently
+correlates each stream and ignores duplicate/late terminal regressions. A receipt
+does not keep a spinner waiting for an answer that may never exist. Native generation
+completion is not public completion: final delivery follows Engine persistence and
+confirmed history synchronization through the normal Channels return hop.
+
+Sync uses a bounded caller-side `Web.SyncReply` subscription, returning one terminal
+Response **or a no-answer submission acknowledgement**, with no duplicate terminal at
+the original adapter destination. `:web_widget_sync_timeout_ms` defaults to 30,000
+milliseconds; positive values are bounded to 900,000 milliseconds. The obsolete async
+owner timeout is removed. Wait cleanup never cancels accepted Engine work, including
+when the caller disconnects. Timeout is an unknown outcome, not permission to retry.
+PubSub is best effort, not durable replay or exactly-once execution. Reconnect/timeout
+recovery uses authorized canonical history.
 Subscribe to an authorized pre-creation destination before the first question; wait for
 its conversation ID before submitting subsequent questions to the same chat.
 
@@ -349,7 +370,7 @@ invocation to 2,000 ms, handles exceptions/exits, validates the common result en
 and projects absent callbacks, timeouts, failures and malformed replies to
 unknown with a safe explanation. Do not pass unbounded or raw diagnostics to BO.
 
-Readiness version 2 is separate from shared message/response protocol version 1.
+Readiness version 2 is separate from the widget response protocol version 2.
 The closed `verification` map requires `scope: :local`, `external_https: :not_checked`,
 and `session_handshake: :verified | :not_checked`. The upstream adapter rejects external
 verification claims or unknown/private fields; ZAQ relays those safe observations.

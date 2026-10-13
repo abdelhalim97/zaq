@@ -140,6 +140,14 @@ User question (BO Chat / Channel)
 
 ### Status broadcast ownership
 
+Consumers may opt into `notify_execution_lifecycle` through trusted pipeline options.
+`StreamEvents` reports `:execution_started` only on native `request_started`, not on
+dispatch or ask-handle acquisition. Agent API reports safe `:submission_accepted` for
+accepted no-answer inputs and `:submission_rejected` for failed asynchronous admission
+through the existing ordered Status/Channels boundary. These are consumer-neutral
+lifecycle facts; only Channels translates them into a web protocol. Pipeline forwards
+the option and retains the started status-message identity for final response mapping.
+
 Each module broadcasts its own stage — orchestrators broadcast nothing:
 
 | Stage | Owner | Notes |

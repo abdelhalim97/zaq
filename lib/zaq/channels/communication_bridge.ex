@@ -655,14 +655,34 @@ defmodule Zaq.Channels.CommunicationBridge do
 
   defp dispatch_incoming_routing_event(%Event{} = event, node_router_module, opts) do
     case node_router_module.dispatch(event) do
-      %Event{response: {:error, _} = error} -> error
-      %Event{response: %Outgoing{} = outgoing} -> outgoing
-      %Event{response: {:ok, %Outgoing{} = outgoing}} -> outgoing
-      %Event{response: {:ok, :duplicate_incoming}} -> :ok
-      %Event{request: %Outgoing{} = outgoing, response: :ok} -> outgoing
-      %Event{response: response} -> acknowledge_routing_response(response, opts)
-      response -> {:error, {:unexpected_response, response}}
+      %Event{response: {:error, _} = error} ->
+        error
+
+      %Event{next_hop: nil, assigns: %{"incoming_message_routing" => %{"mode" => "none"}}} ->
+        no_answer_receipt(opts)
+
+      %Event{response: %Outgoing{} = outgoing} ->
+        outgoing
+
+      %Event{response: {:ok, %Outgoing{} = outgoing}} ->
+        outgoing
+
+      %Event{response: {:ok, :duplicate_incoming}} ->
+        no_answer_receipt(opts)
+
+      %Event{request: %Outgoing{} = outgoing, response: :ok} ->
+        outgoing
+
+      %Event{response: response} ->
+        acknowledge_routing_response(response, opts)
+
+      response ->
+        {:error, {:unexpected_response, response}}
     end
+  end
+
+  defp no_answer_receipt(opts) do
+    if Keyword.get(opts, :include_routing_disposition, false), do: {:ok, :no_answer}, else: :ok
   end
 
   defp acknowledge_routing_response(response, _opts) when response in [:ok, nil], do: :ok

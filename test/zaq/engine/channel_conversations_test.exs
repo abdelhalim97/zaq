@@ -9,7 +9,15 @@ defmodule Zaq.Engine.ChannelConversationsTest do
   alias Zaq.Channels.Web.Message, as: WebMessage
   alias Zaq.Engine.{Api, ChannelConversations, Conversations, HistoryIngress}
   alias Zaq.Engine.ChannelConfig
-  alias Zaq.Engine.Conversations.{Conversation, Message, Transcript, TranscriptMessage}
+
+  alias Zaq.Engine.Conversations.{
+    Conversation,
+    ExecutionRecord,
+    Message,
+    Transcript,
+    TranscriptMessage
+  }
+
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Engine.Messages.Incoming.RoutingContext
@@ -422,8 +430,13 @@ defmodule Zaq.Engine.ChannelConversationsTest do
     config: config,
     scope: scope
   } do
-    {conversation, transcript_id, _message} = chat(config, scope)
-    Repo.delete_all(from tm in TranscriptMessage, where: tm.transcript_id == ^transcript_id)
+    {conversation, transcript_id, message_id} = chat(config, scope)
+    message = Repo.get!(Message, message_id)
+    execution = Repo.get_by!(ExecutionRecord, user_message_id: message.id)
+
+    # Canonical messages outlive legacy conversation coordinates. Model a missing
+    # conversation without cascading away the admitted input or its audit evidence.
+    message |> Ecto.Changeset.change(conversation_id: nil) |> Repo.update!()
     Repo.delete!(conversation)
     question = incoming(config, scope)
 
@@ -438,6 +451,13 @@ defmodule Zaq.Engine.ChannelConversationsTest do
              ChannelConversations.initialize(scope, conversation.id)
 
     assert Repo.aggregate(Conversation, :count) == 0
+    assert Repo.get!(Message, message.id).conversation_id == nil
+    assert Repo.get!(ExecutionRecord, execution.id).user_message_id == message.id
+
+    assert Repo.exists?(
+             from tm in TranscriptMessage,
+               where: tm.transcript_id == ^transcript_id and tm.message_id == ^message.id
+           )
   end
 
   test "failed canonical seed capture rolls back conversation and ordinary seed", %{

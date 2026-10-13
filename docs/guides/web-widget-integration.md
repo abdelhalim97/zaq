@@ -372,7 +372,10 @@ normalization can yield nil for malformed values. Do not translate a malformed r
 request into a fresh-chat question; unknown valid IDs still fail closed in Engine.
 
 Commands return a semantic Response directly. Async messages return
-`{:ok, Response}` acceptance; synchronous messages return one terminal Response.
+`{:ok, Response}` submission receipts without an assistant ID; synchronous messages
+return one terminal Response or a no-answer submission acknowledgement. Widget responses
+and Delivery use protocol version 2; BO remains version 1. A successful submission
+does not promise an assistant answer and never exposes steering/execution internals.
 Errors before acceptance can return `{:error, reason}`. Encode responses according
 to their semantic type and retain request/conversation/message correlation.
 PubSub events are `{:web_response, adapter_event_name, response}`. They are already
@@ -384,17 +387,18 @@ public projections; do not inject BO traces or raw tool calls into wire output.
 | --- | --- |
 | Open → init | Readiness, `created: false`, no new conversation ID |
 | First async question | Creation receipt with new conversation ID |
-| Accepted async work | Typing active → assistant create → optional edits/steps |
+| Submitted input without an answer | Receipt only; no assistant placeholder or pending-answer spinner |
+| Started assistant message | Typing active → assistant create → optional edits/steps |
 | Streaming edit | Replace the full content snapshot; never append it as a delta |
 | Completion/failure | Typing inactive → one correlated live terminal |
-| Sync question | One terminal return, no duplicate terminal PubSub delivery |
+| Sync question | One terminal or no-answer acknowledgement return; no duplicate terminal PubSub delivery |
 | Sync timeout | Unknown outcome; no cancellation or automatic retry |
 | Restore | Authorized shared history command with the existing conversation ID |
 | Unknown/foreign/deleted resume | Denied; no replacement conversation |
 
 The assistant's stable transport ID is not necessarily its persisted message ID.
 Terminal payloads expose persisted assistant/user references separately. History
-is the recovery interface after timeout, reconnect or owner loss; PubSub offers
+is the recovery interface after timeout or reconnect; PubSub offers
 no durable replay or exactly-once execution promise. See the
 [WebBridge protocol](../services/web-bridge.md) for bounds, pagination and timeout settings.
 
@@ -409,8 +413,10 @@ Executable host references:
   startup/failure, updates, teardown, isolated connectors and foreign context.
 - [`adapter_status_test.exs`](../../test/zaq/channels/web/adapter_status_test.exs): existing
   Channels status event, safe projection, timeouts, effective settings and local scope.
-- [`request_owner_test.exs`](../../test/zaq/channels/web/request_owner_test.exs):
-  ordering, terminal uniqueness, timeout without cancellation and safe steps.
+- [`widget_delivery_test.exs`](../../test/zaq/channels/web/widget_delivery_test.exs):
+  native-start ordering, no-answer acknowledgements, stable correlation and safe steps.
+- [`sync_reply_test.exs`](../../test/zaq/channels/web/sync_reply_test.exs):
+  bounded synchronous waits, no duplicate live terminal and timeout without cancellation.
 - [`channel_conversations_test.exs`](../../test/zaq/engine/channel_conversations_test.exs):
   identity/privacy, lazy creation, context seeding, rollback, deletion and resume.
 

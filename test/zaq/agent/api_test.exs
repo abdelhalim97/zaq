@@ -373,6 +373,28 @@ defmodule Zaq.Agent.ApiTest do
     end
   end
 
+  test "opted-in async submission rejection is reported without running execution" do
+    incoming = %Incoming{content: "hi", channel_id: "c1", provider: :mattermost}
+
+    event =
+      pipeline_event(incoming,
+        opts: [
+          pipeline_module: StubPipeline,
+          status_module: SpyStatus,
+          node_router: SpyNodeRouter,
+          pipeline_opts: [notify_execution_lifecycle: true]
+        ]
+      )
+
+    event = %{event | assigns: %{}}
+
+    assert %{response: {:error, :invalid_conversation_binding}, next_hop: nil} =
+             Api.handle_event(event, :run_pipeline, nil)
+
+    assert_received {:status_broadcast, ^incoming, :submission_rejected, "Submission rejected"}
+    refute_received {:pipeline_called, _, _}
+  end
+
   property "every binding field is required before either execution path can run" do
     check all(
             field <- member_of([:conversation_id, :user_message_id, :finalization_token]),

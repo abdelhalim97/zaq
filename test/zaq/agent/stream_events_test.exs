@@ -27,6 +27,36 @@ defmodule Zaq.Agent.StreamEventsTest do
     defstruct [:name]
   end
 
+  test "opted-in lifecycle starts only on native request_started and before streamed content" do
+    events = [
+      event(:request_started, 0, %{}),
+      event(:request_started, 1, %{}),
+      event(:llm_delta, 10, %{chunk_type: :content, delta: "hello"}),
+      event(:request_completed, 20, %{result: "hello"})
+    ]
+
+    assert {:ok, result} =
+             StreamEvents.consume(events, incoming(),
+               status_module: FakeStatus,
+               notify_execution_lifecycle: true
+             )
+
+    assert result.incoming.metadata.status_message_id == incoming().metadata.request_id
+    assert_receive {:broadcast, :execution_started, "Preparing answer", :status}
+    assert_receive {:broadcast, :answering, "hello", :stream_delta}
+    refute_received {:broadcast, :execution_started, _, _}
+  end
+
+  test "native rejection never announces an assistant start" do
+    assert {:error, :busy, _} =
+             StreamEvents.consume([event(:request_failed, 0, %{error: :busy})], incoming(),
+               status_module: FakeStatus,
+               notify_execution_lifecycle: true
+             )
+
+    refute_received {:broadcast, :execution_started, _, _}
+  end
+
   test "coalesces small deltas and flushes the full content on terminal event" do
     incoming = incoming()
 

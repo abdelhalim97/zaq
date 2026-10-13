@@ -245,6 +245,7 @@ defmodule Zaq.Agent.PipelineTest do
           prompt_tokens: 5,
           completion_tokens: 3,
           total_tokens: 8,
+          status_message_id: "native-started-message",
           error: false,
           person_id: Incoming.person_id(incoming)
         }
@@ -489,6 +490,17 @@ defmodule Zaq.Agent.PipelineTest do
   end
 
   describe "do_answering executor delegation" do
+    test "default answering forwards lifecycle reporting and retains its started-message identity" do
+      opts =
+        Keyword.merge(@base_opts, executor_module: SpyExecutor, notify_execution_lifecycle: true)
+
+      outgoing = Pipeline.run(@incoming, opts)
+
+      assert_receive {:executor_opts, executor_opts}, 1_000
+      assert Keyword.fetch!(executor_opts, :notify_execution_lifecycle)
+      assert outgoing.metadata.status_message_id == "native-started-message"
+    end
+
     test "delegates answering step to executor_module with system_prompt" do
       opts = Keyword.put(@base_opts, :executor_module, SpyExecutor)
 
