@@ -5,9 +5,44 @@ defmodule Zaq.Agent.HistoryLoaderTest do
   alias Jido.AI.Context, as: AIContext
   alias Zaq.Accounts.Person
   alias Zaq.Agent.HistoryLoader
+  alias Zaq.Agent.InputPrompt
   alias Zaq.Agent.OpaqueAliases
   alias Zaq.Engine.Conversations.{Conversation, Message}
   alias Zaq.Repo
+
+  test "current and historical attachments share formatting without exposing hydration internals" do
+    attachment = %{
+      "id" => "file",
+      "kind" => "file",
+      "name" => "photo.png",
+      "materialization_handle" => "fresh-handle",
+      "content" => "private bytes",
+      "raw" => %{"secret" => true},
+      "attributes" => %{
+        "materialization_source" => %{"locator" => %{"reference" => "provider-reference"}},
+        "media_kind" => "image"
+      }
+    }
+
+    message = %{
+      message_id: Ecto.UUID.generate(),
+      role: "external",
+      content: nil,
+      author_name: "Alice",
+      author_id: "alice",
+      provider_sent_at: nil,
+      attachments: [attachment]
+    }
+
+    [entry] = HistoryLoader.from_projection([message]).entries
+    assert entry.content == InputPrompt.append_attachments("Alice (alice): ", [attachment], nil)
+    assert entry.content =~ "fresh-handle"
+    assert entry.content =~ "media_kind"
+    refute entry.content =~ "materialization_source"
+    refute entry.content =~ "provider-reference"
+    refute entry.content =~ "private bytes"
+    refute entry.content =~ "secret"
+  end
 
   property "canonical conversion never copies opaque private fields into model entries" do
     check all(

@@ -1,9 +1,41 @@
 defmodule Zaq.Channels.Materializers.CommunicationMediaTest do
   use Zaq.DataCase, async: true
+  use ExUnitProperties
 
+  alias Zaq.Channels.Api
   alias Zaq.Channels.Materializers.CommunicationMedia
+  alias Zaq.Contracts.Record
   alias Zaq.Event
   alias Zaq.Materialization.Handle
+
+  property "hydration preserves native identifiers and signed provenance after JSON storage" do
+    check all(
+            reference <- string(:alphanumeric, min_length: 1, max_length: 300),
+            channel <- integer(-1_000_000..-1),
+            message <- integer(1..1_000_000)
+          ) do
+      source =
+        CommunicationMedia.source_metadata("telegram", reference, %{
+          "channel_config_id" => 3,
+          "source_author_id" => "author-1",
+          "source_channel_id" => channel,
+          "source_message_id" => message
+        })
+
+      stored =
+        Record.attachment_metadata(%Record{
+          id: reference,
+          kind: :file,
+          attributes: %{"materialization_source" => source}
+        })
+
+      stored = Jason.decode!(Jason.encode!(stored))
+      assert {:ok, record} = CommunicationMedia.hydrate(stored, %{actor: %{id: "author-1"}})
+      assert {:ok, %{locator: locator}} = Handle.verify(record.materialization_handle)
+      assert locator == source["locator"]
+      assert record.content == nil
+    end
+  end
 
   defmodule StubNodeRouter do
     def dispatch(%Event{request: request, opts: opts} = event) do
@@ -20,6 +52,98 @@ defmodule Zaq.Channels.Materializers.CommunicationMediaTest do
   end
 
   defmodule StubCommunicationBridge do
+  end
+
+  test "hydrates a lazy Record from durable metadata and newly signs the stored source" do
+    source =
+      CommunicationMedia.source_metadata("telegram", "provider-file-id", %{
+        "channel_config_id" => 3,
+        "source_author_id" => "author-1",
+        "source_channel_id" => "-100",
+        "source_message_id" => "12",
+        "size" => 4,
+        "name" => "photo.png",
+        "mime_type" => "image/png"
+      })
+
+    descriptor = %{
+      "id" => "provider-file-id",
+      "kind" => "file",
+      "name" => "photo.png",
+      "size" => 4,
+      "attributes" => %{"materialization_source" => source},
+      "materialization_handle" => "stale"
+    }
+
+    assert {:ok, %Record{content: nil} = record} =
+             CommunicationMedia.hydrate(descriptor, %{actor: %{id: "author-1"}})
+
+    assert record.materialization_handle != "stale"
+    assert {:ok, %{locator: locator}} = Handle.verify(record.materialization_handle)
+    assert locator == source["locator"]
+    refute_received {:dispatch, _, _, _, _, _}
+
+    assert {:error, :unauthorized_materialization_handle} =
+             CommunicationMedia.hydrate(descriptor, %{actor: %{id: "other"}})
+
+    assert {:error, :unauthorized_materialization_handle} =
+             CommunicationMedia.hydrate(descriptor, %{})
+  end
+
+  test "rejects legacy, mismatched, unsupported and malformed hydration sources" do
+    source =
+      CommunicationMedia.source_metadata("mattermost", "file", %{
+        "channel_config_id" => 3,
+        "source_author_id" => "author-1",
+        "source_channel_id" => "room",
+        "source_message_id" => "message"
+      })
+
+    descriptor = %{
+      "id" => "file",
+      "kind" => "file",
+      "attributes" => %{"materialization_source" => source}
+    }
+
+    for invalid <- [
+          nil,
+          %{"id" => "file"},
+          Map.put(descriptor, "id", "other"),
+          put_in(descriptor, ["attributes", "materialization_source", "version"], 2),
+          put_in(
+            descriptor,
+            ["attributes", "materialization_source", "locator", "reference"],
+            %{}
+          ),
+          put_in(
+            descriptor,
+            ["attributes", "materialization_source", "locator", "channel_config_id"],
+            nil
+          )
+        ] do
+      assert {:error, :invalid_materialization_source} =
+               CommunicationMedia.hydrate(invalid, %{actor: %{id: "author-1"}})
+    end
+  end
+
+  test "hydration API requires confidential dispatch and preserves batch result order" do
+    descriptor = %{"id" => "legacy", "name" => "display-only.png"}
+
+    event =
+      Event.new(%{attachments: [descriptor]}, :channels,
+        actor: %{id: "author-1"},
+        opts: [action: :hydrate_attachments]
+      )
+
+    assert %{response: {:error, :confidential_event_required}} =
+             Api.handle_event(event, :hydrate_attachments, %{})
+
+    assert %{response: {:ok, [{:error, :invalid_materialization_source}]}} =
+             Api.handle_event(
+               %{event | opts: [confidential: true]},
+               :hydrate_attachments,
+               %{}
+             )
   end
 
   test "issues communication-media handles with stable locator fields" do

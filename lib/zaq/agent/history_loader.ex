@@ -13,7 +13,7 @@ defmodule Zaq.Agent.HistoryLoader do
   import Ecto.Query
 
   alias Jido.AI.Context, as: AIContext
-  alias Zaq.Agent.OpaqueAliases
+  alias Zaq.Agent.InputPrompt
   alias Zaq.Engine.Conversations.{Conversation, Message}
   alias Zaq.Repo
   alias Zaq.Utils.DateUtils
@@ -223,40 +223,25 @@ defmodule Zaq.Agent.HistoryLoader do
     content = Map.get(message, :content) || ""
     metadata = Map.get(message, :metadata)
 
-    case safe_attachments(metadata, Keyword.get(opts, :opaque_alias_scope)) do
-      [] -> content
-      attachments -> Enum.join([content, "Attachments:", Jason.encode!(attachments)], "\n")
-    end
+    InputPrompt.append_attachments(
+      content,
+      safe_attachments(metadata),
+      Keyword.get(opts, :opaque_alias_scope)
+    )
   end
 
-  defp safe_attachments(metadata, scope) when is_map(metadata) do
+  defp safe_attachments(metadata) when is_map(metadata) do
     metadata
     |> Map.get("attachments", Map.get(metadata, :attachments, []))
     |> case do
       attachments when is_list(attachments) ->
         attachments
         |> Enum.filter(&is_map/1)
-        |> Enum.map(&safe_attachment(&1, scope))
 
       _ ->
         []
     end
   end
 
-  defp safe_attachments(_metadata, _scope), do: []
-
-  defp safe_attachment(attachment, scope) do
-    safe = Map.drop(attachment, ["content", :content, "raw", :raw])
-
-    case scope do
-      nil ->
-        safe
-
-      scope ->
-        case OpaqueAliases.alias_metadata(safe, scope) do
-          {:ok, aliased} -> aliased
-          {:error, _reason} -> safe
-        end
-    end
-  end
+  defp safe_attachments(_metadata), do: []
 end

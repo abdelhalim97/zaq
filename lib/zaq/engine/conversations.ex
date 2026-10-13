@@ -1774,7 +1774,7 @@ defmodule Zaq.Engine.Conversations do
 
   defp incoming_attachment_metadata(%Incoming{attachments: attachments})
        when is_list(attachments) and attachments != [] do
-    %{"attachments" => Enum.map(attachments, &Zaq.Contracts.Record.metadata/1)}
+    %{"attachments" => Enum.map(attachments, &Zaq.Contracts.Record.attachment_metadata/1)}
   end
 
   defp incoming_attachment_metadata(%Incoming{}), do: %{}

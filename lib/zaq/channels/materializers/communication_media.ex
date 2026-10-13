@@ -1,11 +1,15 @@
 defmodule Zaq.Channels.Materializers.CommunicationMedia do
   @moduledoc """
   Materializes communication-channel media through the existing Channels bridge route.
+
+  Owns the versioned durable source metadata used to reconstruct lazy attachment
+  Records. Source metadata is stored without runtime handles or media bytes.
   """
 
   @behaviour Zaq.Materialization.Handler
 
   alias Zaq.Channels.Events
+  alias Zaq.Contracts.Record
   alias Zaq.Events.TrustedContext
   alias Zaq.Helpers
   alias Zaq.MapUtils
@@ -19,16 +23,99 @@ defmodule Zaq.Channels.Materializers.CommunicationMedia do
 
   def issue(provider, reference, attrs, opts)
       when (is_atom(provider) or is_binary(provider)) and is_binary(reference) and is_map(attrs) do
+    Zaq.Materialization.issue(
+      @type_key,
+      source_metadata(provider, reference, attrs)["locator"],
+      opts
+    )
+  end
+
+  def issue(_provider, _reference, _attrs, _opts), do: {:error, :invalid_materialization_handle}
+
+  @doc "Returns JSON-safe durable source facts, using the same locator as handle issuance."
+  @spec source_metadata(atom() | String.t(), String.t(), map()) :: map()
+  def source_metadata(provider, reference, attrs) do
     locator =
       attrs
       |> Map.take(@locator_fields)
       |> Map.merge(%{"provider" => to_string(provider), "reference" => reference})
       |> drop_blank_values()
 
-    Zaq.Materialization.issue(@type_key, locator, opts)
+    %{"version" => 1, "type" => @type_key, "locator" => locator}
   end
 
-  def issue(_provider, _reference, _attrs, _opts), do: {:error, :invalid_materialization_handle}
+  @doc """
+  Reconstructs a lazy Record from trusted, authorized attachment source metadata.
+
+  This internal operation never downloads bytes or accepts model-supplied locators.
+  It preserves the original source author and the existing redemption policy.
+  """
+  @spec hydrate(map(), map()) :: {:ok, Record.t()} | {:error, term()}
+  def hydrate(descriptor, context) when is_map(descriptor) and is_map(context) do
+    metadata = Record.attachment_metadata(descriptor)
+
+    with {:ok, locator} <- hydration_locator(metadata),
+         :ok <- authorize(locator, context),
+         {:ok, handle} <- Zaq.Materialization.issue(@type_key, locator) do
+      {:ok,
+       %Record{
+         id: metadata["id"],
+         kind: :file,
+         name: metadata["name"],
+         mime_type: metadata["mime_type"],
+         size: metadata["size"],
+         attributes: metadata["attributes"],
+         materialization_handle: handle
+       }}
+    end
+  end
+
+  def hydrate(_descriptor, _context), do: {:error, :invalid_materialization_source}
+
+  defp hydration_locator(%{
+         "id" => id,
+         "kind" => "file",
+         "attributes" => %{
+           "materialization_source" => %{
+             "version" => 1,
+             "type" => @type_key,
+             "locator" => locator
+           }
+         }
+       })
+       when is_map(locator) do
+    with true <- Map.get(locator, "reference") == id,
+         true <- valid_source_fields?(locator),
+         {:ok, request} <- validate_locator(locator) do
+      {:ok, request}
+    else
+      _ -> {:error, :invalid_materialization_source}
+    end
+  end
+
+  defp hydration_locator(_metadata), do: {:error, :invalid_materialization_source}
+
+  defp valid_source_fields?(locator) do
+    required =
+      ~w(provider reference channel_config_id source_author_id source_channel_id source_message_id)
+
+    valid_source_config?(Map.get(locator, "channel_config_id")) and
+      Enum.all?(required, &(Map.has_key?(locator, &1) and not blank?(string(locator, &1)))) and
+      Enum.all?(locator, fn {key, value} ->
+        key in @locator_fields and (is_binary(value) or is_integer(value))
+      end)
+  end
+
+  defp valid_source_config?(id) when is_integer(id), do: id > 0
+
+  defp valid_source_config?(id) when is_binary(id) do
+    case Integer.parse(id) do
+      {value, ""} when value > 0 -> true
+      _ -> false
+    end
+  end
+
+  defp valid_source_config?(_id), do: false
 
   @impl true
   def materialization_options, do: []

@@ -829,10 +829,7 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
     do: insert_or_reuse_message(changeset, transcript, account_key, external_id)
 
   defp resolve_canonical_message(changeset, transcript, _account_key, _external_id, message) do
-    if same_message?(message, Ecto.Changeset.apply_changes(changeset)) and
-         same_placement_scope?(message, transcript),
-       do: {:ok, message},
-       else: {:error, :source_conflict}
+    reuse_matching_message(message, Ecto.Changeset.apply_changes(changeset), transcript)
   end
 
   defp reuse_admitted_message(id, changeset, transcript, context, cached_message) do
@@ -1006,9 +1003,7 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
            ) do
       candidate = Ecto.Changeset.apply_changes(changeset)
 
-      if same_message?(message, candidate) and same_placement_scope?(message, transcript),
-        do: {:ok, message},
-        else: {:error, :source_conflict}
+      reuse_matching_message(message, candidate, transcript)
     else
       nil -> {:error, :source_unavailable}
       {:error, reason} -> {:error, reason}
@@ -1021,7 +1016,33 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
           not is_nil(message.conversation_id))) and
       message.content == attrs.content and
       message.author_id == attrs.author_id and
-      (message.attachments || []) == (attrs.attachments || [])
+      matching_attachment_replay?(message.attachments || [], attrs.attachments || [])
+  end
+
+  defp matching_attachment_replay?(stored, incoming) when length(stored) == length(incoming) do
+    Enum.zip(stored, incoming)
+    |> Enum.all?(fn {old, new} ->
+      old == new or
+        (not Map.has_key?(old, "attributes") and
+           Map.take(old, ~w(id name mime_type size)) == Map.take(new, ~w(id name mime_type size)))
+    end)
+  end
+
+  defp matching_attachment_replay?(_stored, _incoming), do: false
+
+  defp reuse_matching_message(message, candidate, transcript) do
+    cond do
+      not same_message?(message, candidate) or not same_placement_scope?(message, transcript) ->
+        {:error, :source_conflict}
+
+      message.attachments == candidate.attachments ->
+        {:ok, message}
+
+      true ->
+        message
+        |> Message.canonical_changeset(%{attachments: candidate.attachments})
+        |> Repo.update()
+    end
   end
 
   defp same_placement_scope?(message, transcript) do
@@ -1102,20 +1123,5 @@ defmodule Zaq.Engine.Conversations.TranscriptHistory do
 
   defp sanitize_attachment_list(_attachments), do: []
 
-  defp sanitize_descriptor(descriptor) when is_map(descriptor) do
-    strings =
-      Enum.reduce([{"id", 255}, {"name", 512}, {"mime_type", 255}], %{}, fn {key, max}, acc ->
-        case Map.get(descriptor, key) do
-          value when is_binary(value) and byte_size(value) <= max -> Map.put(acc, key, value)
-          _ -> acc
-        end
-      end)
-
-    case Map.get(descriptor, "size") do
-      size when is_integer(size) and size >= 0 -> Map.put(strings, "size", size)
-      _ -> strings
-    end
-  end
-
-  defp sanitize_descriptor(_descriptor), do: %{}
+  defp sanitize_descriptor(descriptor), do: Zaq.Contracts.Record.attachment_metadata(descriptor)
 end

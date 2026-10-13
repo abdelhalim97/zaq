@@ -73,6 +73,14 @@ identity or permission flags in provider parameters.
 `communication_media` is implemented by
 `Zaq.Channels.Materializers.CommunicationMedia`.
 
+Communication history stores durable source metadata, not handles. Channels
+builders use `source_metadata/3` and `issue/4` with the same normalized locator.
+Confidential history hydration reconstructs a lazy Record and newly issues its
+handle without downloading bytes. Handles are deterministic signed locators, not
+node-local references or expiring tokens: reissuance need not change their bytes.
+Runtime aliases are separate and scoped to the logical agent server. Redemption
+still validates the actor and current connector, and IMAP still checks UIDVALIDITY.
+
 Locator fields include `provider`, `reference`, optional display metadata
 (`name`, `mime_type`, `media_kind`, `size`), optional config provenance
 (`channel_config_id`), and source provenance (`source_author_id`,

@@ -8,6 +8,8 @@ defmodule Zaq.Engine.Api do
   alias Zaq.Accounts
   alias Zaq.Accounts.BOActor
   alias Zaq.Accounts.People
+  alias Zaq.Channels.Events, as: ChannelsEvents
+  alias Zaq.Contracts.Record
   alias Zaq.Engine.Actions.SaveEmailConnector
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.ChannelHistoryAdmin
@@ -266,7 +268,7 @@ defmodule Zaq.Engine.Api do
         _ -> {:error, :confidential_event_required}
       end
 
-    %{event | response: response}
+    %{event | response: hydrate_history_result(response, event)}
   end
 
   def handle_event(%Event{} = event, :execution_history, _context) do
@@ -290,7 +292,7 @@ defmodule Zaq.Engine.Api do
         {:error, :confidential_event_required}
       end
 
-    %{event | response: response}
+    %{event | response: hydrate_history_result(response, event)}
   end
 
   def handle_event(%Event{} = event, :prepare_execution_followup, _context) do
@@ -1094,6 +1096,70 @@ defmodule Zaq.Engine.Api do
   #
   # `:message_id` is rejected rather than ignored: it would silently override the
   # message resolved from `message_ref` inside `MessageRating.changeset/2`.
+  # Both initial admission and incremental reads arrive here after the owning
+  # Conversations transaction has completed. Never dispatch while holding its locks.
+  defp hydrate_history_result({:ok, %{kind: :canonical} = projection}, event) do
+    attachments = Enum.flat_map(projection.messages, & &1.attachments)
+
+    with {:ok, results} <- hydrate_history_attachments(attachments, event) do
+      {messages, []} =
+        Enum.map_reduce(projection.messages, results, fn message, remaining ->
+          {own_results, rest} = Enum.split(remaining, length(message.attachments))
+          hydrated = Enum.zip_with(message.attachments, own_results, &hydrated_attachment/2)
+          {Map.put(message, :attachments, hydrated), rest}
+        end)
+
+      {:ok, %{projection | messages: messages}}
+    end
+  end
+
+  defp hydrate_history_result(result, _event), do: result
+
+  defp hydrate_history_attachments(attachments, event) do
+    attachments
+    |> Enum.chunk_every(1000)
+    |> Enum.reduce_while({:ok, []}, fn batch, {:ok, acc} ->
+      case hydrate_attachment_batch(batch, event) do
+        {:ok, results} -> {:cont, {:ok, acc ++ results}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp hydrate_attachment_batch(batch, event) do
+    if Enum.any?(batch, &Map.has_key?(&1, "attributes")) do
+      opts = [
+        actor: event.actor,
+        node_router: Keyword.get(event.opts, :node_router, Zaq.NodeRouter)
+      ]
+
+      batch
+      |> ChannelsEvents.build_and_dispatch_hydrate_attachments_event(opts)
+      |> validate_hydration_response(length(batch))
+    else
+      {:ok, Enum.map(batch, fn _ -> {:error, :invalid_materialization_source} end)}
+    end
+  end
+
+  defp validate_hydration_response(%{response: {:ok, results}}, count)
+       when is_list(results) and length(results) == count do
+    if Enum.all?(results, &valid_hydration_result?/1),
+      do: {:ok, results},
+      else: {:error, :attachment_hydration_unavailable}
+  end
+
+  defp validate_hydration_response(_response, _count),
+    do: {:error, :attachment_hydration_unavailable}
+
+  defp valid_hydration_result?({:ok, %Record{}}), do: true
+  defp valid_hydration_result?({:error, reason}) when is_atom(reason), do: true
+  defp valid_hydration_result?(_result), do: false
+
+  defp hydrated_attachment(_descriptor, {:ok, record}), do: Record.metadata(record)
+
+  defp hydrated_attachment(descriptor, {:error, _reason}),
+    do: Map.put(descriptor, "materialization_status", "unavailable")
+
   defp execution_input_event(:queue_execution_input, request, actor),
     do:
       Conversations.queue_execution_input(

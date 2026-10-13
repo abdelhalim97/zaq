@@ -864,6 +864,43 @@ defmodule Zaq.Engine.Conversations.TranscriptHistoryTest do
     assert item.attachments == expected
   end
 
+  test "trusted replay upgrades legacy display descriptors without changing message identity" do
+    config = config()
+    room = transcript(config, "attachment-replay")
+    display = %{"id" => "file-1", "name" => "photo.png", "size" => 4}
+
+    source = %{
+      "version" => 1,
+      "type" => "communication_media",
+      "locator" => %{
+        "provider" => "mattermost",
+        "reference" => "file-1",
+        "channel_config_id" => config.id,
+        "source_author_id" => "author-1",
+        "source_channel_id" => "room-1",
+        "source_message_id" => "media"
+      }
+    }
+
+    durable =
+      Map.merge(display, %{
+        "kind" => "file",
+        "attributes" => %{"materialization_source" => source}
+      })
+
+    assert {:ok, first} = append(room, config, "media", %{attachments: [display]})
+    assert {:ok, replay} = append(room, config, "media", %{attachments: [durable]})
+    assert replay.message_id == first.message_id
+    assert replay.position == first.position
+    assert Repo.get!(Message, first.message_id).attachments == [durable]
+    assert {:ok, _} = append(room, config, "media", %{attachments: [durable]})
+
+    tampered =
+      put_in(durable, ["attributes", "materialization_source", "locator", "reference"], "other")
+
+    assert {:error, :source_conflict} = append(room, config, "media", %{attachments: [tampered]})
+  end
+
   defp person_for(config) do
     reader = person("Attachment reader")
     resource = ChannelHistoryResource.for("mattermost", config.id, "room-1")

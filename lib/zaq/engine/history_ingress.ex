@@ -460,11 +460,6 @@ defmodule Zaq.Engine.HistoryIngress do
   defp recipients(_incoming, _kind, _resolver), do: {:ok, []}
 
   defp attachment_descriptor(record) do
-    Enum.reduce([:id, :name, :mime_type, :size], %{}, fn key, acc ->
-      case Map.get(record, key) do
-        nil -> acc
-        value -> Map.put(acc, Atom.to_string(key), value)
-      end
-    end)
+    Zaq.Contracts.Record.attachment_metadata(record)
   end
 end

@@ -10,6 +10,9 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
   alias Zaq.Agent.HistorySync
   alias Zaq.Agent.StreamEvents
   alias Zaq.Channels.CommunicationBridge
+  alias Zaq.Channels.Materializers.CommunicationMedia
+  alias Zaq.Contracts.Record
+  alias Zaq.Engine.Api, as: EngineApi
   alias Zaq.Engine.{ChannelConfig, Conversations, HistoryIngress}
   alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript, TranscriptHistory}
   alias Zaq.Engine.History.Facts
@@ -46,6 +49,112 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
     end
 
     %{config: config, alice: alice, bob: bob}
+  end
+
+  test "authorized admission and delta responses hydrate stored media without persisting handles",
+       ctx do
+    source =
+      CommunicationMedia.source_metadata("mattermost", "stored-file", %{
+        "channel_config_id" => ctx.config.id,
+        "source_author_id" => "alice",
+        "source_channel_id" => "room",
+        "source_message_id" => "media",
+        "size" => 4
+      })
+
+    media = %{
+      incoming(ctx, ctx.alice, "media", nil, nil)
+      | attachments: [
+          %Record{
+            id: "stored-file",
+            kind: :file,
+            size: 4,
+            attributes: %{"materialization_source" => source}
+          }
+        ]
+    }
+
+    assert {:ok, captured} = HistoryIngress.capture(media)
+    {binding, _} = admitted(ctx)
+    {:ok, permission} = grant(ctx)
+    principal = Map.put(actor(ctx.alice), :id, "alice")
+
+    admission =
+      Event.new(%{binding: binding, content: "Current input"}, :engine,
+        actor: principal,
+        opts: [confidential: true]
+      )
+
+    assert %{response: {:ok, initial}} = EngineApi.handle_event(admission, :admit_execution, %{})
+    assert [%{attachments: [attachment]}] = initial.messages
+    assert is_binary(attachment["materialization_handle"])
+    assert attachment["id"] == "stored-file"
+    assert [stored] = Repo.get!(Message, captured.message_id).attachments
+    refute Map.has_key?(stored, "materialization_handle")
+
+    request = Map.put(binding, :after_cursors, %{initial.transcript_id => 0})
+    history = Event.new(request, :engine, actor: principal, opts: [confidential: true])
+    assert %{response: {:ok, delta}} = EngineApi.handle_event(history, :execution_history, %{})
+    assert [%{attachments: [fresh]}] = delta.messages
+    assert is_binary(fresh["materialization_handle"])
+    assert delta.cursors == initial.cursors
+    assert Repo.get!(Message, captured.message_id).attachments == [stored]
+    assert :ok = Permissions.revoke(resource(ctx), permission)
+
+    assert %{response: {:error, :unauthorized}} =
+             EngineApi.handle_event(history, :execution_history, %{})
+  end
+
+  test "unavailable attachments remain readable and hydration transport failures are truthful",
+       ctx do
+    source =
+      CommunicationMedia.source_metadata("mattermost", "file", %{
+        "channel_config_id" => ctx.config.id,
+        "source_author_id" => "bob",
+        "source_channel_id" => "room",
+        "source_message_id" => "unavailable-media"
+      })
+
+    media = %{
+      incoming(ctx, ctx.alice, "unavailable-media", nil, "Stored attachment")
+      | attachments: [
+          %Record{
+            id: "file",
+            kind: :file,
+            name: "bob.png",
+            attributes: %{"materialization_source" => source}
+          },
+          %Record{id: "legacy", kind: :file, name: "legacy.png"}
+        ]
+    }
+
+    assert {:ok, _} = HistoryIngress.capture(media)
+    {binding, _} = admitted(ctx)
+    grant(ctx)
+    principal = Map.put(actor(ctx.alice), :id, "alice")
+    event = Event.new(binding, :engine, actor: principal, opts: [confidential: true])
+    assert %{response: {:ok, projection}} = EngineApi.handle_event(event, :execution_history, %{})
+    assert [%{attachments: [other_author, legacy]}] = projection.messages
+    assert other_author["materialization_status"] == "unavailable"
+    assert legacy["materialization_status"] == "unavailable"
+    assert other_author["name"] == "bob.png"
+    refute Map.has_key?(other_author, "materialization_handle")
+    refute Map.has_key?(legacy, "materialization_handle")
+
+    expect(Zaq.NodeRouterMock, :dispatch, fn %Event{
+                                               request: %{attachments: attachments},
+                                               opts: opts
+                                             } = request ->
+      assert length(attachments) == 2
+      assert opts[:action] == :hydrate_attachments
+      assert opts[:confidential] == true
+      %{request | response: {:error, :unavailable}}
+    end)
+
+    failed = %{event | opts: [confidential: true, node_router: Zaq.NodeRouterMock]}
+
+    assert %{response: {:error, :attachment_hydration_unavailable}} =
+             EngineApi.handle_event(failed, :execution_history, %{})
   end
 
   test "execution admission records authorization once without making history reads admissions",

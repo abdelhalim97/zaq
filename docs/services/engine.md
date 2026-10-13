@@ -986,6 +986,18 @@ Private legacy admissions
 return a legacy marker only when no canonical placement exists; ambiguous replicas
 fail closed rather than selecting one arbitrarily.
 
+Attachment persistence uses `Record.attachment_metadata/1`: bounded display
+metadata plus an opaque Channels-owned source payload, without runtime handles.
+Trusted duplicate capture can enrich a legacy display-only descriptor when its
+display identity, message source and author match; UUIDs and positions remain
+unchanged, and conflicting complete source payloads still fail closed.
+Engine API hydrates successful canonical `:admit_execution` and
+`:execution_history` responses via confidential Channels dispatch after the
+Conversations transaction returns. Plain transcript reads remain metadata-only;
+hydration does not change admission, grants, cursors or stored rows. See
+[communication attachments](channels.md#communication-media-attachments) for
+hydration and unavailable-attachment semantics.
+
 `execution_history/3` accepts `after_cursors:` for cumulative association deltas
 from that same authorized admission. Confidential `:execution_history` dispatch
 forwards a supplied `after_cursors` map. Keys must exactly match the admitted
