@@ -2,7 +2,8 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [
-    "zaq-s04.2"
+    "zaq-s04.2",
+    "zaq-s04.4"
   ],
   "created": "2026-10-13T12:20:12Z",
   "description": "Tests first: backfill preservation, no/ambiguous origins, database NOT NULL, ownership and connector validation. Extend existing connector migration and People APIs; PersonIdentities.claim remains ownership owner. Remove legacy ingress binding and automatic profile-email channel creation; update every writer. Migration local-only SQL, not agent-exposed. Docs channels/engine updated. Real DB and property tests, external mocks only.",
@@ -13,5 +14,5 @@
   "status": "open",
   "title": "[zaq-s04.1] Migration and strict People contracts",
   "type": "task",
-  "updated_at": "2026-10-13T12:20:23Z"
+  "updated_at": "2026-10-13T12:20:25Z"
 }
