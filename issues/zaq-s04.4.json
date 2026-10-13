@@ -11,9 +11,15 @@
   "id": "zaq-s04.4",
   "labels": [],
   "parent": "zaq-s04",
+  "comments": [
+    {
+      "text": "Simplification: remove notification-specific preflight event/callbacks and associated obsolete tests. Scope remains on recipient/outgoing. Reuse Channels deliver_outgoing and connector send_reply selection once, retain eligibility errors and fallback logging via generic delivery responses. EmailBridge owns selection; no Engine transport mapping or profile-email send fallback.",
+      "timestamp": "2026-10-13T18:18:28Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.4] Scoped notification delivery eligibility",
   "type": "task",
-  "updated_at": "2026-10-13T12:20:27Z"
+  "updated_at": "2026-10-13T18:18:28Z"
 }
