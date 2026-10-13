@@ -3,7 +3,9 @@
   "blocked_by": [
     "zaq-pkd.21.3"
   ],
-  "blocks": [],
+  "blocks": [
+    "zaq-pkd.21.5"
+  ],
   "created": "2026-10-13T09:29:38Z",
   "description": "Conversations preparation transaction creates seed only with new chat via existing add_message and canonical capture; reuse HistoryIngress canonical facts/source context constructor where shape identical, do not relocate parallel capture assembler. Ordinary role user/title behavior preserved; no synthetic execution. Entire chat+seed+placement rollback on failure; repeated/resumed input cannot reseed. Tests before code context ordering/exactly-once/replay/capture rollback/attachment retention. Internal dependencies real DB, no new mocks/Action; canonical owner persistence only. Update source moduledocs where lifecycle now shared; owner docs in final step.",
   "id": "zaq-pkd.21.4",
@@ -13,5 +15,5 @@
   "status": "open",
   "title": "[zaq-pkd.21] Consolidate atomic initial-context capture",
   "type": "task",
-  "updated_at": "2026-10-13T09:30:17Z"
+  "updated_at": "2026-10-13T09:30:18Z"
 }
