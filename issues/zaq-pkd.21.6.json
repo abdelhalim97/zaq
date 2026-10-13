@@ -9,9 +9,15 @@
   "id": "zaq-pkd.21.6",
   "labels": [],
   "parent": "zaq-pkd.21",
+  "comments": [
+    {
+      "text": "Published cleanup as ed0e6599344e6f1a88bd84094e3f597961664e41 on refactor/webbridge, PR836 verified head updated, no force push/main/PR merge.15files, original boundary test99percent rename with unchanged assertions; production ChannelConversations deleted, fixed role protocol unchanged; new resolver/discovery and scoped conversation primitives reused by ordinary admission and private preparation, shared pureFacts capture constructor avoids circular ingress callback. Read-only literal-Person check defends public primitives, canonical grants remain required, scoped transactionlock handles fresh seed race.570tests/10properties broader regression PASS;33tests/3properties focused owner/boundary/concurrent/real-widget PASS; final8primitive tests/2properties includes nil/fabricated Person negatives PASS. Existing9browser journeys PASS Chromium/Firefox/WebKit. mix q PASS; mix precommit --max-cases4 default schedulers _channel_cleanup first gate9583stale tests/238properties/48doctests/0failures,1 existing skipped,122excluded exit0; after added security assertion rerun final gate8tests/2properties/0failures exit0 in91.5s. No tests weakened or skipped. All updated doc links resolved; removed source path no longer referenced. User config SHA25636698c... unchanged, excluded from commit and remains only dirty file. Rebased remote newerStudio changes untouched; old local history preserved backup/webbridge-before-channel-cleanup-76635062d after explicit user align-current authorization. Commit/prepush hooks PASS. Broader review/coverage and human-approved new v2 E2E remain under .15/.20.5, not waived by refactor publication.",
+      "timestamp": "2026-10-13T10:31:50Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-pkd.21] Documentation, regression gate and authorized publication",
   "type": "task",
-  "updated_at": "2026-10-13T10:05:48Z"
+  "updated_at": "2026-10-13T10:31:50Z"
 }
