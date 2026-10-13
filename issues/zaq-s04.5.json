@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "zaq-s04.3"
+  ],
   "blocks": [],
   "created": "2026-10-13T12:20:20Z",
   "description": "Implementation -\u003e explicit human UX approval -\u003e author consolidated People connector selection/routing browser scenarios, reusing test/e2e/specs/people.spec.js. Until approval do not author new E2E; LiveView/integration immediate tests required. Final review, coverage handoff and precommit before final approval.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-s04.5] Human UX approval and E2E finalization",
   "type": "task",
-  "updated_at": "2026-10-13T12:20:21Z"
+  "updated_at": "2026-10-13T12:20:26Z"
 }
