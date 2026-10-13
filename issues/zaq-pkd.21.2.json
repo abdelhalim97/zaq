@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-13T09:29:15Z",
+  "description": "Implement resolve_channel_sender(scope) returning active Person or safe unauthorized. Reuse provider/config/enabled connector validation and People discovery operation already used by message resolve/2, without synthetic Incoming, provider profile fetch or new identity owner. Preserve ordinary message enrichment/legacy identity behavior. Tests first invalid ID/provider/disabled/archived/inactive, connector-local sender and message parity. Owners IdentityResolver; docs channels/engine responsibility references with integration step. Reuse extend existing resolver validation/discovery, no standalone tool or business Action; internal trusted lifecycle.",
+  "id": "zaq-pkd.21.2",
+  "labels": [],
+  "parent": "zaq-pkd.21",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-pkd.21] Share scoped sender discovery in IdentityResolver",
+  "type": "task",
+  "updated_at": "2026-10-13T09:29:15Z"
+}
