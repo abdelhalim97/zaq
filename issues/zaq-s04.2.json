@@ -11,9 +11,15 @@
   "id": "zaq-s04.2",
   "labels": [],
   "parent": "zaq-s04",
+  "comments": [
+    {
+      "text": "Simplification: reuse Bridge.bridge_for config registration exclusively. Remove communication_platform and fetch_communication_config; connector metadata owns transport mapping, existing BO Communication Channels labels shared for presentation without rewriting Person identifiers. Tests for configured bridge and no unconfigured fallback. No new Action.",
+      "timestamp": "2026-10-13T18:18:26Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.2] Platform and management discovery",
   "type": "task",
-  "updated_at": "2026-10-13T12:20:24Z"
+  "updated_at": "2026-10-13T18:18:26Z"
 }
