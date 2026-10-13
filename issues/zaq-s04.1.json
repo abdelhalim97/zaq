@@ -10,9 +10,15 @@
   "id": "zaq-s04.1",
   "labels": [],
   "parent": "zaq-s04",
+  "comments": [
+    {
+      "text": "Strict People schema and new backfill migration implemented; profiles/discovery/merges no longer invent unscoped links. New contract/migration tests pass, including actual test-DB migration. Existing tests/fixtures require explicit connector updates; validation remains open. Shared ChannelConfig management query introduced for strict validation. Graph E2E fan-in is intentional: People and notification journeys both precede finalization. No commits/push authorized.",
+      "timestamp": "2026-10-13T12:55:51Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-s04.1] Migration and strict People contracts",
   "type": "task",
-  "updated_at": "2026-10-13T12:20:28Z"
+  "updated_at": "2026-10-13T12:55:51Z"
 }
