@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-13T09:28:55Z",
+  "description": "Approved cleanup plan from user: delete ChannelConversations, shared sender discovery in IdentityResolver, scoped conversation binding/restoration in Conversations reused by ordinary admission, seed via existing add_message/canonical capture, thin fixed Engine API boundary; preserve no-answer submissions and WebBridge v2. Current checkout aligned to rebased origin/refactor/webbridge1ad46a514 after explicit user approval, old history preserved backup/webbridge-before-channel-cleanup-76635062d and config restored. Commit/push authorized by user looks good lets land it, never merge PR or main without separate approval. Primitives -\u003e integration -\u003e docs/validation; durable child steps below. Action reuse: extend existing lifecycle domain APIs; History/PersistMessageHistory tools require other auth/execution semantics and ManageWidgetConnector handles settings only; no new Action/tool exposure or execution owner. Repo/database only domain dependencies, real NodeRouter boundaries, provider mocks only external. Preserve all existing tests and negative scope/property contracts. PR836 remains open, current newer Studio work must stay untouched.",
+  "id": "zaq-pkd.21",
+  "labels": [],
+  "parent": "zaq-pkd",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-pkd] Consolidate private-channel conversations into established owners",
+  "type": "task",
+  "updated_at": "2026-10-13T09:28:55Z"
+}
