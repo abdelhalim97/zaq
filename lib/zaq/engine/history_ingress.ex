@@ -87,16 +87,7 @@ defmodule Zaq.Engine.HistoryIngress do
     with {:ok, ^kind} <- history_kind(incoming),
          {:ok, recipients} <- recipients(incoming, kind, resolver),
          {:ok, facts} <-
-           Facts.for_capture(%{
-             provider: to_string(incoming.provider),
-             channel_config_id: incoming.routing_context.channel_config_id,
-             channel_id: incoming.channel_id,
-             conversation_id: incoming.routing_context.conversation_id,
-             kind: kind,
-             actor_person_id: person_id,
-             recipient_person_ids: recipients,
-             thread_id: incoming.thread_id
-           }) do
+           Facts.for_capture(incoming, person_id, kind, recipients) do
       capture =
         Conversations.capture_canonical_message(
           facts,

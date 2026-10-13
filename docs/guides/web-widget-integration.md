@@ -417,7 +417,7 @@ Executable host references:
   native-start ordering, no-answer acknowledgements, stable correlation and safe steps.
 - [`sync_reply_test.exs`](../../test/zaq/channels/web/sync_reply_test.exs):
   bounded synchronous waits, no duplicate live terminal and timeout without cancellation.
-- [`channel_conversations_test.exs`](../../test/zaq/engine/channel_conversations_test.exs):
+- [`private_channel_boundary_test.exs`](../../test/zaq/engine/conversations/private_channel_boundary_test.exs):
   identity/privacy, lazy creation, context seeding, rollback, deletion and resume.
 
 The external widget developer owns installation and endpoint acceptance:

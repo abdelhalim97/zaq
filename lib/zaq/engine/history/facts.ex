@@ -9,6 +9,7 @@ defmodule Zaq.Engine.History.Facts do
   """
 
   alias Zaq.Engine.Conversations.Transcript
+  alias Zaq.Engine.Messages.Incoming
   alias Zaq.Permissions.ChannelHistoryResource
 
   @type kind :: :direct | :channel | :replicated
@@ -55,6 +56,20 @@ defmodule Zaq.Engine.History.Facts do
   end
 
   def for_capture(_), do: {:error, :invalid_history_facts}
+
+  @doc "Builds capture facts from an already verified incoming envelope; does not authenticate it."
+  def for_capture(%Incoming{} = incoming, person_id, kind, recipients \\ []) do
+    for_capture(%{
+      provider: to_string(incoming.provider),
+      channel_config_id: incoming.routing_context.channel_config_id,
+      channel_id: incoming.channel_id,
+      conversation_id: incoming.routing_context.conversation_id,
+      kind: kind,
+      actor_person_id: person_id,
+      recipient_person_ids: recipients,
+      thread_id: incoming.thread_id
+    })
+  end
 
   @doc "Builds a validated policy snapshot; does not authenticate its caller."
   @spec new(map()) :: {:ok, t()} | {:error, atom()}

@@ -1,6 +1,6 @@
 defmodule Zaq.People.IdentityResolver do
   @moduledoc """
-  Resolves a channel message author to a minimal ZAQ Person identity.
+  Resolves trusted channel senders and message authors to ZAQ Person identities.
 
   Channel ingress uses this before dispatching an agent event so downstream
   consumers receive a stable, JSON-safe actor shape:
@@ -11,6 +11,7 @@ defmodule Zaq.People.IdentityResolver do
   """
 
   alias Zaq.Accounts.People
+  alias Zaq.Accounts.Person
   alias Zaq.Accounts.PersonChannel
   alias Zaq.Channels.Bridge
   alias Zaq.Engine.ChannelConfig
@@ -22,6 +23,44 @@ defmodule Zaq.People.IdentityResolver do
   alias Zaq.Repo
 
   @type person_payload :: %{id: integer(), full_name: String.t() | nil, team_ids: [integer()]}
+
+  @doc "Resolves a verified connector sender without creating a conversation or fetching a profile."
+  @spec resolve_channel_sender(map()) :: {:ok, Person.t()} | {:error, :unauthorized}
+  def resolve_channel_sender(scope) do
+    with {:ok, platform, sender, config_id} <- channel_sender(scope),
+         {:ok, %Person{status: "active"} = person} <-
+           discover_person(platform, %{"channel_id" => sender}, config_id) do
+      {:ok, person}
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  @doc "Checks a literal active Person against existing connector identity without discovering a new Person."
+  @spec authorize_channel_sender(term(), map()) :: :ok | {:error, :unauthorized}
+  def authorize_channel_sender(%Person{id: id}, scope) do
+    with {:ok, platform, sender, config_id} <- channel_sender(scope),
+         {:ok, %Person{id: ^id, status: "active"}} <-
+           People.match_by_channel(platform, sender, config_id) do
+      :ok
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  def authorize_channel_sender(_person, _scope), do: {:error, :unauthorized}
+
+  defp channel_sender(%{channel_config_id: id, sender_id: sender} = scope)
+       when is_integer(id) and id > 0 and is_binary(sender) do
+    with true <- String.trim(sender) != "",
+         {:ok, config} <- fetch_connector(scope, Map.get(scope, :provider), true) do
+      {:ok, config.provider, sender, id}
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp channel_sender(_scope), do: {:error, :unauthorized}
 
   @spec resolve(Incoming.t(), keyword()) :: {:ok, Zaq.Accounts.Person.t()} | {:error, term()}
   def resolve(%Incoming{provider: provider}, _opts) when provider in [:web, "web"],
@@ -111,19 +150,24 @@ defmodule Zaq.People.IdentityResolver do
 
   defp validate_connector(context, platform, require_enabled \\ false)
 
-  defp validate_connector(%RoutingContext{channel_config_id: id}, platform, require_enabled)
+  defp validate_connector(context, platform, require_enabled) do
+    with {:ok, _config} <- fetch_connector(context, platform, require_enabled), do: :ok
+  end
+
+  defp fetch_connector(%{channel_config_id: id}, platform, require_enabled)
        when is_integer(id) and id > 0 do
     case Repo.get(ChannelConfig, id) do
-      %ChannelConfig{provider: ^platform, kind: "retrieval", enabled: enabled, archived_at: nil}
-      when not require_enabled or enabled ->
-        :ok
+      %ChannelConfig{provider: provider, kind: "retrieval", enabled: enabled, archived_at: nil} =
+          config
+      when (is_nil(platform) or provider == platform) and (not require_enabled or enabled) ->
+        {:ok, config}
 
       _ ->
         {:error, :connector_mismatch}
     end
   end
 
-  defp validate_connector(_, _platform, _require_enabled), do: {:error, :connector_mismatch}
+  defp fetch_connector(_, _platform, _require_enabled), do: {:error, :connector_mismatch}
 
   defp resolve_author(incoming, platform, opts) do
     config_id = incoming.routing_context.channel_config_id
@@ -169,9 +213,7 @@ defmodule Zaq.People.IdentityResolver do
   end
 
   defp slow_path(platform, enriched, fallback_channel_id, config_id, incoming, opts) do
-    attrs = if config_id, do: Map.put(enriched, "channel_config_id", config_id), else: enriched
-
-    case People.find_or_create_from_channel(platform, attrs) do
+    case discover_person(platform, enriched, config_id) do
       {:ok, person} ->
         channel =
           find_channel(person, platform, enriched["channel_id"] || fallback_channel_id, config_id)
@@ -183,6 +225,11 @@ defmodule Zaq.People.IdentityResolver do
       err ->
         err
     end
+  end
+
+  defp discover_person(platform, profile, config_id) do
+    attrs = if config_id, do: Map.put(profile, "channel_config_id", config_id), else: profile
+    People.find_or_create_from_channel(platform, attrs)
   end
 
   defp maybe_enrich(platform, author_id, canonical, config_id, opts) do

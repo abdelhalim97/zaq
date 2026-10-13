@@ -1287,7 +1287,7 @@ trusted actor.
 - `share_conversation/2`, `list_shares/1`, `revoke_share/1` — share link management.
 - `get_conversation_by_token/1` — resolves a conversation from an unexpired share token.
 
-### Private channel conversations (`Zaq.Engine.ChannelConversations`)
+### Private channel conversations
 
 The internal `:channel_conversations` role action supports closed `:initialize`,
 `:history` and `:prepare` operations for verified channel integrations. The adapter
@@ -1295,20 +1295,31 @@ authenticates the external sender; Engine resolves an active connector-scoped Pe
 from `channel_config_id` and `sender_id`. A fabricated Event or sender field does not
 authenticate an external caller. No People bearer is manufactured for this boundary.
 
-`initialize/2` checks readiness or authorizes an existing chat without creating one.
-`history/3` requires a privately owned active conversation, matching provider/configuration
+Engine API composes these operations directly; there is no separate private-chat
+coordinator. `IdentityResolver.resolve_channel_sender/1` checks readiness without
+creating a conversation or fetching a provider profile. Its read-only
+`authorize_channel_sender/2` protects domain calls against a stale or forged Person.
+
+`Conversations.restore_channel_conversation/4` requires a privately owned active conversation, matching provider/configuration
 and an existing Direct transcript, then reuses `Conversations.list_canonical_messages/3`
 for grants, ordering, bounds and safe projection. Missing/inaccessible/unbound chats have
 the same `:conversation_not_found` result; generic conversation listing is not a fallback.
 
-`prepare/3` receives an already normalized, scoped Incoming for an actual question.
-It creates the private conversation only at that point, or revalidates resume and restores
+`Conversations.prepare_channel_input/3` receives the resolved Person and a normalized,
+scoped Incoming for an actual question. It shares the scoped conversation resolver
+with ordinary admission and message persistence, rather than creating a parallel
+conversation lifecycle. A scope-keyed transaction lock serializes creation and the
+fresh-context decision. It creates the private conversation only at that point, or revalidates resume and restores
 its native channel coordinate. Optional initial content is a normal user message inserted
 through `Conversations.add_message/2` and attached through canonical capture, in the same
-preparation transaction. Ordinary title behavior is unchanged. Preparation then returns
+preparation transaction. `Facts.for_capture/3,4` supplies the same capture coordinates
+to initial-context persistence and ordinary `HistoryIngress`; Conversations does not
+call back into its ingress caller. Ordinary title behavior is unchanged. Preparation then returns
 the bound Incoming for normal routing/admission; it does not execute the Agent or replace
 the admission/finalization lifecycle. No transcript or placeholder message is created for
-an idle widget opening.
+an idle widget opening. Workflow-only inputs still receive a conversation binding
+and factual capture without manufacturing an execution record. Repeated preparation
+for the same scope cannot reseed; a fresh native coordinate remains a separate chat.
 
 The adapter-facing field, response and runtime contract is owned by the
 [WebBridge protocol](web-bridge.md); this section owns Engine's authorization and

@@ -13,7 +13,6 @@ defmodule Zaq.Engine.Api do
   alias Zaq.Engine.Actions.ManageWidgetConnector
   alias Zaq.Engine.Actions.SaveEmailConnector
   alias Zaq.Engine.ChannelConfig
-  alias Zaq.Engine.ChannelConversations
   alias Zaq.Engine.ChannelHistoryAdmin
   alias Zaq.Engine.ChannelHistoryMembership
   alias Zaq.Engine.Connect
@@ -40,6 +39,7 @@ defmodule Zaq.Engine.Api do
   alias Zaq.Event
   alias Zaq.Identity.ExecutionActor
   alias Zaq.InternalBoundaries
+  alias Zaq.People.IdentityResolver
   alias Zaq.Permissions
   alias Zaq.System
 
@@ -131,7 +131,7 @@ defmodule Zaq.Engine.Api do
   end
 
   def handle_event(%Event{} = event, :channel_conversations, _context) do
-    %{event | response: ChannelConversations.dispatch(event.request), next_hop: nil}
+    %{event | response: channel_conversation_request(event.request), next_hop: nil}
   end
 
   def handle_event(%Event{} = event, :people_conversations, _context) do
@@ -1096,6 +1096,49 @@ defmodule Zaq.Engine.Api do
 
   def handle_event(%Event{} = event, action, _context) do
     %{event | response: {:error, {:unsupported_action, action}}}
+  end
+
+  defp channel_conversation_request(%{operation: :initialize} = scope) do
+    with {:ok, person} <- IdentityResolver.resolve_channel_sender(scope) do
+      initialize_channel_conversation(person, scope, Map.get(scope, :conversation_id))
+    end
+  end
+
+  defp channel_conversation_request(%{operation: :history, conversation_id: id} = scope) do
+    with {:ok, person} <- IdentityResolver.resolve_channel_sender(scope),
+         {:ok, %{messages: messages}} <-
+           Conversations.restore_channel_conversation(
+             person,
+             scope,
+             id,
+             Map.get(scope, :page, [])
+           ) do
+      {:ok, messages}
+    end
+  end
+
+  defp channel_conversation_request(
+         %{operation: :prepare, incoming: %Incoming{} = incoming} = scope
+       ) do
+    with {:ok, person} <- IdentityResolver.resolve_channel_sender(scope),
+         true <-
+           incoming.author_id == scope.sender_id and
+             incoming.routing_context.channel_config_id == scope.channel_config_id do
+      Conversations.prepare_channel_input(person, incoming, Map.get(scope, :prompt_context))
+    else
+      false -> {:error, :invalid_request}
+      error -> error
+    end
+  end
+
+  defp channel_conversation_request(_request), do: {:error, :invalid_request}
+
+  defp initialize_channel_conversation(_person, _scope, nil),
+    do: {:ok, %{conversation_id: nil, created: false}}
+
+  defp initialize_channel_conversation(person, scope, id) do
+    with {:ok, _} <- Conversations.restore_channel_conversation(person, scope, id, limit: 1),
+         do: {:ok, %{conversation_id: id, created: false}}
   end
 
   defp handle_conversation_request(%{action: :list, opts: opts}, module) when is_list(opts),

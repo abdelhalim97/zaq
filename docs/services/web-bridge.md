@@ -63,6 +63,9 @@ optional ordinary `add_message/2` context persistence and canonical capture, the
 normal routing/admission/finalization. Context is visible user history, not a privileged
 prompt type or a separate Agent run. It may trigger normal title generation. Resume
 does not reseed. The adapter retains initial context until the first actual Message.
+The closed Engine boundary delegates sender readiness to IdentityResolver and input
+binding/restoration to Conversations. The binding resolver is shared with ordinary
+admission; no widget-specific conversation owner or execution record is introduced.
 
 ## Commands and restoration
 

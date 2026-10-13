@@ -16,7 +16,11 @@ Channel delivery uses canonical message payload structs (`Incoming` / `Outgoing`
 `Zaq.People.IdentityResolver` checks that an ingress connector ID references a
 retrieval configuration for the message provider (including IMAP-to-email),
 then resolves authors and visible recipients through the shared People discovery
-operation. `PersonIdentity` owns the native key `(platform, authority, identifier)`;
+operation. Trusted private-channel readiness uses `resolve_channel_sender/1` and
+the same connector validation/discovery without fabricating a message or fetching
+a profile. Conversation binding/restoration belong to Conversations behind the
+closed Engine boundary; Channels retains only transport correlation and projection.
+`PersonIdentity` owns the native key `(platform, authority, identifier)`;
 `PersonChannel` retains connector-specific routing and preferences. Channels'
 `IdentityScope` defines authority: Telegram/Discord native IDs and normalized email
 are global within their platform; Mattermost IDs are scoped to the canonical server

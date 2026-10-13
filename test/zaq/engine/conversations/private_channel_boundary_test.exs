@@ -1,4 +1,4 @@
-defmodule Zaq.Engine.ChannelConversationsTest do
+defmodule Zaq.Engine.Conversations.PrivateChannelBoundaryTest do
   use Zaq.DataCase, async: true
   use ExUnitProperties
 
@@ -7,7 +7,7 @@ defmodule Zaq.Engine.ChannelConversationsTest do
   alias Zaq.Channels.CommunicationBridge
   alias Zaq.Channels.Web.{Command, Context, Response}
   alias Zaq.Channels.Web.Message, as: WebMessage
-  alias Zaq.Engine.{Api, ChannelConversations, Conversations, HistoryIngress}
+  alias Zaq.Engine.{Api, Conversations, HistoryIngress}
   alias Zaq.Engine.ChannelConfig
 
   alias Zaq.Engine.Conversations.{
@@ -25,6 +25,7 @@ defmodule Zaq.Engine.ChannelConversationsTest do
   alias Zaq.People.IdentityResolver
   alias Zaq.Permissions
   alias Zaq.SystemConfigFixtures
+  alias Zaq.TestSupport.ChannelConversationBoundary, as: ChannelConversations
 
   setup do
     assert :ok = Zaq.System.set_global_base_url("https://zaq.example.test")

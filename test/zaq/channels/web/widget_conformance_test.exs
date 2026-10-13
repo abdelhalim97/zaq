@@ -2,8 +2,9 @@ defmodule Zaq.Channels.Web.WidgetConformanceTest do
   use Zaq.DataCase, async: false
 
   alias Zaq.Channels.Web.{Command, Context, Delivery, Message, Response}
-  alias Zaq.Engine.{ChannelConfig, ChannelConversations, IncomingMessageRouting}
+  alias Zaq.Engine.{ChannelConfig, IncomingMessageRouting}
   alias Zaq.SystemConfigFixtures
+  alias Zaq.TestSupport.ChannelConversationBoundary, as: ChannelConversations
   alias Zaq.TestSupport.OpenAIStub
 
   defmodule AdapterFixture do

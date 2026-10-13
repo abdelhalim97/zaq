@@ -38,6 +38,7 @@ defmodule Zaq.Engine.Conversations do
   alias Zaq.Engine.Messages.Incoming.Audience
   alias Zaq.Engine.Telemetry
   alias Zaq.Identity.ExecutionActor
+  alias Zaq.People.IdentityResolver
   alias Zaq.Repo
 
   @doc "Appends canonical content to a transcript from an internally trusted channel source."
@@ -503,6 +504,190 @@ defmodule Zaq.Engine.Conversations do
   end
 
   def get_person_conversation(_, _, _), do: nil
+
+  @doc "Restores a literal Person-owned direct conversation through canonical read authorization."
+  def restore_channel_conversation(person, scope, id, page) do
+    with :ok <- IdentityResolver.authorize_channel_sender(person, scope) do
+      restore_channel_history(person, scope, id, page)
+    end
+  end
+
+  defp restore_channel_history(person, scope, id, page) when is_list(page) do
+    with %Conversation{status: "active", external_thread_id: nil} = conversation <-
+           get_person_conversation(id, person.id, []),
+         :ok <- channel_conversation_scope(conversation, scope),
+         %Transcript{} = transcript <-
+           Repo.get_by(scope_nullable_field(Transcript, :external_thread_id, nil),
+             provider: conversation.channel_type,
+             channel_config_id: conversation.channel_config_id,
+             external_channel_id: conversation.external_channel_id,
+             strategy: "direct"
+           ),
+         {:ok, messages} <- list_canonical_messages(person, transcript.id, page) do
+      {:ok, %{conversation: conversation, messages: messages}}
+    else
+      {:error, :unauthorized} -> {:error, :conversation_not_found}
+      {:error, :invalid_cursor} = error -> error
+      _ -> {:error, :conversation_not_found}
+    end
+  end
+
+  defp restore_channel_history(_person, _scope, _id, _page), do: {:error, :invalid_cursor}
+
+  defp channel_conversation_scope(conversation, scope) do
+    provider = conversation.channel_type
+
+    if conversation.channel_config_id == scope.channel_config_id and
+         match?(
+           %ChannelConfig{provider: ^provider},
+           Repo.get(ChannelConfig, scope.channel_config_id)
+         ) and
+         present_binary?(conversation.external_channel_id) do
+      :ok
+    else
+      {:error, :conversation_not_found}
+    end
+  end
+
+  @doc "Binds a verified direct input using ordinary scoped conversation resolution, without preparing execution."
+  def prepare_channel_input(person, incoming, initial_context \\ nil)
+
+  def prepare_channel_input(person, %Incoming{} = incoming, initial_context) do
+    scope = %{
+      provider: to_string(incoming.provider),
+      channel_config_id: incoming.routing_context.channel_config_id,
+      sender_id: incoming.author_id
+    }
+
+    with :ok <- IdentityResolver.authorize_channel_sender(person, scope),
+         :ok <- validate_channel_input(incoming, initial_context) do
+      Repo.transaction(fn ->
+        prepare_channel_or_rollback(person, scope, incoming, initial_context)
+      end)
+    end
+  end
+
+  def prepare_channel_input(_person, _incoming, _context), do: {:error, :invalid_request}
+
+  defp prepare_channel_or_rollback(person, scope, incoming, context) do
+    case prepare_channel_conversation(person, scope, incoming, context) do
+      {:ok, bound} -> bound
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp validate_channel_input(incoming, context) do
+    if valid_channel_identity?(incoming) and
+         valid_channel_content?(incoming.content) and
+         (is_nil(context) or valid_channel_content?(context)) do
+      :ok
+    else
+      {:error, :invalid_request}
+    end
+  end
+
+  defp valid_channel_identity?(incoming) do
+    expected = %{
+      scoped?: true,
+      channel_type: to_string(incoming.provider),
+      channel_config_id: incoming.routing_context.channel_config_id,
+      external_channel_id: incoming.channel_id,
+      participant_id: incoming.author_id,
+      external_thread_id: nil
+    }
+
+    identity = Map.take(conversation_identity(incoming), Map.keys(expected))
+
+    identity == expected and is_nil(incoming.thread_id) and
+      CommunicationPolicy.kind(incoming) == {:ok, :direct}
+  end
+
+  defp valid_channel_content?(content),
+    do: is_binary(content) and String.trim(content) != "" and byte_size(content) <= 100_000
+
+  defp prepare_channel_conversation(person, scope, incoming, context) do
+    case incoming.routing_context.conversation_id do
+      nil ->
+        prepare_new_channel_conversation(person, incoming, context)
+
+      id ->
+        with {:ok, %{conversation: conversation}} <-
+               restore_channel_conversation(person, scope, id, limit: 1) do
+          {:ok, bind_channel_input(incoming, person, conversation)}
+        end
+    end
+  end
+
+  defp prepare_new_channel_conversation(person, incoming, context) do
+    with {:ok, conversation, created?} <-
+           resolve_scoped_conversation(incoming.author_id, conversation_identity(incoming)),
+         {:ok, conversation} <- maybe_assign_person(conversation, person.id),
+         true <- conversation.person_id == person.id,
+         :ok <- seed_channel_context(conversation, person, incoming, if(created?, do: context)) do
+      {:ok, bind_channel_input(incoming, person, conversation)}
+    else
+      false -> {:error, :conversation_not_found}
+      error -> error
+    end
+  end
+
+  defp bind_channel_input(incoming, person, conversation) do
+    metadata =
+      incoming.metadata
+      |> Map.put(
+        "conversation",
+        Map.put(incoming.metadata["conversation"], "channel_id", conversation.external_channel_id)
+      )
+      |> Map.delete("conversation_id")
+      |> Map.put(:conversation_id, conversation.id)
+
+    %{
+      incoming
+      | channel_id: conversation.external_channel_id,
+        person: IdentityResolver.person_payload(person),
+        routing_context: %{incoming.routing_context | conversation_id: conversation.id},
+        metadata: metadata
+    }
+  end
+
+  defp seed_channel_context(_conversation, _person, _incoming, nil), do: :ok
+
+  defp seed_channel_context(conversation, person, incoming, context) do
+    with {:ok, message} <-
+           add_message(conversation, %{
+             role: "user",
+             content: context,
+             author_id: incoming.author_id,
+             author_name: incoming.author_name,
+             metadata: %{}
+           }),
+         {:ok, facts} <-
+           Facts.for_capture(
+             bind_channel_input(incoming, person, conversation),
+             person.id,
+             :direct
+           ),
+         {:ok, _} <-
+           capture_canonical_message(
+             facts,
+             %{
+               role: message.role,
+               content: message.content,
+               author_id: message.author_id,
+               author_name: message.author_name,
+               metadata: %{}
+             },
+             %{
+               provider: facts.provider,
+               channel_config_id: facts.channel_config_id,
+               source_scope: incoming.routing_context.source_scope,
+               provenance: "channel_adapter",
+               existing_message_id: message.id
+             }
+           ) do
+      :ok
+    end
+  end
 
   @doc "Fetches a conversation by id, raises if not found."
   def get_conversation!(id) do
@@ -1632,11 +1817,47 @@ defmodule Zaq.Engine.Conversations do
     do: {:ok, conversation}
 
   defp get_or_create_conversation_for_identity(channel_user_id, %{scoped?: true} = identity) do
+    with {:ok, conversation, _created?} <- resolve_scoped_conversation(channel_user_id, identity),
+         do: {:ok, conversation}
+  end
+
+  defp get_or_create_conversation_for_identity(channel_user_id, identity) do
+    get_or_create_conversation_for_channel(channel_user_id, identity.channel_type, nil)
+  end
+
+  defp resolve_scoped_conversation(channel_user_id, identity) do
+    result =
+      Repo.transaction(fn ->
+        key =
+          Jason.encode!([
+            "conversation",
+            identity.channel_type,
+            identity.channel_config_id,
+            identity.external_channel_id,
+            identity.external_thread_id,
+            channel_user_id
+          ])
+
+        Repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [key])
+
+        case find_or_create_scoped_conversation(channel_user_id, identity) do
+          {:ok, conversation, created?} -> {conversation, created?}
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+
+    case result do
+      {:ok, {conversation, created?}} -> {:ok, conversation, created?}
+      error -> error
+    end
+  end
+
+  defp find_or_create_scoped_conversation(channel_user_id, identity) do
     query = communication_scope_query(channel_user_id, identity)
 
     case Repo.one(query) do
       %Conversation{} = conversation ->
-        {:ok, conversation}
+        {:ok, conversation, false}
 
       nil ->
         attrs = %{
@@ -1647,15 +1868,19 @@ defmodule Zaq.Engine.Conversations do
           external_thread_id: identity.external_thread_id
         }
 
-        case create_conversation(attrs) do
-          {:ok, conversation} -> {:ok, conversation}
-          {:error, %Ecto.Changeset{} = changeset} -> recover_scope_conflict(changeset, query)
-        end
+        create_scoped_conversation(attrs, query)
     end
   end
 
-  defp get_or_create_conversation_for_identity(channel_user_id, identity) do
-    get_or_create_conversation_for_channel(channel_user_id, identity.channel_type, nil)
+  defp create_scoped_conversation(attrs, query) do
+    case create_conversation(attrs) do
+      {:ok, conversation} ->
+        {:ok, conversation, true}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        with {:ok, conversation} <- recover_scope_conflict(changeset, query),
+             do: {:ok, conversation, false}
+    end
   end
 
   defp communication_scope_query(channel_user_id, identity) do
