@@ -15,11 +15,15 @@
     {
       "text": "Simplification: remove PersonChannelRouting module; incoming-message management discovery and scoped form commands belong to existing IncomingMessageRouting, reuse AgentRouting conversion and persistence. PeopleGateway preserves transaction for channel + rules. Existing regression tests retained/moved to owner, not a parallel routing engine.",
       "timestamp": "2026-10-13T18:18:27Z"
+    },
+    {
+      "text": "PersonChannelRouting module deleted; its regression file moved to IncomingMessageRoutingPeopleTest and all surviving tests invoke existing IncomingMessageRouting owner. Shared scope/choice validation converts channel form into ordinary incoming-message rules; gateway transaction still rolls back channel changes on forged/invalid targets. Obsolete references removed. 757-test focused validation green.",
+      "timestamp": "2026-10-13T18:46:29Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.3] Connector selection and atomic routing administration",
   "type": "task",
-  "updated_at": "2026-10-13T18:18:27Z"
+  "updated_at": "2026-10-13T18:46:29Z"
 }
