@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-13T12:20:14Z",
+  "description": "Tests first: supported platforms, scoped discovery, disabled/non-archived, email IMAP matching and SMTP exclusion. Extend PersonChannel metadata and ChannelConfig discovery; query through Engine API/NodeRouter for BO. No new generic Actions or tool exposure; preserve runtime enabled-only callers.",
+  "id": "zaq-s04.2",
+  "labels": [],
+  "parent": "zaq-s04",
+  "priority": 2,
+  "status": "open",
+  "title": "Platform and management discovery",
+  "type": "task",
+  "updated_at": "2026-10-13T12:20:14Z"
+}
