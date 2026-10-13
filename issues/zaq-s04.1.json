@@ -30,11 +30,15 @@
     {
       "text": "Simplification implemented, uncommitted. Profile creation and actual email changes now persist normal scoped email links via the existing SMTP default (sole connector accepted including disabled); explicit inbox origin passed during discovery wins. Missing/ambiguous/default archived cases roll back profile+identity writes. Restored generic ExternalPermissions delegation. Removed earlier unnecessary global merge lock from create/add channel, preserving original row/identity behavior and concurrency regressions. Original default migration now initializes sole sender; original identity migration fills profile-only channels. Consumed NormalizePersonEmails still zero diff. Fresh _c_simple3 targeted 757 tests +14 properties passed, including concurrent merges/discovery, People/BO routing, exact SMTP scope and real Channels/EmailBridge ACL notification. Populated _c_upgrade2 upgrade replay passed, preserving existing origin/IDs/owner/preferences and binding profile-only email to default. mix q passes 94 checks/no issues. Final precommit stale suite running; historical-normalization compatibility and older broad fixtures were already pending from prior pass. No commit/push; feature UX/E2E/coverage gates remain open.",
       "timestamp": "2026-10-13T18:46:27Z"
+    },
+    {
+      "text": "First broad precommit: 48 doctests/241 properties/10665 tests, 115 failures, 1 skipped/122 excluded; not green. Diagnosed fixture groups instead of claiming passing narrow tests covers all. Fixed real archived-default regression by retaining designated archived default as an error (never silently selecting another account). Updated strict fixture callers (routing, Record auth, resources, profile/order/auth concurrency, UpdatePerson, history), preserving every intent/assertion. Test registries now register email where profile creation requires it; transport mocks expose actual EmailBridge metadata or scoped SMTP arity. Unboxed order/auth fixtures own disabled connector configs and clean them up, avoiding runtime startup leaks. Repaired group:297 tests+1 property pass; additional workflow/history/tool/auth group:55 tests+3 properties pass; real credential/Jido delivery:20 tests+1 property pass; Mattermost shared-history group passed in 46-test run (13 other fixture failures subsequently fixed). mix q passes. Final precommit rerunning fresh _c_final2. Frozen consumed NormalizePersonEmails still unchanged: historical tests rerunning its unscoped application-code writes against current strict contracts remain an unresolved compatibility issue; do not add runtime legacy fallbacks or skip/weaken those assertions.",
+      "timestamp": "2026-10-13T19:08:43Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-s04.1] Migration and strict People contracts",
   "type": "task",
-  "updated_at": "2026-10-13T18:46:27Z"
+  "updated_at": "2026-10-13T19:08:43Z"
 }
