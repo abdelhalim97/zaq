@@ -6,14 +6,16 @@
   "blocks": [
     "zaq-pkd.21.4"
   ],
+  "closed_at": "2026-10-13T09:49:04Z",
+  "close_reason": "New Conversations primitives reuse get_person_conversation/list_canonical_messages and shared scoped conversation creation resolver used by ordinary admission. Shared scoped transaction+advisory lock serializes binding creation/seed decision; independent input coordinates still separate chats. New caller-Person spoofing property and both admission/preparation orderings prove no duplicate chat/seed or premature ExecutionRecord. Primitive+legacy+resolver+conversation suites170tests/2properties PASS; mix q PASS. Canonical permission errors hidden as notfound; enabled connector/literal Person checks delegated read-only to IdentityResolver.",
   "created": "2026-10-13T09:29:28Z",
   "description": "Conversations.prepare_channel_input(person,incoming,initial_context) returns bound Incoming; restore_channel_conversation(person,scope,id,page) returns conversation plus canonical messages. Reuse existing scoped create/find/conflict resolver with ordinary admission; get_person_conversation and TranscriptHistory canonical permission read. Require active literal Person, enabled provider/config/direct scope and active owned conversation. Missing explicit IDs deny without creating grants/history/chat. Fresh input binds supplied native coordinate, resumed input restores stored coordinate. Workflow-only factual preparation never creates ExecutionRecord. Tests before code fresh/replay/shared resolver/concurrency/UUID/config/Person/grant/page/native-coordinate. Real Repo/NodeRouter; no internal mocks. Extend lifecycle domain APIs, not generic get_or_create_channel latest-chat fallback; no Action/tool.",
   "id": "zaq-pkd.21.3",
   "labels": [],
   "parent": "zaq-pkd.21",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-pkd.21] Share conversation binding and authorized restoration",
   "type": "task",
-  "updated_at": "2026-10-13T09:47:22Z"
+  "updated_at": "2026-10-13T09:49:04Z"
 }
