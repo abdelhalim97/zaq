@@ -255,6 +255,9 @@ defmodule Zaq.Channels.EmailBridge do
       %ChannelConfig{provider: "email:imap", enabled: true, archived_at: nil, settings: settings} ->
         settings |> imap_settings() |> smtp_id_from_imap()
 
+      %ChannelConfig{provider: "email:smtp", enabled: true, archived_at: nil} ->
+        {:ok, id}
+
       _ ->
         {:error, :connector_mismatch}
     end

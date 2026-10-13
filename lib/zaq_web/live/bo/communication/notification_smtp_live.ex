@@ -232,7 +232,7 @@ defmodule ZaqWeb.Live.BO.Communication.NotificationSmtpLive do
             body:
               "This is a test email from your ZAQ instance. If you received this, email delivery is working correctly.",
             metadata: %{"subject" => "ZAQ — Email configuration test"},
-            source_config_id: socket.assigns.selected_config_id
+            routing_context: test_routing_context(socket)
           }
 
           case outgoing
@@ -415,26 +415,12 @@ defmodule ZaqWeb.Live.BO.Communication.NotificationSmtpLive do
   defp persist_email_config(%Ecto.Changeset{valid?: false} = changeset, _channel, _selected_id),
     do: {:error, changeset}
 
-<<<<<<< HEAD
-=======
-  defp email_delivery_opts(socket) do
-    cfg = current_email_config(socket)
+  defp test_routing_context(%{assigns: %{configs: configs, selected_config_id: id}})
+       when length(configs) > 1 and is_integer(id),
+       do: %{channel_config_id: id}
 
-    with true <- cfg.enabled and not blank?(cfg.relay),
-         {:ok, password} <- password_for_delivery(cfg, socket) do
-      {:ok, build_delivery_opts(cfg, password)}
-    else
-      false -> {:error, :not_configured}
-      {:error, reason} -> {:error, reason}
-    end
-  end
+  defp test_routing_context(_socket), do: nil
 
-  defp email_sender(socket) do
-    cfg = current_email_config(socket)
-    {cfg.from_name || "ZAQ", cfg.from_email || "noreply@zaq.local"}
-  end
-
->>>>>>> 9df143917 (feat(channels): scope communication connectors and email account routing)
   defp decrypt_password_value(value) do
     case EncryptedString.decrypt(value) do
       {:ok, decrypted} -> decrypted
@@ -448,93 +434,6 @@ defmodule ZaqWeb.Live.BO.Communication.NotificationSmtpLive do
     if EncryptedString.encrypted?(value), do: {:ok, value}, else: EncryptedString.encrypt(value)
   end
 
-<<<<<<< HEAD
-=======
-  defp password_for_delivery(%EmailConfig{username: username}, _socket)
-       when username in [nil, ""] do
-    {:ok, ""}
-  end
-
-  defp password_for_delivery(%EmailConfig{}, socket) do
-    settings =
-      case selected_channel(socket) do
-        %ChannelConfig{settings: map} when is_map(map) -> map
-        _ -> %{}
-      end
-
-    case EncryptedString.decrypt(map_get(settings, "password")) do
-      {:ok, nil} -> {:ok, ""}
-      {:ok, password} -> {:ok, password}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp build_delivery_opts(%EmailConfig{} = cfg, password) do
-    auth = if blank?(cfg.username), do: :never, else: :always
-    {ssl, tls} = transport_settings(cfg)
-
-    tls_options =
-      if ssl or tls != :never do
-        smtp_tls_options(cfg)
-      else
-        []
-      end
-
-    opts = [
-      adapter: mailer_adapter(),
-      relay: String.trim(cfg.relay),
-      port: cfg.port,
-      ssl: ssl,
-      tls: tls,
-      tls_options: tls_options,
-      auth: auth
-    ]
-
-    if blank?(cfg.username), do: opts, else: opts ++ [username: cfg.username, password: password]
-  end
-
-  defp mailer_adapter do
-    :zaq
-    |> Config.get(Mailer, [])
-    |> Keyword.get(:adapter, Swoosh.Adapters.SMTP)
-  end
-
-  defp transport_settings(%EmailConfig{transport_mode: "ssl"}), do: {true, :never}
-  defp transport_settings(%EmailConfig{} = cfg), do: {false, normalize_tls_mode(cfg.tls)}
-
-  defp normalize_tls_mode("enabled"), do: :if_available
-  defp normalize_tls_mode("if_available"), do: :if_available
-  defp normalize_tls_mode("always"), do: :always
-  defp normalize_tls_mode("never"), do: :never
-  defp normalize_tls_mode(_), do: :if_available
-
-  defp smtp_tls_options(%EmailConfig{} = cfg) do
-    verify = normalize_tls_verify_mode(cfg.tls_verify)
-    relay = String.trim(cfg.relay)
-
-    options = [
-      versions: [:"tlsv1.2", :"tlsv1.3"],
-      verify: verify,
-      depth: 4,
-      server_name_indication: to_charlist(relay)
-    ]
-
-    cond do
-      verify == :verify_none ->
-        options
-
-      not blank?(cfg.ca_cert_path) ->
-        options ++ [cacertfile: to_charlist(cfg.ca_cert_path)]
-
-      true ->
-        options ++ [cacerts: TlsHelpers.default_cacerts()]
-    end
-  end
-
-  defp normalize_tls_verify_mode("verify_none"), do: :verify_none
-  defp normalize_tls_verify_mode(_), do: :verify_peer
-
->>>>>>> 9df143917 (feat(channels): scope communication connectors and email account routing)
   defp parse_int(str, default), do: ParseUtils.parse_int(str, default)
 
   defp blank_to_nil(value) do
