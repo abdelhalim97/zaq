@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-13T09:29:48Z",
+  "description": "Keep closed Engine.Api :channel_conversations initialize/history/prepare vocabulary; compose IdentityResolver+Conversations with safe boundary error projection and shared validation, no arbitrary invocation. WebBridge NodeRouter ingress public contract unchanged, retain pre-dispatch ID/delivery correlation and native execution owners. Delete original module only when replacement real-boundary tests pass; migrate test aliases/calls to authoritative domain APIs+Engine event composition, not a replacement production coordinator. Test fixed operations/nil identity/no bypass/sync+async/queued/no-answer and existing BO parity. Reuse domain primitives exclusively; no new Action/tool/public protocol. Docs owner references next.",
+  "id": "zaq-pkd.21.5",
+  "labels": [],
+  "parent": "zaq-pkd.21",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-pkd.21] Thin Engine boundary and delete ChannelConversations",
+  "type": "task",
+  "updated_at": "2026-10-13T09:29:48Z"
+}
