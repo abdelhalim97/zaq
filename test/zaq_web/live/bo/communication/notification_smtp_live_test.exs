@@ -405,6 +405,39 @@ defmodule ZaqWeb.Live.BO.Communication.NotificationSmtpLiveTest do
     assert render(view) =~ "Test email sent"
   end
 
+  test "test_connection sends through the selected SMTP account rather than the default", %{
+    conn: conn
+  } do
+    first = insert_enabled_smtp_channel(%{"from_email" => "default@example.com"})
+    assert {:ok, _} = ChannelConfig.set_default_smtp_connector(first.id)
+
+    second =
+      %ChannelConfig{}
+      |> ChannelConfig.changeset(%{
+        name: "Selected SMTP",
+        provider: "email:smtp",
+        kind: "retrieval",
+        enabled: true,
+        url: "smtp://configured-in-settings",
+        token: "smtp-unused",
+        settings: %{"relay" => "smtp.other.example", "from_email" => "selected@example.com"}
+      })
+      |> Repo.insert!()
+
+    {:ok, view, _html} = live(conn, ~p"/bo/channels/retrieval/email/smtp")
+
+    view
+    |> element("#smtp-connector-#{second.id} [phx-click='select_connector']")
+    |> render_click()
+
+    view |> element("#test-email-form") |> render_submit(%{"recipient" => "user@example.com"})
+
+    assert :ok = current_test_status(view)
+    assert_receive {:smtp_send, "user@example.com", _, %{"smtp_config_id" => id}}
+    assert id == second.id
+    refute id == first.id
+  end
+
   test "test_connection reaches the production SMTP sender", %{conn: conn} do
     insert_enabled_smtp_channel(%{"relay" => "127.0.0.1", "port" => "1"})
     Application.put_env(:zaq, :email_bridge_smtp_module, Zaq.Channels.EmailBridge.SmtpSender)
@@ -756,5 +789,9 @@ defmodule ZaqWeb.NotificationSmtpLiveTest.Sender do
           reason -> {:error, reason}
         end
     end
+  end
+
+  def send_notification(identifier, payload, metadata, config_id) do
+    send_notification(identifier, payload, Map.put(metadata, "smtp_config_id", config_id))
   end
 end

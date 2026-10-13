@@ -810,6 +810,38 @@ defmodule Zaq.Channels.EmailBridgeTest do
   end
 
   describe "email:smtp notification delivery" do
+    test "an explicitly scoped SMTP send uses that account and rejects disabled accounts" do
+      upsert_smtp_channel(%{settings: smtp_settings(%{"from_email" => "default@example.com"})})
+      first = ChannelConfig.get_by_provider("email:smtp")
+      assert {:ok, _} = ChannelConfig.set_default_smtp_connector(first.id)
+
+      second =
+        %ChannelConfig{}
+        |> ChannelConfig.changeset(%{
+          name: "Selected SMTP",
+          kind: "retrieval",
+          provider: "email:smtp",
+          url: "smtp.example.com",
+          token: "smtp-unused",
+          enabled: true,
+          settings: smtp_settings(%{"from_email" => "selected@example.com"})
+        })
+        |> Repo.insert!()
+
+      outgoing = %Zaq.Engine.Messages.Outgoing{
+        body: "Test",
+        channel_id: "recipient@example.com",
+        provider: "email:smtp",
+        routing_context: %{channel_config_id: second.id}
+      }
+
+      assert {:ok, _} = EmailBridge.send_reply(outgoing, %{})
+      assert_receive {:email, %{from: {"ZAQ", "selected@example.com"}}}
+
+      second |> Ecto.Changeset.change(enabled: false) |> Repo.update!()
+      assert {:error, :connector_mismatch} = EmailBridge.send_reply(outgoing, %{})
+    end
+
     test "an IMAP-bound reply uses its explicitly linked SMTP account" do
       upsert_smtp_channel(%{settings: smtp_settings(%{"from_email" => "first@example.com"})})
       first = ChannelConfig.get_by_provider("email:smtp")
