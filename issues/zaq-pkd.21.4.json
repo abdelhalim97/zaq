@@ -6,14 +6,16 @@
   "blocks": [
     "zaq-pkd.21.5"
   ],
+  "closed_at": "2026-10-13T10:05:27Z",
+  "close_reason": "Seed is now only shared Conversations fresh-binding transaction: ordinary add_message +canonical capture, with no fabricated execution. Both seed/replay orderings, initial ordering, rollback and concurrent trusted preparations pass. Shared pure Facts.for_capture/3,4 used by HistoryIngress and seed instead of a Conversations-\u003eHistoryIngress-\u003eConversations circular call; source descriptors retain existing provenance and source scope. Added coordinate equivalence property. Broader570tests/10properties PASS, latest private/real widget33tests/3properties PASS; mix q PASS. No assertions weakened.",
   "created": "2026-10-13T09:29:38Z",
   "description": "Conversations preparation transaction creates seed only with new chat via existing add_message and canonical capture; reuse HistoryIngress canonical facts/source context constructor where shape identical, do not relocate parallel capture assembler. Ordinary role user/title behavior preserved; no synthetic execution. Entire chat+seed+placement rollback on failure; repeated/resumed input cannot reseed. Tests before code context ordering/exactly-once/replay/capture rollback/attachment retention. Internal dependencies real DB, no new mocks/Action; canonical owner persistence only. Update source moduledocs where lifecycle now shared; owner docs in final step.",
   "id": "zaq-pkd.21.4",
   "labels": [],
   "parent": "zaq-pkd.21",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-pkd.21] Consolidate atomic initial-context capture",
   "type": "task",
-  "updated_at": "2026-10-13T09:49:11Z"
+  "updated_at": "2026-10-13T10:05:27Z"
 }
