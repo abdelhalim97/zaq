@@ -7,9 +7,15 @@
   "id": "zaq-pkd.20",
   "labels": [],
   "parent": "zaq-pkd",
+  "comments": [
+    {
+      "text": "User authorized commit and push. Published ZAQ implementation as 38ca8c320 on origin/refactor/webbridge, existing PR #836 targets feature/issue-768-history-b-execution. Commit includes27 feature files; user config/dev.exs edit excluded and preserved uncommitted. Pre-commit qf/docs/Credo and commit-message hooks PASS; pre-push format hook PASS. Prior final mix precommit10789tests/248properties/48doctests/0failures and all9 existing WebBridge browser journeys remain valid against unchanged feature code. Upstream widget exact pushed SHA d7ed897f pinned. Human v2 UX acceptance/new consolidated E2E .20.5 and overall review/coverage .15 remain open; commit/push does not close approval gates.",
+      "timestamp": "2026-10-13T07:50:17Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Handle queued steering acknowledgements in widget transport",
   "type": "bug",
-  "updated_at": "2026-10-12T16:58:14Z"
+  "updated_at": "2026-10-13T07:50:17Z"
 }
