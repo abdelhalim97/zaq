@@ -18,11 +18,15 @@
     {
       "text": "User approved boundary correction and treats migrations absent from main as unconsumed. Verified origin/main: connector-scope and native-identity migrations are unmerged; NormalizePersonEmails exists on main and must remain consumed. Reuse assessment: extend existing CommunicationBridge/Bridge config+delivery seam with connector-owned platform/direction/topic metadata and shared delivery resolution used by preflight+actual delivery; reuse EmailBridge SMTP policy and IncomingMessageRouting persistence. No new Action/tool or parallel notification transport mechanism. Engine/UI receive generic platform/direction/topic metadata only; preserve recipient platform and origin scope. Fold mandatory scope into original scope migration and identity backfill into original identity migration; delete our augmentation migration. Tests: fresh stack/old data replay, exact scope preservation on outgoing/logs, disabled/mismatch/session-only, generic routing topics. No commit/push.",
       "timestamp": "2026-10-13T15:39:38Z"
+    },
+    {
+      "text": "Boundary/migration correction completed in working tree. Connector platform/direction/topics are owned by communication bridges; Engine and BO consume metadata with no new SMTP/IMAP branches. Shared CommunicationBridge.resolve_delivery_config is used by eligibility and actual Channels delivery; :delivery_available returns eligibility only. Notifications keep email and original connector scope through outgoing messages/results/logs; real SMTP-boundary regression proves origin ID versus sending ID. Folded NOT NULL+full scoped uniqueness into unmerged 20260922000003 and native/profile identity backfill into unmerged 20261002000001. Deleted our augmentation and unmerged 00005 redundant FK fix; consumed NormalizePersonEmails now has zero diff. Reused existing SMTP selection/persistence; no new Action or tool. Configured Elixir1.19.5/OTP28 responsive after user released load. Final correction validation: mix q exit0 (94 checks, no issues), fresh _c_fresh1 378 tests + 3 properties, 0 failures; _c_upgrade1 populated pre-scope migration replay passes (IDs/owner/weight/metadata/native bindings/NOT NULL/full unique index retained); git diff --check passes. No commit/push. This validates the correction, not full epic completion: older historical-normalization replay/remaining broad fixture work, human UX/E2E approval, review/coverage and final precommit remain pending. Removed obsolete handoff artifact; Beadwork remains authoritative.",
+      "timestamp": "2026-10-13T17:09:39Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-s04.1] Migration and strict People contracts",
   "type": "task",
-  "updated_at": "2026-10-13T15:39:38Z"
+  "updated_at": "2026-10-13T17:09:39Z"
 }
