@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "zaq-emb",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[#799] Rebase history PR stack onto main without landing PRs",
   "type": "task",
-  "updated_at": "2026-10-13T08:54:01Z"
+  "updated_at": "2026-10-13T08:54:34Z"
 }
