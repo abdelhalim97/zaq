@@ -1,7 +1,8 @@
 {
   "assignee": "",
   "blocked_by": [
-    "zaq-s04.3"
+    "zaq-s04.3",
+    "zaq-s04.4"
   ],
   "blocks": [],
   "created": "2026-10-13T12:20:20Z",
@@ -13,5 +14,5 @@
   "status": "open",
   "title": "[zaq-s04.5] Human UX approval and E2E finalization",
   "type": "task",
-  "updated_at": "2026-10-13T12:20:26Z"
+  "updated_at": "2026-10-13T12:20:27Z"
 }

@@ -3,7 +3,9 @@
   "blocked_by": [
     "zaq-s04.1"
   ],
-  "blocks": [],
+  "blocks": [
+    "zaq-s04.5"
+  ],
   "created": "2026-10-13T12:20:18Z",
   "description": "Tests first: scoped delivery with multiple connectors, disabled/archived/mismatch, fallback, session-only provider and email SMTP policy. Extend notification channel contract and Channels delivery resolution through events; no provider knowledge leakage to Engine. Preserve logging/threading and real boundary tests.",
   "id": "zaq-s04.4",
@@ -13,5 +15,5 @@
   "status": "open",
   "title": "[zaq-s04.4] Scoped notification delivery eligibility",
   "type": "task",
-  "updated_at": "2026-10-13T12:20:25Z"
+  "updated_at": "2026-10-13T12:20:27Z"
 }
