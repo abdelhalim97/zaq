@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-14T12:04:58Z",
+  "description": "User authorized implementation of reported analysis on 2026-10-14; explicitly NO COMMIT/PUSH, leave uncommitted merge for human code review. Merge target d8f191f38 from feature/issue-768-history-b-execution into ed0e65993 refactor/webbridge in existing checkout; preserve config/dev.exs SHA25636698c368bf49c403e96932053ef7101ca3b36e7bc2658e40569ae237b0932b3. Resolve alias conflict retaining both upstream Bridge/RetrievalChannel and branch WidgetSettings. Preserve scoped links/native IDs migration, no runtime legacy repair, connector-scoped backfill and delivery origin scope; retain widget platform, lifecycle v2/noanswer, preparation/grants/noexecution, installed runtime features. Sequence merge-\u003eregressions/reuse-\u003emigration+browser+quality+precommit-\u003ehuman review; do not close as landed. Action reuse: Git integration N/A; private validation reuse ChannelConfig person_channel_connector? while retaining stricter enabled/provider/auth checks (management is not auth); routing form reuse query-free AgentRoutingOptions rule_select/form_rules+AgentRouting.rule_attrs, existing ManageWidgetConnector Action/NodeRouter remains executable boundary, PeopleGateway add/edit is not widget operation; ProviderCatalog extend label. No new Action or tool exposure. Tests first new shared widget form/canonical choices/invalid foreign scope, exact provider+disabled negative invariants. Use upstream fixtures/migration replay on isolated DB; affected identity/config/delivery/privatechat/widget/BO tests, existing browsers, final mix precommit900000. Broader review/coverage and new E2E approval remain .15/.20.5.",
+  "id": "zaq-pkd.22",
+  "labels": [],
+  "parent": "zaq-pkd",
+  "priority": 2,
+  "status": "open",
+  "title": "Integrate connector-scoped base into WebBridge without committing",
+  "type": "task",
+  "updated_at": "2026-10-14T12:04:58Z"
+}
