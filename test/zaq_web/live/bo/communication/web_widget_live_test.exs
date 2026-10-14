@@ -5,10 +5,13 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
   import Mox
   import Zaq.AccountsFixtures
 
+  alias Zaq.Agent.ConfiguredAgent
   alias Zaq.Channels.Supervisor, as: ChannelsSupervisor
   alias Zaq.Channels.WebBridge
   alias Zaq.Engine.{ChannelConfig, IncomingMessageRouting}
   alias Zaq.Repo
+  alias Zaq.SystemConfigFixtures
+  alias ZaqWeb.Live.BO.Communication.AgentRoutingOptions
 
   defmodule Adapter do
     @behaviour Zaq.Channels.WebBridge
@@ -94,7 +97,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
     create(view, "Support")
     config = Repo.get_by!(ChannelConfig, name: "Support")
     refute config.enabled
-    assert has_element?(view, "#widget-id[value='#{config.id}']")
+    assert has_element?(view, "#widget-connector-#{config.id}", "Widget ID: #{config.id}")
     assert has_element?(view, "#generate-widget-key")
     assert has_element?(view, "#widget-script-#{config.id}[disabled]")
     view |> element("#close-widget-modal") |> render_click()
@@ -112,6 +115,9 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
     view |> element("#generate-widget-key") |> render_click()
     assert has_element?(view, "#new-widget-key")
     assert has_element?(view, "#rotate-widget-key[data-confirm]")
+    assert has_element?(view, "#widget-key-warning.zaq-warning")
+    assert has_element?(view, "#widget-key-generated-at time[datetime]")
+    refute render(view) =~ ~r/Last generated or rotated: .*T\d{2}:\d{2}/
     view |> element("#dismiss-widget-key") |> render_click()
     refute has_element?(view, "#new-widget-key")
     view |> element("#rotate-widget-key") |> render_click()
@@ -159,9 +165,27 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
     assert has_element?(view, "#widget-same-site input[name='widget[same_site]'][value='Strict']")
 
     view |> form("#widget-config-form", widget: %{identity_issuer: ""}) |> render_submit()
-    assert render(view) =~ "invalid widget settings"
+
+    assert has_element?(
+             view,
+             "#widget-config-form .zaq-field-error",
+             "Use 1–255 characters without leading or trailing spaces."
+           )
+
     assert Repo.get!(ChannelConfig, config.id).settings == config.settings
     assert has_element?(view, "#widget-identity-issuer[value='']")
+  end
+
+  test "configuration validation uses the design-system field error", %{conn: conn} do
+    {:ok, view, _} = live(conn, ~p"/bo/channels/retrieval/web_widget")
+    view |> element("#new-widget-config") |> render_click()
+
+    view
+    |> form("#widget-config-form", widget: %{name: ""})
+    |> render_submit()
+
+    assert has_element?(view, "#widget-config-form .zaq-field-error", "can't be blank")
+    refute render(view) =~ "name: can't be blank"
   end
 
   test "legacy settings remain unset when the form is submitted unchanged", %{conn: conn} do
@@ -343,7 +367,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
     |> element("#edit-widget-#{first.id}")
     |> render_click()
 
-    assert has_element?(view, "#widget-id[value='#{first.id}']")
+    assert has_element?(view, "#widget-connector-#{first.id} button[aria-current='true']")
     refute has_element?(view, "#new-widget-key")
   end
 
@@ -362,11 +386,206 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
       }
     })
 
-    assert render(view) =~ "invalid widget settings"
+    assert has_element?(
+             view,
+             "#widget-allowed-domains-field .zaq-field-error",
+             "Enter an exact HTTP(S) origin"
+           )
+
     assert ChannelConfig.list_by_provider("web_widget") == []
+
+    view
+    |> element("#widget-config-form")
+    |> render_change(%{
+      "widget" => %{"allowed_domains" => "https://parent.example.test/"},
+      "_target" => ["widget", "allowed_domains"]
+    })
+
+    assert has_element?(
+             view,
+             "#widget-allowed-domains-field .zaq-field-error",
+             "Remove the trailing slash: use https://parent.example.test."
+           )
+
+    view
+    |> element("#widget-config-form")
+    |> render_change(%{
+      "widget" => %{"allowed_domains" => "https://parent.example.test"},
+      "_target" => ["widget", "allowed_domains"]
+    })
+
+    refute has_element?(view, "#widget-allowed-domains-field .zaq-field-error")
     view |> render_submit("save", %{"widget" => %{"name" => "Forged", "token" => "chosen"}})
     assert render(view) =~ "Invalid configuration request"
     assert ChannelConfig.list_by_provider("web_widget") == []
+  end
+
+  test "modal uses field hints, places enablement last and omits duplicate widget identity", %{
+    conn: conn
+  } do
+    {:ok, view, _} = live(conn, ~p"/bo/channels/retrieval/web_widget")
+    create(view, "Layout widget")
+    config = Repo.get_by!(ChannelConfig, name: "Layout widget")
+
+    refute has_element?(view, "#widget-id")
+    refute has_element?(view, "#copy-widget-id")
+    assert has_element?(view, "#widget-agent-hint.zaq-field-hint")
+    assert has_element?(view, "#widget-same-site-hint.zaq-field-hint")
+    assert has_element?(view, "#generate-widget-key[aria-label='Generate authentication key']")
+    assert has_element?(view, "#widget-key-control-row #widget-key-status")
+    assert has_element?(view, "#widget-key-control-row #generate-widget-key")
+    refute has_element?(view, "#widget-key-control-row #widget-key-hint")
+    assert has_element?(view, "#widget-key-hint.zaq-field-hint")
+    refute has_element?(view, "#archive-widget-config")
+
+    html = render(view)
+    assert index_of!(html, "id=\"widget-enabled\"") > index_of!(html, "id=\"widget-key-status\"")
+    view |> element("#close-widget-modal") |> render_click()
+    assert has_element?(view, "#archive-widget-#{config.id}[aria-label='Archive configuration']")
+    assert has_element?(view, "#archive-widget-#{config.id} [class*='hero-trash']")
+  end
+
+  test "banner archive targets its own connector and never the last edited connector", %{
+    conn: conn
+  } do
+    {:ok, view, _} = live(conn, ~p"/bo/channels/retrieval/web_widget")
+    create(view, "Archive first")
+    first = Repo.get_by!(ChannelConfig, name: "Archive first")
+    view |> element("#close-widget-modal") |> render_click()
+    view |> element("#new-widget-config") |> render_click()
+    create(view, "Keep second")
+    second = Repo.get_by!(ChannelConfig, name: "Keep second")
+    view |> element("#close-widget-modal") |> render_click()
+
+    view |> element("#archive-widget-#{first.id}") |> render_click()
+    assert Repo.get!(ChannelConfig, first.id).archived_at
+    refute Repo.get!(ChannelConfig, second.id).archived_at
+    refute has_element?(view, "#widget-connector-#{first.id}")
+    assert has_element?(view, "#widget-connector-#{second.id}")
+  end
+
+  test "shared routing fields preserve inheritance and NONE within the selected widget", %{
+    conn: conn
+  } do
+    {:ok, view, _} = live(conn, ~p"/bo/channels/retrieval/web_widget")
+    create(view, "Shared first")
+    first = Repo.get_by!(ChannelConfig, name: "Shared first")
+    view |> element("#new-widget-config") |> render_click()
+    create(view, "Shared second", "__none__")
+    second = Repo.get_by!(ChannelConfig, name: "Shared second")
+    view |> element("#edit-widget-#{first.id}") |> render_click()
+
+    key =
+      AgentRoutingOptions.rule_key(%{channel_config_id: first.id})
+
+    assert has_element?(view, "#widget-agent input[name='widget[rules][#{key}][choice]']")
+
+    assert has_element?(
+             view,
+             "input[name='widget[rules][#{key}][channel_config_id]'][value='#{first.id}']"
+           )
+
+    assert has_element?(view, "label[for='widget-agent-trigger']", "Default agent")
+    assert has_element?(view, "#widget-agent", "Use inherited routing")
+
+    view
+    |> element("#widget-config-form")
+    |> render_submit(%{
+      "widget" => %{
+        "rules" => %{key => %{"channel_config_id" => to_string(first.id), "choice" => "__none__"}}
+      }
+    })
+
+    assert IncomingMessageRouting.get_rule(%{channel_config_id: first.id}).routing_mode == :none
+
+    view
+    |> element("#widget-config-form")
+    |> render_submit(%{
+      "widget" => %{
+        "rules" => %{key => %{"channel_config_id" => to_string(first.id), "choice" => ""}}
+      }
+    })
+
+    assert IncomingMessageRouting.get_rule(%{channel_config_id: first.id}) == nil
+    assert IncomingMessageRouting.get_rule(%{channel_config_id: second.id}).routing_mode == :none
+
+    render_submit(view, "save", %{
+      "widget" => %{
+        "name" => "Forged scope",
+        "rules" => %{
+          key => %{"channel_config_id" => to_string(second.id), "choice" => ""}
+        }
+      }
+    })
+
+    assert render(view) =~ "Invalid configuration request"
+    assert Repo.get!(ChannelConfig, first.id).name == "Shared first"
+    assert IncomingMessageRouting.get_rule(%{channel_config_id: second.id}).routing_mode == :none
+  end
+
+  test "shared routing rejects extra scopes and ambiguous choices before persistence", %{
+    conn: conn
+  } do
+    {:ok, view, _} = live(conn, ~p"/bo/channels/retrieval/web_widget")
+    view |> element("#new-widget-config") |> render_click()
+
+    for rules <- [
+          %{"one" => %{"choice" => "__none__", "person_id" => "1"}},
+          %{"one" => %{"choice" => "__none__", "topic_id" => "foreign"}},
+          %{"one" => %{"choice" => "__none__"}, "two" => %{"choice" => ""}}
+        ] do
+      render_submit(view, "save", %{"widget" => %{"name" => "Invalid scope", "rules" => rules}})
+      assert render(view) =~ "Invalid configuration request"
+    end
+
+    render_submit(view, "save", %{
+      "widget" => %{
+        "name" => "Ambiguous",
+        "agent_id" => "",
+        "rules" => %{"one" => %{"choice" => "__none__"}}
+      }
+    })
+
+    assert render(view) =~ "Invalid configuration request"
+    assert ChannelConfig.list_by_provider("web_widget") == []
+  end
+
+  test "shared routing keeps an explicit agent selection across validation, save and reopen", %{
+    conn: conn
+  } do
+    credential = SystemConfigFixtures.ai_credential_fixture()
+
+    agent =
+      %ConfiguredAgent{}
+      |> ConfiguredAgent.changeset(%{
+        name: "Shared widget agent",
+        job: "Answer questions",
+        model: "gpt-4.1-mini",
+        credential_id: credential.id,
+        strategy: "react",
+        conversation_enabled: true,
+        active: true
+      })
+      |> Repo.insert!()
+
+    {:ok, view, _} = live(conn, ~p"/bo/channels/retrieval/web_widget")
+    view |> element("#new-widget-config") |> render_click()
+    key = AgentRoutingOptions.rule_key(%{})
+
+    render_change(view, "validate", %{
+      "widget" => %{"rules" => %{key => %{"choice" => to_string(agent.id)}}}
+    })
+
+    assert has_element?(view, "#widget-agent input[data-select-value][value='#{agent.id}']")
+    create(view, "Shared agent", to_string(agent.id))
+    config = Repo.get_by!(ChannelConfig, name: "Shared agent")
+    rule = IncomingMessageRouting.get_rule(%{channel_config_id: config.id})
+    assert rule.routing_mode == :agent
+    assert rule.configured_agent_id == agent.id
+    refute Map.has_key?(config.settings, "agent_id")
+    view |> element("#close-widget-modal") |> render_click()
+    view |> element("#edit-widget-#{config.id}") |> render_click()
+    assert has_element?(view, "#widget-agent input[data-select-value][value='#{agent.id}']")
   end
 
   test "stale edits offer contextual reload instead of a permanent refresh", %{conn: conn} do
@@ -414,24 +633,30 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
     create(view, "Second widget")
     second = Repo.get_by!(ChannelConfig, name: "Second widget")
     view |> element("#close-widget-modal") |> render_click()
-    refute has_element?(view, "#widget-install-script")
+    refute has_element?(view, "#widget-installation-modal")
     view |> element("#widget-script-#{config.id}") |> render_click()
+    assert has_element?(view, "#widget-installation-modal[role='dialog']")
+    assert has_element?(view, "#widget-installation-modal", "Install Live widget on your website")
     assert has_element?(view, "#widget-install-script", "<script")
     refute has_element?(view, "script[src='https://zaq.example.test/widget.js']")
     assert render(view) =~ "&lt;script"
     assert has_element?(view, "#widget-install-script", "data-widget-id=\"#{config.id}\"")
-    view |> element("#widget-script-#{second.id}") |> render_click()
-    refute has_element?(view, "#widget-installation-#{config.id}")
 
     assert has_element?(
              view,
-             "#widget-installation-#{second.id} #widget-install-script",
-             "data-widget-id=\"#{second.id}\""
+             "#widget-installation-required",
+             "data-token-url"
            )
 
-    view |> element("#widget-script-#{config.id}") |> render_click()
-    view |> element("#widget-script-#{config.id}") |> render_click()
-    refute has_element?(view, "#widget-install-script")
+    assert has_element?(view, "#widget-installation-optional", "iframe-location-id")
+    assert has_element?(view, "#widget-installation-optional", "stylesheet-url")
+    assert has_element?(view, "#widget-installation-optional", "data-widget-url")
+    assert has_element?(view, "#widget-token-response", "Cache-Control: no-store")
+    view |> element("#close-widget-installation") |> render_click()
+    refute has_element?(view, "#widget-installation-modal")
+    view |> element("#widget-script-#{second.id}") |> render_click()
+    assert has_element?(view, "#widget-install-script", "data-widget-id=\"#{second.id}\"")
+    view |> element("#close-widget-installation") |> render_click()
     view |> element("#edit-widget-#{config.id}") |> render_click()
     view |> element("#generate-widget-key") |> render_click()
 
@@ -464,7 +689,8 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
     assert {:ok, %{state_pid: reenabled}} =
              ChannelsSupervisor.lookup_runtime("web_widget_#{config.id}")
 
-    view |> element("#archive-widget-config") |> render_click()
+    view |> element("#close-widget-modal") |> render_click()
+    view |> element("#archive-widget-#{config.id}") |> render_click()
     assert Repo.get!(ChannelConfig, config.id).archived_at
     refute Process.alive?(reenabled)
     refute has_element?(view, "#new-widget-key")
@@ -474,6 +700,8 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
     unless has_element?(view, "#widget-config-form"),
       do: view |> element("#new-widget-config") |> render_click()
 
+    key = AgentRoutingOptions.rule_key(%{})
+
     view
     |> element("#widget-config-form")
     |> render_submit(%{
@@ -481,7 +709,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
         "name" => name,
         "allowed_domains" => "https://parent.example.test",
         "enabled" => "false",
-        "agent_id" => agent_id
+        "rules" => %{key => %{"choice" => agent_id}}
       }
     })
   end
@@ -496,5 +724,10 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
     )
 
     on_exit(fn -> Application.put_env(:zaq, :channels, previous) end)
+  end
+
+  defp index_of!(html, marker) do
+    {index, _length} = :binary.match(html, marker)
+    index
   end
 end

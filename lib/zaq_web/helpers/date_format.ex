@@ -5,6 +5,7 @@ defmodule ZaqWeb.Helpers.DateFormat do
   Policy:
   - `format_date/1`     — "March 13, 2026" (%B %d, %Y)
   - `format_datetime/1` — "2026-03-13 14:05" (%Y-%m-%d %H:%M)
+  - `format_datetime_long/1` — "March 13, 2026 at 14:05"
   - `format_time/1`     — "14:05" (%H:%M)
 
   All functions accept `nil` and return "—". `format_date/1` also accepts
@@ -36,6 +37,26 @@ defmodule ZaqWeb.Helpers.DateFormat do
 
   def format_datetime(%NaiveDateTime{} = ndt) do
     Calendar.strftime(ndt, "%Y-%m-%d %H:%M")
+  end
+
+  @doc "Formats a DateTime or ISO-8601 string as a human-readable date and time."
+  def format_datetime_long(nil), do: "—"
+
+  def format_datetime_long(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, dt, _offset} -> format_datetime_long(dt)
+      _ -> value
+    end
+  end
+
+  def format_datetime_long(%DateTime{} = dt) do
+    shifted = Timezone.shift(dt)
+
+    "#{Calendar.strftime(shifted, "%B")} #{shifted.day}, #{shifted.year} at #{Calendar.strftime(shifted, "%H:%M")}"
+  end
+
+  def format_datetime_long(%NaiveDateTime{} = ndt) do
+    "#{Calendar.strftime(ndt, "%B")} #{ndt.day}, #{ndt.year} at #{Calendar.strftime(ndt, "%H:%M")}"
   end
 
   @doc "Formats a DateTime or NaiveDateTime as a date-time string with seconds, converted to system timezone."

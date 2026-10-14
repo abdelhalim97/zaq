@@ -61,4 +61,21 @@ defmodule ZaqWeb.Components.DesignSystem.FeedbackBannerTest do
     refute html =~ ~s(phx-click="lv:clear-flash")
     refute html =~ ~s(aria-label="Dismiss")
   end
+
+  test "renders a persistent warning banner" do
+    html =
+      render_component(&FeedbackBanner.feedback_banner/1,
+        id: "key-warning",
+        kind: :warning,
+        message: "Store this key securely.",
+        auto_dismiss: false,
+        dismissible: false
+      )
+
+    assert html =~ ~s(id="key-warning")
+    assert html =~ ~s(role="status")
+    assert html =~ "zaq-warning"
+    assert html =~ "Store this key securely."
+    refute html =~ "data-flash-dismiss"
+  end
 end

@@ -21,26 +21,92 @@ defmodule Zaq.ConnectorConfig.WidgetSettings do
 
   @doc "Validates the settings map without interpreting a browser-supplied widget identity."
   @spec validate(term()) :: :ok | {:error, :invalid_widget_settings}
-  def validate(settings) when is_map(settings) do
-    valid =
-      not Map.has_key?(settings, "widget_id") and not Map.has_key?(settings, :widget_id) and
-        valid_name?(Map.get(settings, "display_name")) and
-        valid_domains?(Map.get(settings, "allowed_domains", [])) and
-        not Map.has_key?(settings, "stylesheet_url") and
-        not Map.has_key?(settings, :stylesheet_url) and
-        valid_authentication?(settings)
-
-    if valid, do: :ok, else: {:error, :invalid_widget_settings}
-  end
+  def validate(settings) when is_map(settings),
+    do: if(validation_errors(settings) == %{}, do: :ok, else: {:error, :invalid_widget_settings})
 
   def validate(_settings), do: {:error, :invalid_widget_settings}
 
-  defp valid_authentication?(settings) do
-    not Enum.any?([:identity_issuer, :identity_audience, :same_site], &Map.has_key?(settings, &1)) and
-      optional_setting?(settings, "identity_issuer", &valid_identifier?/1) and
-      optional_setting?(settings, "identity_audience", &valid_identifier?/1) and
-      optional_setting?(settings, "same_site", &(&1 in ["None", "Lax", "Strict"]))
+  @doc "Returns actionable validation messages keyed by the public widget setting field."
+  @spec validation_errors(term()) :: %{optional(String.t()) => [String.t()]}
+  def validation_errors(settings) when is_map(settings) do
+    %{}
+    |> maybe_error(
+      forbidden_identity_or_stylesheet?(settings),
+      "settings",
+      "Widget identity and stylesheet settings cannot be persisted here."
+    )
+    |> maybe_error(
+      not valid_name?(Map.get(settings, "display_name")),
+      "display_name",
+      "Use 1–200 non-blank characters."
+    )
+    |> add_domain_errors(Map.get(settings, "allowed_domains", []))
+    |> add_identifier_error(settings, "identity_issuer")
+    |> add_identifier_error(settings, "identity_audience")
+    |> maybe_error(not valid_same_site?(settings), "same_site", "Choose None, Lax, or Strict.")
+    |> maybe_error(
+      Enum.any?([:identity_issuer, :identity_audience, :same_site], &Map.has_key?(settings, &1)),
+      "settings",
+      "Use string keys for widget authentication settings."
+    )
   end
+
+  def validation_errors(_settings), do: %{"settings" => ["Widget settings must be a map."]}
+
+  defp forbidden_identity_or_stylesheet?(settings),
+    do:
+      Enum.any?(
+        ["widget_id", :widget_id, "stylesheet_url", :stylesheet_url],
+        &Map.has_key?(settings, &1)
+      )
+
+  defp maybe_error(errors, false, _field, _message), do: errors
+
+  defp maybe_error(errors, true, field, message),
+    do: Map.update(errors, field, [message], &(&1 ++ [message]))
+
+  defp add_domain_errors(errors, domains) when is_list(domains) and length(domains) <= 100 do
+    Enum.reduce(domains, errors, fn origin, acc ->
+      if valid_origin?(origin),
+        do: acc,
+        else: maybe_error(acc, true, "allowed_domains", origin_error(origin))
+    end)
+  end
+
+  defp add_domain_errors(errors, domains) when is_list(domains),
+    do: maybe_error(errors, true, "allowed_domains", "Enter no more than 100 origins.")
+
+  defp add_domain_errors(errors, _domains),
+    do: maybe_error(errors, true, "allowed_domains", "Enter one exact HTTP(S) origin per line.")
+
+  defp origin_error(origin) when is_binary(origin) do
+    without_trailing_slash = String.trim_trailing(origin, "/")
+
+    if without_trailing_slash != origin and valid_origin?(without_trailing_slash),
+      do: "Remove the trailing slash: use #{without_trailing_slash}.",
+      else: "Enter an exact HTTP(S) origin, for example https://example.com."
+  end
+
+  defp origin_error(_origin),
+    do: "Enter an exact HTTP(S) origin, for example https://example.com."
+
+  defp add_identifier_error(errors, settings, key) do
+    case Map.fetch(settings, key) do
+      :error ->
+        errors
+
+      {:ok, value} ->
+        maybe_error(
+          errors,
+          not valid_identifier?(value),
+          key,
+          "Use 1–255 characters without leading or trailing spaces."
+        )
+    end
+  end
+
+  defp valid_same_site?(settings),
+    do: optional_setting?(settings, "same_site", &(&1 in ["None", "Lax", "Strict"]))
 
   defp optional_setting?(settings, key, validate) do
     case Map.fetch(settings, key) do
@@ -60,11 +126,6 @@ defmodule Zaq.ConnectorConfig.WidgetSettings do
     do: String.trim(name) != "" and byte_size(name) <= 200
 
   defp valid_name?(_name), do: false
-
-  defp valid_domains?(domains) when is_list(domains),
-    do: length(domains) <= 100 and Enum.all?(domains, &valid_origin?/1)
-
-  defp valid_domains?(_domains), do: false
 
   defp valid_origin?(origin) when is_binary(origin) and byte_size(origin) <= 2_048 do
     uri = URI.parse(origin)

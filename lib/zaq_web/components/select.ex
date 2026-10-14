@@ -3,8 +3,8 @@ defmodule ZaqWeb.Select do
 
   use Phoenix.Component
 
-  import ZaqWeb.CoreComponents, only: [icon: 1]
   import ZaqWeb.Components.SearchableSelect, only: [searchable_select: 1]
+  alias ZaqWeb.Components.DesignSystem.FieldHint
 
   attr :id, :string, default: nil
   attr :name, :string, required: true
@@ -18,6 +18,9 @@ defmodule ZaqWeb.Select do
   attr :options, :list, required: true
   attr :prompt, :string, default: nil
   attr :errors, :list, default: []
+  attr :hint, :string, default: nil
+  attr :hint_tone, :atom, default: :info, values: [:info, :success, :error]
+  attr :hint_id, :string, default: nil
   attr :class, :string, default: nil
   attr :compact, :boolean, default: false
 
@@ -35,10 +38,12 @@ defmodule ZaqWeb.Select do
         searchable={false}
         compact={@compact}
       />
-      <p :for={msg <- @errors} class="mt-1.5 flex gap-2 items-center text-sm text-error">
-        <.icon name="hero-exclamation-circle" class="size-5" />
-        {msg}
-      </p>
+      <FieldHint.field_messages
+        errors={@errors}
+        hint={@hint}
+        hint_tone={@hint_tone}
+        hint_id={@hint_id}
+      />
     </div>
     """
   end

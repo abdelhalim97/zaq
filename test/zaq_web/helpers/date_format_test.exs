@@ -39,6 +39,18 @@ defmodule ZaqWeb.Helpers.DateFormatTest do
     end
   end
 
+  describe "format_datetime_long/1" do
+    test "formats ISO-8601 values for human display" do
+      assert DateFormat.format_datetime_long("2026-10-14T13:42:00Z") =~
+               ~r/^October 14, 2026 at \d{2}:\d{2}$/
+    end
+
+    test "preserves malformed values and handles nil" do
+      assert DateFormat.format_datetime_long("not-a-date") == "not-a-date"
+      assert DateFormat.format_datetime_long(nil) == "—"
+    end
+  end
+
   describe "format_time/1" do
     test "returns dash for nil" do
       assert DateFormat.format_time(nil) == "—"

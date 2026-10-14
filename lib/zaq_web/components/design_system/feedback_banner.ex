@@ -1,13 +1,13 @@
 defmodule ZaqWeb.Components.DesignSystem.FeedbackBanner do
   @moduledoc """
-  Inline success and error feedback for application actions.
+  Inline success, warning and error feedback for application actions.
 
   The banner supports LiveView flash dismissal and optional automatic dismissal.
   """
 
   use Phoenix.Component
 
-  attr :kind, :atom, required: true, values: [:info, :error]
+  attr :kind, :atom, required: true, values: [:info, :warning, :error]
   attr :message, :string, required: true
   attr :id, :string, default: nil
   attr :auto_dismiss, :boolean, default: true
@@ -24,6 +24,7 @@ defmodule ZaqWeb.Components.DesignSystem.FeedbackBanner do
       class={[
         "zaq-feedback-banner zaq-text-body",
         @kind == :error && "zaq-danger",
+        @kind == :warning && "zaq-warning",
         @kind == :info && "zaq-success"
       ]}
       phx-hook="FlashAutoDismiss"
@@ -38,6 +39,15 @@ defmodule ZaqWeb.Components.DesignSystem.FeedbackBanner do
           viewBox="0 0 24 24"
         >
           <path d="M5 13l4 4L19 7" />
+        </svg>
+        <svg
+          :if={@kind == :warning}
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <path d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
         </svg>
         <svg
           :if={@kind == :error}

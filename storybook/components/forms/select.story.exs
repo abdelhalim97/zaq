@@ -60,6 +60,18 @@ defmodule Storybook.Components.Forms.Select do
             }
           },
           %Variation{
+            id: :with_hint,
+            description: "With Design System field hint",
+            attributes: %{
+              name: "role",
+              label: "Role",
+              options: [{"Admin", "admin"}, {"User", "user"}],
+              value: "user",
+              hint: "Choose the least privileged role.",
+              hint_id: "role-hint"
+            }
+          },
+          %Variation{
             id: :compact,
             description: "Compact",
             attributes: %{
@@ -84,7 +96,8 @@ defmodule Storybook.Components.Forms.Select do
           },
           %Variation{
             id: :compact_inline_toolbar,
-            description: "Compact toolbar filter — short “All” keeps min trigger width (History Channel)",
+            description:
+              "Compact toolbar filter — short “All” keeps min trigger width (History Channel)",
             attributes: %{
               name: "channel_type",
               label: "Channel",

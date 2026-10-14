@@ -141,7 +141,8 @@ defmodule Zaq.Engine.WidgetConnectorSettings do
 
     attrs = params |> Map.take(["name", "enabled"]) |> Map.put("settings", settings)
 
-    with :ok <-
+    with :ok <- validate_settings(settings),
+         :ok <-
            enablement(
              Map.put(params, "enabled", Map.get(params, "enabled", config.enabled)),
              opts
@@ -149,6 +150,13 @@ defmodule Zaq.Engine.WidgetConnectorSettings do
          {:ok, saved} <- persist_changeset(ChannelConfig.changeset(config, attrs)),
          :ok <- persist_routing(saved.id, params) do
       {:ok, saved}
+    end
+  end
+
+  defp validate_settings(settings) do
+    case WidgetSettings.validation_errors(settings) do
+      errors when map_size(errors) == 0 -> :ok
+      errors -> {:error, {:validation, errors}}
     end
   end
 

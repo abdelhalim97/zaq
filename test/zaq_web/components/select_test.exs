@@ -78,6 +78,22 @@ defmodule ZaqWeb.SelectTest do
       )
 
     assert html =~ "can&#39;t be blank"
+    assert html =~ "zaq-field-error"
+  end
+
+  test "renders hints through the design-system field message component" do
+    html =
+      render_component(&Select.select/1,
+        name: "role",
+        options: [{"Admin", "admin"}],
+        value: nil,
+        hint: "Choose the least privileged role.",
+        hint_id: "role-hint"
+      )
+
+    assert html =~ ~s(id="role-hint")
+    assert html =~ "zaq-field-hint zaq-text-body-sm"
+    assert html =~ "Choose the least privileged role."
   end
 
   test "renders no error markup when errors list is empty" do

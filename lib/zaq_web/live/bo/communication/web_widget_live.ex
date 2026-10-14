@@ -4,10 +4,13 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
   use ZaqWeb, :live_view
   on_mount {ZaqWeb.Live.BO.Communication.ServiceGate, [:channels]}
 
+  alias Zaq.Channels.AgentRouting
   alias Zaq.ConnectorConfig.WidgetSettings
   alias Zaq.Event
   alias Zaq.NodeRouter
+  alias ZaqWeb.Helpers.DateFormat
   alias ZaqWeb.Live.BO.AI.BOActor
+  alias ZaqWeb.Live.BO.Communication.AgentRoutingOptions
   alias ZaqWeb.Live.BO.Communication.IngressStatusUI
 
   @health_refresh_ms 15_000
@@ -22,7 +25,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
       |> assign(:configs, [])
       |> assign(:selected, nil)
       |> assign(:modal_open, false)
-      |> assign(:expanded_script_id, nil)
+      |> assign(:installation_config, nil)
       |> assign(:base_url, nil)
       |> assign(:adapter, {:error, :channels_unavailable})
       |> assign(:snippet, {:error, :selection_required})
@@ -69,12 +72,15 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
   def handle_event("close_modal", _params, socket),
     do: {:noreply, socket |> clear_key() |> assign(:modal_open, false)}
 
-  def handle_event("toggle_script", %{"id" => id}, socket) do
+  def handle_event("open_installation", %{"id" => id}, socket) do
     case Enum.find(socket.assigns.configs, &(to_string(&1.id) == id)) do
       nil -> {:noreply, failure(socket, :connector_not_found)}
-      config -> {:noreply, toggle_script(socket, config.id)}
+      config -> {:noreply, open_installation(socket, config)}
     end
   end
+
+  def handle_event("close_installation", _params, socket),
+    do: {:noreply, close_installation(socket)}
 
   def handle_event("reload_configuration", _params, socket),
     do: {:noreply, socket |> clear_flash() |> reload(selected_id(socket))}
@@ -89,31 +95,41 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
           socket.assigns.changed_settings
       end
 
+    params = Map.merge(socket.assigns.form.params, params)
+    target = event |> Map.get("_target", []) |> List.last()
+    socket = assign(socket, :changed_settings, changed)
+
     {:noreply,
      socket
-     |> assign(:changed_settings, changed)
-     |> assign(:form, to_form(Map.merge(socket.assigns.form.params, params), as: :widget))}
+     |> assign(:errors, update_validation_errors(socket.assigns.errors, target, params, socket))
+     |> assign(:form, to_form(params, as: :widget))}
   end
 
   def handle_event("save", %{"widget" => params}, socket) do
     socket =
       assign(socket, :form, to_form(Map.merge(socket.assigns.form.params, params), as: :widget))
 
-    params = preserve_legacy_settings(params, socket)
+    case widget_routing_params(params, socket) do
+      {:ok, params} ->
+        params = preserve_legacy_settings(params, socket)
 
-    params =
-      if Map.has_key?(params, "allowed_domains"),
-        do: Map.update!(params, "allowed_domains", &split_origins/1),
-        else: params
+        params =
+          if Map.has_key?(params, "allowed_domains"),
+            do: Map.update!(params, "allowed_domains", &split_origins/1),
+            else: params
 
-    request = %{
-      op: :save,
-      id: selected_id(socket),
-      revision: revision(socket),
-      params: params
-    }
+        request = %{
+          op: :save,
+          id: selected_id(socket),
+          revision: revision(socket),
+          params: params
+        }
 
-    {:noreply, save_configuration(socket, request, "Configuration saved.")}
+        {:noreply, save_configuration(socket, request, "Configuration saved.")}
+
+      {:error, reason} ->
+        {:noreply, failure(socket, reason)}
+    end
   end
 
   def handle_event("toggle_enabled", %{"id" => id}, socket) do
@@ -158,15 +174,10 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
 
   def handle_event("dismiss_key", _params, socket), do: {:noreply, clear_key(socket)}
 
-  def handle_event("archive", _params, socket) do
-    request = %{
-      channel_config_id: selected_id(socket),
-      provider: "web_widget",
-      kind: "retrieval",
-      revision: revision(socket)
-    }
+  def handle_event("archive", %{"id" => id}, socket) do
+    config = Enum.find(socket.assigns.configs, &(to_string(&1.id) == id))
 
-    case dispatch(socket, :engine, :archive_channel_connector, request) do
+    case archive_configuration(socket, config) do
       {:ok, result} ->
         socket = socket |> reload(nil) |> assign(:modal_open, false)
 
@@ -180,6 +191,20 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
       {:error, reason} ->
         {:noreply, failure(socket, reason)}
     end
+  end
+
+  def handle_event("archive", _params, socket),
+    do: {:noreply, failure(socket, :connector_not_found)}
+
+  defp archive_configuration(_socket, nil), do: {:error, :connector_not_found}
+
+  defp archive_configuration(socket, config) do
+    dispatch(socket, :engine, :archive_channel_connector, %{
+      channel_config_id: config.id,
+      provider: "web_widget",
+      kind: "retrieval",
+      revision: config.revision
+    })
   end
 
   defp reload(socket, id) do
@@ -221,7 +246,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
     |> assign(:errors, %{})
     |> assign(:recovery_message, nil)
     |> assign(:form, to_form(form_params(snapshot.selected), as: :widget))
-    |> assign(:expanded_script_id, nil)
+    |> assign(:installation_config, nil)
     |> assign(:snippet, {:error, :selection_required})
     |> assign(:changed_settings, MapSet.new())
     |> assign(:ingress_statuses, %{})
@@ -289,18 +314,20 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
     assign(socket, :health_timer, nil)
   end
 
-  defp toggle_script(%{assigns: %{expanded_script_id: id}} = socket, id),
-    do:
-      socket
-      |> assign(:expanded_script_id, nil)
-      |> assign(:snippet, {:error, :selection_required})
-
-  defp toggle_script(socket, id) do
+  defp open_installation(socket, config) do
     socket
     |> clear_key()
-    |> assign(:expanded_script_id, id)
-    |> assign(:snippet, settings(socket, %{op: :embed_script, id: id}))
+    |> assign(:installation_config, config)
+    |> assign(:snippet, settings(socket, %{op: :embed_script, id: config.id}))
   end
+
+  defp close_installation(socket) do
+    socket
+    |> assign(:installation_config, nil)
+    |> assign(:snippet, {:error, :selection_required})
+  end
+
+  defp format_key_rotation(value), do: DateFormat.format_datetime_long(value)
 
   defp selected_id(%{assigns: %{selected: nil}}), do: :new
   defp selected_id(socket), do: socket.assigns.selected.id
@@ -313,7 +340,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
     Map.merge(WidgetSettings.defaults(), %{
       "name" => "",
       "allowed_domains" => "",
-      "agent_id" => "",
+      "rules" => routing_form(nil, ""),
       "enabled" => false
     })
   end
@@ -324,7 +351,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
     %{
       "name" => selected.name,
       "allowed_domains" => Enum.join(selected.allowed_domains, "\n"),
-      "agent_id" => selected.agent_id,
+      "rules" => routing_form(selected, selected.agent_id),
       "enabled" => selected.enabled,
       "identity_issuer" => selected.identity_issuer || "",
       "identity_audience" => selected.identity_audience || "",
@@ -341,6 +368,80 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
 
   defp split_origins(value), do: value
 
+  defp form_validation_errors(params, socket) do
+    params = preserve_legacy_settings(params, socket)
+
+    params
+    |> Map.take(["allowed_domains", "identity_issuer", "identity_audience", "same_site"])
+    |> Map.update("allowed_domains", [], &split_origins/1)
+    |> WidgetSettings.validation_errors()
+  end
+
+  defp update_validation_errors(errors, field, params, socket) when is_binary(field) do
+    errors = Map.reject(errors, fn {key, _messages} -> to_string(key) == field end)
+
+    case field_errors(form_validation_errors(params, socket), field) do
+      [] -> errors
+      messages -> Map.put(errors, field, messages)
+    end
+  end
+
+  defp update_validation_errors(errors, _field, _params, _socket), do: errors
+
+  defp field_errors(errors, field) do
+    Enum.find_value(errors, [], fn {key, messages} ->
+      if to_string(key) == to_string(field), do: messages
+    end)
+  end
+
+  defp unscoped_error_messages(errors) do
+    rendered_fields =
+      ~w(name allowed_domains agent_id identity_issuer identity_audience same_site enabled)
+
+    errors
+    |> Enum.reject(fn {field, _messages} -> to_string(field) in rendered_fields end)
+    |> Enum.flat_map(fn {_field, messages} -> List.wrap(messages) end)
+  end
+
+  defp routing_scope(nil), do: %{}
+  defp routing_scope(selected), do: %{channel_config_id: selected.id}
+
+  defp routing_form(selected, choice) do
+    scope = routing_scope(selected)
+    fields = Map.new(scope, fn {key, value} -> {to_string(key), to_string(value)} end)
+    %{AgentRoutingOptions.rule_key(scope) => Map.put(fields, "choice", choice)}
+  end
+
+  defp routing_value(form, selected),
+    do:
+      get_in(form.params, [
+        "rules",
+        AgentRoutingOptions.rule_key(routing_scope(selected)),
+        "choice"
+      ]) || ""
+
+  # The shared form describes canonical scopes; this screen manages exactly one
+  # connector. Do not let browser fields choose a Person, topic or another widget.
+  defp widget_routing_params(%{"rules" => _, "agent_id" => _}, _socket),
+    do: {:error, :invalid_request}
+
+  defp widget_routing_params(%{"rules" => fields} = params, socket) do
+    with {:ok, [rule]} <- AgentRoutingOptions.form_rules(fields),
+         true <-
+           Map.drop(rule, [:routing_mode, :configured_agent_id]) ==
+             routing_scope(socket.assigns.selected) do
+      {:ok, params |> Map.delete("rules") |> Map.put("agent_id", routing_choice(rule))}
+    else
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp widget_routing_params(params, _socket), do: {:ok, params}
+
+  defp routing_choice(%{routing_mode: :clear}), do: AgentRouting.select_value(nil)
+  defp routing_choice(%{routing_mode: :none}), do: AgentRouting.select_value(:none)
+  defp routing_choice(%{configured_agent_id: id}), do: AgentRouting.select_value(id)
+
   defp agent_options(socket) do
     agents =
       case dispatch(socket, :agent, :system_config_agent_list_active_agents, %{}) do
@@ -351,8 +452,13 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
           []
       end
 
-    [{"Use inherited routing", ""}, {"NONE — do not route to an agent", "__none__"}] ++
-      Enum.map(agents, &{&1.name, &1.id})
+    agents
+    |> AgentRoutingOptions.agent_options()
+    |> List.keyreplace(
+      AgentRouting.none_value(),
+      1,
+      {"NONE — do not route to an agent", AgentRouting.none_value()}
+    )
   end
 
   defp settings(socket, request),

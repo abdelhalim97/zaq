@@ -11,10 +11,15 @@ defmodule ZaqWeb.Live.BO.Communication.AgentRoutingOptions do
   @none_value AgentRouting.none_value()
 
   @doc "Returns dropdown options with the centralized NONE choice prepended."
-  @spec agent_options(module()) :: [{String.t(), term()}]
-  def agent_options(agent_module \\ Agent) when is_atom(agent_module) do
+  @spec agent_options(module() | list()) :: [{String.t(), term()}]
+  def agent_options(agents \\ Agent)
+
+  def agent_options(agent_module) when is_atom(agent_module),
+    do: agent_options(agent_module.list_conversation_enabled_agents())
+
+  def agent_options(agents) when is_list(agents) do
     [{"NONE", AgentRouting.none_value()}] ++
-      Enum.map(agent_module.list_conversation_enabled_agents(), fn agent ->
+      Enum.map(agents, fn agent ->
         {agent.name, agent.id}
       end)
   end
@@ -24,6 +29,11 @@ defmodule ZaqWeb.Live.BO.Communication.AgentRoutingOptions do
   attr :scope, :map, required: true
   attr :value, :any, default: ""
   attr :options, :list, required: true
+  attr :label, :string, default: nil
+  attr :default_label, :string, default: "Default"
+  attr :errors, :list, default: []
+  attr :hint, :string, default: nil
+  attr :hint_id, :string, default: nil
 
   @doc "Uses the shared BO select with the same rule-field contract for every routing scope."
   def rule_select(assigns) do
@@ -41,7 +51,11 @@ defmodule ZaqWeb.Live.BO.Communication.AgentRoutingOptions do
       id={@id}
       name={"#{@name}[choice]"}
       value={@value}
-      options={[{"Default", ""} | @options]}
+      label={@label}
+      options={[{@default_label, ""} | @options]}
+      errors={@errors}
+      hint={@hint}
+      hint_id={@hint_id}
     />
     """
   end

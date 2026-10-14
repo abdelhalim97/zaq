@@ -93,4 +93,26 @@ defmodule Zaq.ConnectorConfig.WidgetSettingsTest do
       end
     end
   end
+
+  test "validation errors identify the exact widget field and how to fix it" do
+    assert WidgetSettings.validation_errors(%{
+             "allowed_domains" => ["https://parent.example.test/"],
+             "identity_issuer" => " issuer",
+             "identity_audience" => "",
+             "same_site" => "none"
+           }) == %{
+             "allowed_domains" => [
+               "Remove the trailing slash: use https://parent.example.test."
+             ],
+             "identity_issuer" => ["Use 1–255 characters without leading or trailing spaces."],
+             "identity_audience" => ["Use 1–255 characters without leading or trailing spaces."],
+             "same_site" => ["Choose None, Lax, or Strict."]
+           }
+
+    assert WidgetSettings.validation_errors(%{"allowed_domains" => ["parent.example.test"]}) == %{
+             "allowed_domains" => [
+               "Enter an exact HTTP(S) origin, for example https://example.com."
+             ]
+           }
+  end
 end
