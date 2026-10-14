@@ -167,6 +167,67 @@ defmodule Zaq.Engine.ChannelHistoryMembershipTest do
              )
   end
 
+  test "malformed sender evidence is rejected without changing grants or membership state", ctx do
+    resource = ChannelHistoryResource.for("mattermost", ctx.config.id, @room)
+    transcript = Repo.get!(Transcript, ctx.placement.transcript_id)
+    before_state = transcript.membership_state
+
+    before_grants =
+      Permissions.list_direct(resource)
+      |> Enum.map(&{&1.person_id, &1.source_key})
+      |> Enum.sort()
+
+    for {person_id, evidence} <- [
+          {ctx.alice.id, %{identity_platform: "mattermost"}},
+          {0, %{identity_platform: "mattermost", member_id: "alice"}}
+        ] do
+      assert {:error, :invalid_sender_evidence} =
+               ChannelHistoryMembership.observe_sender(
+                 ctx.placement.transcript_id,
+                 person_id,
+                 evidence
+               )
+
+      assert Repo.get!(Transcript, transcript.id).membership_state == before_state
+
+      assert Permissions.list_direct(resource)
+             |> Enum.map(&{&1.person_id, &1.source_key})
+             |> Enum.sort() == before_grants
+    end
+  end
+
+  test "sender evidence cannot cross the identity platform recorded by a snapshot", ctx do
+    resource = ChannelHistoryResource.for("mattermost", ctx.config.id, @room)
+
+    Process.put(
+      :membership_response,
+      {:ok, %{complete: true, identity_platform: "other-server", member_ids: []}}
+    )
+
+    assert {:ok, %{members: 0}} =
+             ChannelHistoryMembership.refresh(ctx.placement.transcript_id, router: SnapshotRouter)
+
+    before_state = Repo.get!(Transcript, ctx.placement.transcript_id).membership_state
+
+    before_grants =
+      Permissions.list_direct(resource)
+      |> Enum.map(&{&1.person_id, &1.source_key})
+      |> Enum.sort()
+
+    assert {:error, :invalid_sender_evidence} =
+             ChannelHistoryMembership.observe_sender(
+               ctx.placement.transcript_id,
+               ctx.alice.id,
+               %{identity_platform: "mattermost", member_id: "alice"}
+             )
+
+    assert Repo.get!(Transcript, ctx.placement.transcript_id).membership_state == before_state
+
+    assert Permissions.list_direct(resource)
+           |> Enum.map(&{&1.person_id, &1.source_key})
+           |> Enum.sort() == before_grants
+  end
+
   test "versioned removal fences first-contact evidence and manual access survives", ctx do
     assert {:ok, _} = HistoryIngress.capture(sender_message(ctx, "observed"))
     resource = ChannelHistoryResource.for("mattermost", ctx.config.id, @room)
@@ -664,6 +725,36 @@ defmodule Zaq.Engine.ChannelHistoryMembershipTest do
 
     assert Enum.map(Permissions.list_direct(resource), &{&1.person_id, &1.source_key}) ==
              before_grants
+  end
+
+  test "disabled connector rejects membership event for an existing room", ctx do
+    config = ctx.config |> Ecto.Changeset.change(enabled: false) |> Repo.update!()
+    resource = ChannelHistoryResource.for("mattermost", config.id, @room)
+    before_state = Repo.get!(Transcript, ctx.placement.transcript_id).membership_state
+
+    before_grants =
+      Permissions.list_direct(resource)
+      |> Enum.map(&{&1.person_id, &1.source_key})
+      |> Enum.sort()
+
+    assert {:error, :unsupported_membership_refresh} =
+             ChannelHistoryMembership.apply_event(%{
+               provider: "mattermost",
+               channel_config_id: config.id,
+               channel_id: @room,
+               identity_platform: "mattermost",
+               member_id: "alice",
+               operation: :add,
+               revision: 1
+             })
+
+    assert Repo.get!(Transcript, ctx.placement.transcript_id).membership_state == before_state
+
+    assert Permissions.list_direct(resource)
+           |> Enum.map(&{&1.person_id, &1.source_key})
+           |> Enum.sort() == before_grants
+
+    refute_received {:membership_request, _}
   end
 
   test "invalid and oversized member snapshots preserve existing access", ctx do

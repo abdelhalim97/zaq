@@ -8,9 +8,11 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
   alias Zaq.Accounts.People
   alias Zaq.Agent
   alias Zaq.Agent.Answering
+  alias Zaq.Agent.Api
   alias Zaq.Agent.Executor
   alias Zaq.Agent.Factory
   alias Zaq.Agent.HistorySync
+  alias Zaq.Agent.RequestControl
   alias Zaq.Agent.ServerManager
   alias Zaq.Channels.CommunicationBridge
   alias Zaq.Contracts.Record
@@ -20,7 +22,7 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Conversations.{ExecutionRecord, Message}
   alias Zaq.Engine.HistoryIngress
-  alias Zaq.Engine.Messages.Incoming
+  alias Zaq.Engine.Messages.{Incoming, Outgoing}
   alias Zaq.Engine.Telemetry.Buffer
   alias Zaq.Engine.Telemetry.Point
   alias Zaq.Event
@@ -213,6 +215,435 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
     end
 
     def answering_configured_agent, do: %{id: :answering, name: "answering"}
+  end
+
+  defmodule StubFactoryStreamErrorAfterBlankContent do
+    def ask_with_config(_server, _content, _configured_agent, _opts \\ []) do
+      delta = Process.get(:blank_stream_delta)
+
+      events =
+        if is_binary(delta) do
+          [%{kind: :llm_delta, at_ms: 1, data: %{chunk_type: :content, delta: delta}}]
+        else
+          []
+        end
+
+      {:ok,
+       %{
+         request: :request,
+         events:
+           events ++
+             [
+               %{
+                 kind: :request_failed,
+                 at_ms: 2,
+                 data: %{
+                   error: ReqLLM.Error.API.Stream.exception(reason: "stream closed", cause: nil)
+                 }
+               }
+             ]
+       }}
+    end
+
+    def answering_configured_agent, do: %{id: :answering, name: "answering"}
+  end
+
+  defmodule ClosedControlFactory do
+    def steer(_runtime, content, _opts) do
+      send(Process.get(:followup_owner), {:native_control_refused, content})
+      Process.get(:control_outcome, {:error, {:rejected, :idle}})
+    end
+  end
+
+  defmodule FencedHandleFactory do
+    def ask_with_config(runtime, content, configured_agent, opts) do
+      result = Factory.ask_with_config(runtime, content, configured_agent, opts)
+      {server_id, ^runtime, token} = opts[:tool_context].execution_history.lease_ref
+      send(Process.get(:followup_owner), {:native_handle_fenced, runtime, server_id})
+      :ok = ServerManager.abort_history_request(server_id, token)
+      result
+    end
+  end
+
+  defmodule BusyAfterLeaseFactory do
+    def ask_with_config(_runtime, _content, _configured_agent, _opts) do
+      send(Process.get(:followup_owner), :busy_factory_reached)
+      {:error, {:rejected, :busy}}
+    end
+  end
+
+  defmodule FollowupBoundaryRouter do
+    def dispatch(%Event{opts: [action: :send_typing]} = event),
+      do: %{event | response: :ok}
+
+    def dispatch(%Event{opts: [action: :prepare_execution_followup, confidential: true]} = event) do
+      send(Process.get(:followup_owner), {:prepare_followup, event.request})
+
+      case Process.get(:followup_boundary_response, :delegate) do
+        :delegate -> NodeRouter.dispatch(event)
+        response -> %{event | response: response}
+      end
+    end
+
+    def dispatch(event), do: NodeRouter.dispatch(event)
+  end
+
+  for {outcome, expected} <- [
+        {{:ok, :already_prepared}, :followup_already_prepared},
+        {{:error, :followup_preparation_failed}, :followup_preparation_failed},
+        {:malformed, :history_handoff_unavailable}
+      ] do
+    test "canonical followup preparation #{inspect(outcome)} stops without delivery" do
+      %{event: event, release: release, root: root, binding: binding} =
+        canonical_followup_fixture()
+
+      test_pid = self()
+
+      followup =
+        Task.async(fn ->
+          Sandbox.allow(Repo, test_pid, self())
+          Process.put(:followup_owner, test_pid)
+          Process.put(:followup_boundary_response, unquote(Macro.escape(outcome)))
+          Api.handle_event(event, :run_pipeline, nil)
+        end)
+
+      assert_receive {:native_control_refused, "Followup input"}, 5_000
+      send(release, :release_root_llm)
+      assert %Outgoing{body: "Root answer", metadata: %{error: false}} = Task.await(root, 10_000)
+      assert_receive {:openai_request, "POST", "/v1/responses", "", _}, 5_000
+      result = Task.await(followup, 10_000)
+
+      assert_receive {:prepare_followup, %{content: "Followup input"}}, 5_000
+      assert result.response == {:error, unquote(expected)}
+      assert result.next_hop == nil
+      refute result.response == {:ok, :queued}
+      refute_received {:openai_request, "POST", "/v1/responses", "", _}
+      original = Repo.get!(ExecutionRecord, binding.execution_id)
+      assert original.status == "unconsumed"
+      assert original.public_answer_message_id == nil
+      assert Repo.get_by(ExecutionRecord, recovered_from_execution_id: original.id) == nil
+    end
+  end
+
+  test "canonical followup recovers through real Executor and finalizes only its new root" do
+    %{event: event, release: release, root: root, binding: binding} = canonical_followup_fixture()
+    owner = self()
+
+    followup =
+      Task.async(fn ->
+        Sandbox.allow(Repo, owner, self())
+        Process.put(:followup_owner, owner)
+        Api.handle_event(event, :run_pipeline, nil)
+      end)
+
+    assert_receive {:native_control_refused, "Followup input"}, 5_000
+    send(release, :release_root_llm)
+    assert %Outgoing{body: "Root answer", metadata: %{error: false}} = Task.await(root, 10_000)
+    assert_receive {:openai_request, "POST", "/v1/responses", "", _}, 5_000
+    assert_receive {:prepare_followup, %{content: "Followup input"}}, 5_000
+
+    result = Task.await(followup, 10_000)
+    assert %Outgoing{body: "Followup answer", metadata: %{error: false}} = result.response
+    assert result.next_hop != nil
+    assert_receive {:openai_request, "POST", "/v1/responses", "", _}, 5_000
+
+    original = Repo.get!(ExecutionRecord, binding.execution_id)
+    assert original.public_answer_message_id == nil
+    assert original.status == "unconsumed"
+
+    recovered = Repo.get_by!(ExecutionRecord, recovered_from_execution_id: original.id)
+    assert recovered.status == "completed"
+    assert Repo.get!(Message, recovered.public_answer_message_id).content == "Followup answer"
+  end
+
+  test "canonical control rejection returns its exact error without a second answer" do
+    %{event: event, release: release, root: root, binding: binding} = canonical_followup_fixture()
+    owner = self()
+
+    rejected =
+      Task.async(fn ->
+        Sandbox.allow(Repo, owner, self())
+        Process.put(:followup_owner, owner)
+        Process.put(:control_outcome, {:error, :control_unavailable})
+        Api.handle_event(event, :run_pipeline, nil)
+      end)
+
+    assert_receive {:native_control_refused, "Followup input"}, 5_000
+    result = Task.await(rejected, 10_000)
+    assert result.response == {:error, :control_unavailable}
+    assert result.next_hop == nil
+    refute_received {:prepare_followup, _}
+
+    send(release, :release_root_llm)
+    assert %Outgoing{body: "Root answer", metadata: %{error: false}} = Task.await(root, 10_000)
+    assert_receive {:openai_request, "POST", "/v1/responses", "", _}, 5_000
+    refute_received {:openai_request, "POST", "/v1/responses", "", _}
+    assert Repo.get!(ExecutionRecord, binding.execution_id).public_answer_message_id == nil
+  end
+
+  test "active canonical control refuses another Person and a different execution scope" do
+    %{event: event, release: release, root: root, binding: binding} = canonical_followup_fixture()
+    actor = event.actor
+
+    assert {:ok, projection} =
+             HistorySync.execution_admission([], binding, actor, event.request.content)
+
+    scope = "history:#{projection.transcript_id}:person:#{actor.person.id}"
+    assert {:ok, {request_id, _}} = RequestControl.find_native_request(scope, actor)
+    {:ok, other} = People.create_person(%{full_name: "Different Person"})
+
+    for {control_actor, requested_scope, expected} <- [
+          {%{person: %{id: other.id}}, scope, :not_found},
+          {actor, "#{scope}:other", :scope_conflict}
+        ] do
+      control =
+        Event.new(
+          %{
+            request_id: request_id,
+            content: "must not enter the root",
+            execution_scope: requested_scope
+          },
+          :agent,
+          actor: control_actor,
+          opts: [action: :steer_request, node_router: FollowupBoundaryRouter]
+        )
+
+      result = Api.handle_event(control, :steer_request, nil)
+      assert result.response == {:error, expected}
+      assert result.next_hop == control.next_hop
+    end
+
+    refute_received {:native_control_refused, _}
+    send(release, :release_root_llm)
+    assert %Outgoing{body: "Root answer", metadata: %{error: false}} = Task.await(root, 10_000)
+    assert_receive {:openai_request, "POST", "/v1/responses", "", _}, 5_000
+    assert Repo.get!(ExecutionRecord, binding.execution_id).status == "pending"
+  end
+
+  test "fencing a canonical lease after Factory returns a handle fails before stream consumption" do
+    %{event: event, release: release, root: root, binding: binding} = canonical_followup_fixture()
+    send(release, :release_root_llm)
+    assert %Outgoing{body: "Root answer", metadata: %{error: false}} = Task.await(root, 10_000)
+    assert_receive {:openai_request, "POST", "/v1/responses", "", _}, 5_000
+
+    Process.put(:followup_owner, self())
+
+    outgoing =
+      Executor.run(event.request,
+        agent_id: event.assigns["agent_selection"]["agent_id"],
+        conversation_binding: binding,
+        actor: event.actor,
+        person_id: event.actor.person.id,
+        node_router: FollowupBoundaryRouter,
+        factory_module: FencedHandleFactory
+      )
+
+    assert_received {:native_handle_fenced, old_runtime, server_id}
+    assert outgoing.metadata.error == true
+    refute outgoing.body == "Followup answer"
+    assert Repo.get!(ExecutionRecord, binding.execution_id).public_answer_message_id == nil
+    assert Jido.AgentServer.whereis(Jido.registry_name(Zaq.Agent.Jido), server_id) != old_runtime
+
+    HistorySync.with_session(fn session ->
+      recovered =
+        Executor.run(event.request,
+          history_session: session,
+          agent_id: event.assigns["agent_selection"]["agent_id"],
+          conversation_binding: binding,
+          actor: event.actor,
+          person_id: event.actor.person.id,
+          node_router: FollowupBoundaryRouter
+        )
+
+      assert recovered.metadata.error == false
+      assert recovered.body == "Followup answer"
+      new_runtime = Jido.AgentServer.whereis(Jido.registry_name(Zaq.Agent.Jido), server_id)
+      assert is_pid(new_runtime)
+      refute new_runtime == old_runtime
+
+      assert {:ok, persisted} =
+               Conversations.finalize_incoming(
+                 binding.user_message_id,
+                 binding.finalization_token,
+                 %{answer: recovered.body, usage: %{}, error: false},
+                 actor: event.actor,
+                 execution_id: binding.execution_id
+               )
+
+      assert :ok = HistorySync.complete(session, persisted, recovered)
+    end)
+  end
+
+  test "a second canonical Executor waits for the root lease before Factory busy fallback" do
+    %{event: event, release: release, root: root, binding: binding} = canonical_followup_fixture()
+    owner = self()
+    manager = Process.whereis(ServerManager)
+    :erlang.trace(manager, true, [:receive, {:tracer, owner}])
+    on_exit(fn -> if Process.alive?(manager), do: :erlang.trace(manager, false, [:receive]) end)
+
+    second =
+      Task.async(fn ->
+        Sandbox.allow(Repo, owner, self())
+        Process.put(:followup_owner, owner)
+
+        Executor.run(event.request,
+          agent_id: event.assigns["agent_selection"]["agent_id"],
+          conversation_binding: binding,
+          actor: event.actor,
+          person_id: event.actor.person.id,
+          node_router: FollowupBoundaryRouter,
+          factory_module: BusyAfterLeaseFactory
+        )
+      end)
+
+    assert_receive {:trace, ^manager, :receive,
+                    {:"$gen_call", {second_pid, _}, {:begin_history_request, _, _, _}}}
+                   when second_pid == second.pid,
+                   5_000
+
+    refute_received :busy_factory_reached
+    send(release, :release_root_llm)
+    assert %Outgoing{body: "Root answer", metadata: %{error: false}} = Task.await(root, 10_000)
+    assert_receive :busy_factory_reached, 5_000
+    busy = Task.await(second, 10_000)
+    assert busy.metadata.error == true
+    assert Repo.get!(ExecutionRecord, binding.execution_id).public_answer_message_id == nil
+  end
+
+  defp canonical_followup_fixture do
+    owner = self()
+    turn = :atomics.new(1, [])
+
+    {child, endpoint} =
+      OpenAIStub.server(
+        fn conn, _body ->
+          case :atomics.add_get(turn, 1, 1) do
+            1 ->
+              send(owner, {:root_llm_barrier, self()})
+
+              receive do
+                :release_root_llm ->
+                  {200, streamed_reply(conn.request_path, "Root answer", "gpt-4.1-mini")}
+              after
+                10_000 -> flunk("root LLM barrier was not released")
+              end
+
+            2 ->
+              {200, streamed_reply(conn.request_path, "Followup answer", "gpt-4.1-mini")}
+          end
+        end,
+        owner
+      )
+
+    start_supervised!(child)
+
+    credential =
+      ai_credential_fixture(%{provider: "openai", endpoint: endpoint, api_key: "test-key"})
+
+    {:ok, configured} =
+      Agent.create_agent(%{
+        name: "Followup #{Ecto.UUID.generate()}",
+        job: "Answer briefly",
+        model: "gpt-4.1-mini",
+        credential_id: credential.id,
+        strategy: "react",
+        enabled_tool_keys: [],
+        active: true
+      })
+
+    on_exit(fn -> _ = ServerManager.stop_server(configured) end)
+    {:ok, person} = People.create_person(%{full_name: "Followup Person"})
+    actor = %{person: %{id: person.id}}
+
+    config =
+      %ChannelConfig{}
+      |> ChannelConfig.changeset(%{
+        name: "Followup room",
+        provider: "mattermost",
+        kind: "retrieval",
+        enabled: true,
+        url: "https://history.example.test",
+        token: "test-token"
+      })
+      |> Repo.insert!()
+
+    resource = ChannelHistoryResource.for("mattermost", config.id, "room")
+
+    assert {:ok, _grant} =
+             Permissions.grant(resource, %{person_id: person.id, access_rights: ["read"]})
+
+    incoming = fn content ->
+      Incoming.new(%{
+        provider: :mattermost,
+        person: person,
+        author_id: "person",
+        content: content,
+        channel_id: "room",
+        message_id: Ecto.UUID.generate(),
+        routing_context: %{channel_config_id: config.id, conversation_type: :room}
+      })
+      |> CommunicationBridge.put_conversation_identity()
+    end
+
+    first = incoming.("Root input")
+    assert {:ok, _} = HistoryIngress.capture(first)
+    assert {:ok, first_binding} = Conversations.admit_incoming(first)
+
+    root =
+      Task.async(fn ->
+        Sandbox.allow(Repo, owner, self())
+
+        HistorySync.with_session(fn session ->
+          outgoing =
+            Executor.run(first,
+              history_session: session,
+              conversation_binding: first_binding,
+              agent_id: configured.id,
+              person_id: person.id,
+              actor: actor,
+              node_router: FollowupBoundaryRouter
+            )
+
+          assert {:ok, persisted} =
+                   Conversations.finalize_incoming(
+                     first_binding.user_message_id,
+                     first_binding.finalization_token,
+                     %{answer: outgoing.body, usage: %{}, error: outgoing.metadata.error},
+                     actor: actor,
+                     execution_id: first_binding.execution_id
+                   )
+
+          assert :ok = HistorySync.complete(session, persisted, outgoing)
+          outgoing
+        end)
+      end)
+
+    assert_receive {:root_llm_barrier, release}, 5_000
+    on_exit(fn -> send(release, :release_root_llm) end)
+
+    second = incoming.("Followup input")
+    assert {:ok, _} = HistoryIngress.capture(second)
+    assert {:ok, second_binding} = Conversations.admit_incoming(second)
+
+    event =
+      Event.new(second, :agent,
+        actor: actor,
+        opts: [
+          action: :run_pipeline,
+          factory_module: ClosedControlFactory,
+          node_router: FollowupBoundaryRouter
+        ]
+      )
+
+    event = %{
+      event
+      | assigns: %{
+          "agent_selection" => %{"agent_id" => configured.id},
+          "conversation_binding" => second_binding
+        }
+    }
+
+    %{event: event, release: release, root: root, binding: second_binding}
   end
 
   @tag :actual_request_identity
@@ -1686,6 +2117,34 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
     refute outgoing.metadata[:suppressed] == true
   end
 
+  test "nil and whitespace-only partial answers never suppress a stream failure" do
+    incoming = %Incoming{
+      content: "hello",
+      channel_id: "bo-test",
+      provider: :web,
+      metadata: %{status_message_id: "status-placeholder"}
+    }
+
+    for delta <- [nil, "  \n  "] do
+      Process.put(:blank_stream_delta, delta)
+
+      outgoing =
+        Executor.run(incoming,
+          event: execution_event(),
+          agent_id: "stub",
+          agent_module: StubAgent,
+          server_manager_module: StubServerManager,
+          factory_module: StubFactoryStreamErrorAfterBlankContent
+        )
+
+      assert outgoing.metadata.error == true
+      assert outgoing.body =~ "something went wrong"
+      refute outgoing.metadata[:suppressed] == true
+      assert_received {:stopped_failed_runtime, 77, _server_id, runtime_pid}
+      assert is_pid(runtime_pid)
+    end
+  end
+
   test "surfaces stream error when no status_message_id is set in incoming metadata" do
     incoming = %Incoming{
       content: "hello",
@@ -1768,6 +2227,11 @@ defmodule Zaq.Agent.ExecutorIntegrationTest do
 
     assert outgoing.metadata.error == true
     assert [%{llm_call_id: "call-failed", total_tokens: 6}] = outgoing.metadata.llm_calls
+    assert outgoing.metadata.model == "openai:gpt-4.1-mini"
+    assert outgoing.metadata.measurements["llm_call_count"] == 1
+    assert outgoing.metadata.measurements["total_tokens"] == 6
+    assert outgoing.metadata.trace == []
+    assert outgoing.metadata.agent == %{id: 77, name: "Stub Agent"}
     assert :ok = Buffer.flush()
 
     assert Repo.one(

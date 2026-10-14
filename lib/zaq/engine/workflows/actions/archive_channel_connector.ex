@@ -31,7 +31,6 @@ defmodule Zaq.Engine.Workflows.Actions.ArchiveChannelConnector do
       {:ok, %{result: result}}
     else
       {:error, _} = error -> error
-      _ -> {:error, :unauthorized}
     end
   end
 

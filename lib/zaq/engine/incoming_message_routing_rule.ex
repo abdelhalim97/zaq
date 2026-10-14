@@ -77,16 +77,10 @@ defmodule Zaq.Engine.IncomingMessageRoutingRule do
   defp normalize_topic_id(changeset) do
     case fetch_change(changeset, :topic_id) do
       {:ok, topic_id} when is_binary(topic_id) ->
-        case String.trim(topic_id) do
-          "" -> put_change(changeset, :topic_id, nil)
-          normalized -> put_change(changeset, :topic_id, normalized)
-        end
+        put_change(changeset, :topic_id, String.trim(topic_id))
 
       {:ok, nil} ->
         put_change(changeset, :topic_id, nil)
-
-      {:ok, _topic_id} ->
-        add_error(changeset, :topic_id, "must be a string")
 
       :error ->
         changeset
@@ -103,7 +97,6 @@ defmodule Zaq.Engine.IncomingMessageRoutingRule do
   defp validate_destination(changeset) do
     case get_field(changeset, :routing_mode) do
       :agent -> validate_required(changeset, [:configured_agent_id])
-      :none -> validate_absent(changeset, :configured_agent_id)
       _ -> changeset
     end
   end
@@ -125,14 +118,6 @@ defmodule Zaq.Engine.IncomingMessageRoutingRule do
 
       true ->
         changeset
-    end
-  end
-
-  defp validate_absent(changeset, field) do
-    if get_field(changeset, field) do
-      add_error(changeset, field, "must be blank")
-    else
-      changeset
     end
   end
 

@@ -2687,6 +2687,221 @@ defmodule Zaq.Agent.ServerManagerTest do
 
   defp extract_request_content(_), do: ""
 
+  test "owned native request binding is idempotent but rejects a conflicting ID and stale token" do
+    agent = valid_configured_agent(System.unique_integer([:positive]))
+    scope = "native-binding:#{agent.id}"
+
+    {:ok, ref} =
+      ServerManager.ensure_server(agent, scope, nil,
+        actor: @execution_actor,
+        history_cursors: %{"transcript" => 0}
+      )
+
+    on_exit(fn -> ServerManager.stop_server(agent, scope) end)
+    pid = GenServer.whereis(ref)
+
+    assert {:ok, %{token: token}} =
+             ServerManager.begin_history_request(scope, pid, @execution_actor)
+
+    assert :ok = ServerManager.bind_native_history_request(scope, token, "native-1")
+    assert :ok = ServerManager.bind_native_history_request(scope, token, "native-1")
+
+    assert {:error, :history_binding_conflict} =
+             ServerManager.bind_native_history_request(scope, token, "native-2")
+
+    assert {:error, :stale_history_lease} =
+             ServerManager.bind_native_history_request(scope, make_ref(), "native-2")
+
+    assert :sys.get_state(ServerManager).history[scope].lease.request_id == "native-1"
+  end
+
+  test "owned lease refuses a conflicting history bind and stale adoption without disturbing its runtime" do
+    agent = valid_configured_agent(System.unique_integer([:positive]))
+    scope = "lease-bind:#{agent.id}"
+
+    {:ok, ref} =
+      ServerManager.ensure_server(agent, scope, nil,
+        actor: @execution_actor,
+        history_cursors: %{"transcript" => 0}
+      )
+
+    on_exit(fn -> ServerManager.stop_server(agent, scope) end)
+    pid = GenServer.whereis(ref)
+
+    assert {:ok, %{token: token}} =
+             ServerManager.begin_history_request(scope, pid, @execution_actor)
+
+    details = %{session: make_ref(), actor: @execution_actor}
+    assert :ok = ServerManager.bind_history_request(scope, token, details)
+    assert :ok = ServerManager.bind_history_request(scope, token, details)
+
+    assert {:error, :history_binding_conflict} =
+             ServerManager.bind_history_request(scope, token, %{details | session: make_ref()})
+
+    assert {:error, :stale_history_lease} =
+             ServerManager.adopt_history_request(scope, pid, make_ref(), details)
+
+    assert GenServer.whereis(ref) == pid
+    assert :sys.get_state(ServerManager).history[scope].lease.details == details
+  end
+
+  test "expired reservation fails before joining an owned history lease" do
+    agent = valid_configured_agent(System.unique_integer([:positive]))
+    scope = "expired-reservation:#{agent.id}"
+
+    {:ok, ref} =
+      ServerManager.ensure_server(agent, scope, nil,
+        actor: @execution_actor,
+        history_cursors: %{"transcript" => 0}
+      )
+
+    on_exit(fn -> ServerManager.stop_server(agent, scope) end)
+    pid = GenServer.whereis(ref)
+    deadline = System.monotonic_time(:millisecond) - 1
+
+    assert {:error, :history_handoff_timeout} =
+             GenServer.call(
+               ServerManager,
+               {:reserve_history_request, pid, @execution_actor, "input", deadline}
+             )
+
+    assert :sys.get_state(ServerManager).history[scope].lease == nil
+    assert GenServer.whereis(ref) == pid
+  end
+
+  test "idle-expiry ignores another incarnation and a mismatched idle result" do
+    agent = valid_configured_agent(System.unique_integer([:positive]))
+    scope = "idle-fence:#{agent.id}"
+
+    {:ok, ref} =
+      ServerManager.ensure_server(agent, scope, nil,
+        actor: @execution_actor,
+        history_cursors: %{"transcript" => 0}
+      )
+
+    on_exit(fn -> ServerManager.stop_server(agent, scope) end)
+    pid = GenServer.whereis(ref)
+    other = self()
+    send(ServerManager, {:expire_server, scope, other})
+    send(ServerManager, {:history_idle_result, scope, other, :idle, :ok})
+    send(ServerManager, {:history_idle_result, scope, pid, make_ref(), :ok})
+    _ = :sys.get_state(ServerManager)
+
+    assert GenServer.whereis(ref) == pid
+    assert :sys.get_state(ServerManager).history[scope].retirement == nil
+  end
+
+  test "draining completion refuses to publish a lease and later stops its exact incarnation" do
+    previous = Application.get_env(:zaq, :agent_server_force_drain)
+    Application.put_env(:zaq, :agent_server_force_drain, true)
+    on_exit(fn -> restore_env(:agent_server_force_drain, previous) end)
+
+    agent = valid_configured_agent(System.unique_integer([:positive]))
+    scope = "draining-completion:#{agent.id}"
+
+    {:ok, ref} =
+      ServerManager.ensure_server(agent, scope, nil,
+        actor: @execution_actor,
+        history_cursors: %{"transcript" => 0}
+      )
+
+    on_exit(fn -> ServerManager.stop_server(agent, scope) end)
+    pid = GenServer.whereis(ref)
+    monitor = Process.monitor(pid)
+
+    assert {:ok, %{token: token}} =
+             ServerManager.begin_history_request(scope, pid, @execution_actor)
+
+    assert :ok = ServerManager.stop_server(agent, scope)
+
+    assert {:error, :server_draining} =
+             ServerManager.complete_history_request(
+               scope,
+               token,
+               AIContext.new(),
+               %{"transcript" => 1}
+             )
+
+    assert :sys.get_state(ServerManager).history[scope] == nil
+
+    assert {:error, :server_draining} =
+             ServerManager.begin_history_request(scope, pid, @execution_actor)
+
+    assert_receive {:DOWN, ^monitor, :process, ^pid, _}, 2_000
+    assert GenServer.whereis(ref) == nil
+  end
+
+  test "stale incarnation cannot acquire a history lease or stop its replacement" do
+    agent = valid_configured_agent(System.unique_integer([:positive]))
+    scope = "stale-incarnation:#{agent.id}"
+    opts = [actor: @execution_actor, history_cursors: %{"transcript" => 0}]
+    assert {:ok, ref} = ServerManager.ensure_server(agent, scope, nil, opts)
+    on_exit(fn -> ServerManager.stop_server(agent, scope) end)
+    old_pid = GenServer.whereis(ref)
+    monitor = Process.monitor(old_pid)
+    assert :ok = ServerManager.stop_server(agent, scope)
+    assert_receive {:DOWN, ^monitor, :process, ^old_pid, _}, 1_000
+
+    assert {:ok, ^ref} = ServerManager.ensure_server(agent, scope, nil, opts)
+    new_pid = GenServer.whereis(ref)
+    refute old_pid == new_pid
+
+    assert {:error, :stale_runtime} =
+             ServerManager.begin_history_request(scope, old_pid, @execution_actor)
+
+    assert :ok = ServerManager.stop_server_if_current(agent, scope, old_pid)
+    assert GenServer.whereis(ref) == new_pid
+    assert :ok = ServerManager.stop_server(agent, scope)
+  end
+
+  test "stopping a missing runtime is idempotent without inventing a dependency" do
+    agent = valid_configured_agent(System.unique_integer([:positive]))
+    scope = "missing-idempotent:#{agent.id}"
+    assert :ok = ServerManager.stop_server(agent, scope)
+    assert :ok = ServerManager.stop_server(agent, scope)
+    assert ServerManager.credential_dependency(scope) == nil
+  end
+
+  test "native target revalidation fences stale lease tokens and malformed runtime selectors" do
+    agent = valid_configured_agent(System.unique_integer([:positive]))
+    scope = "target-fence:#{agent.id}"
+
+    {:ok, ref} =
+      ServerManager.ensure_server(agent, scope, nil,
+        actor: @execution_actor,
+        history_cursors: %{"transcript" => 0}
+      )
+
+    on_exit(fn -> ServerManager.stop_server(agent, scope) end)
+    pid = GenServer.whereis(ref)
+
+    assert {:ok, %{token: token}} =
+             ServerManager.begin_history_request(scope, pid, @execution_actor)
+
+    assert :ok = ServerManager.bind_native_history_request(scope, token, "native-target")
+
+    target = %{
+      server_id: scope,
+      runtime_pid: pid,
+      lease_token: token,
+      request_id: "native-target"
+    }
+
+    assert :ok = ServerManager.current_request_target(target)
+
+    assert {:error, :stale_runtime} =
+             ServerManager.current_request_target(%{target | lease_token: make_ref()})
+
+    assert {:error, :stale_runtime} =
+             ServerManager.current_request_target(%{target | request_id: "other"})
+
+    assert {:ok, []} =
+             ServerManager.runtime_candidates(@execution_actor, scope, :invalid_selector)
+
+    assert {:ok, [%{runtime_pid: ^pid, lease_token: ^token}]} =
+             ServerManager.runtime_candidates(@execution_actor, scope, %{agent_id: agent.id})
+  end
+
   defp restart_manager do
     assert :ok = Supervisor.terminate_child(Zaq.Agent.Supervisor, ServerManager)
     assert {:ok, pid} = Supervisor.restart_child(Zaq.Agent.Supervisor, ServerManager)

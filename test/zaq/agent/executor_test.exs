@@ -762,6 +762,10 @@ defmodule Zaq.Agent.ExecutorTest do
 
       assert outgoing.body == "measurement answer"
       assert outgoing.metadata.error == false
+      assert is_nil(outgoing.metadata[:prompt_tokens])
+      assert is_nil(outgoing.metadata[:completion_tokens])
+      assert is_nil(outgoing.metadata[:total_tokens])
+      refute Map.has_key?(outgoing.metadata[:measurements], unknown_key)
       assert_raise ArgumentError, fn -> String.to_existing_atom(unknown_key) end
     end
 

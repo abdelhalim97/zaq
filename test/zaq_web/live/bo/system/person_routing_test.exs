@@ -7,21 +7,80 @@ defmodule ZaqWeb.Live.BO.System.PersonRoutingTest do
   alias Zaq.Accounts.People
   alias Zaq.Accounts.Person
   alias Zaq.Accounts.PersonChannel
+  alias Zaq.Agent.ConfiguredAgent
   alias Zaq.Channels.AgentRouting
   alias Zaq.Channels.RetrievalChannel
   alias Zaq.Engine.ChannelConfig
+  alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Engine.IncomingMessageRoutingRule
   alias Zaq.Engine.PeopleGateway
   alias Zaq.Repo
   alias ZaqWeb.Live.BO.Communication.AgentRoutingOptions
   alias ZaqWeb.Live.BO.System.PersonRouting
   import Zaq.CommunicationFixtures
+  import Zaq.SystemConfigFixtures
 
   test "nil person produces default values for every routing scope" do
     assert PersonRouting.person_global_agent_value(nil) == ""
     assert PersonRouting.person_provider_agent_value(nil, %ChannelConfig{id: 1}) == ""
     assert PersonRouting.person_retrieval_agent_value(nil, %RetrievalChannel{id: 1}) == ""
     assert PersonRouting.person_topic_agent_value(nil, %ChannelConfig{id: 1}, "INBOX") == ""
+  end
+
+  test "person routing values resolve only their exact persisted scope" do
+    person = person_fixture()
+    channel = channel_fixture(person)
+    retrieval = insert_retrieval_channel!(channel.channel_config_id)
+    agent = insert_agent!()
+
+    scopes = [
+      {%{person_id: person.id}, :none},
+      {%{person_id: person.id, channel_config_id: channel.channel_config_id}, :agent},
+      {%{
+         person_id: person.id,
+         channel_config_id: channel.channel_config_id,
+         retrieval_channel_id: retrieval.id
+       }, :none},
+      {%{person_id: person.id, channel_config_id: channel.channel_config_id, topic_id: "INBOX"},
+       :agent}
+    ]
+
+    Enum.each(scopes, fn {scope, mode} ->
+      attrs =
+        if mode == :agent,
+          do: %{routing_mode: mode, configured_agent_id: agent.id},
+          else: %{routing_mode: mode}
+
+      assert {:ok, _} = IncomingMessageRouting.upsert_rule(scope, attrs)
+    end)
+
+    assert PersonRouting.person_global_agent_value(person) == AgentRouting.none_value()
+
+    assert PersonRouting.person_provider_agent_value(person, %ChannelConfig{
+             id: channel.channel_config_id
+           }) == AgentRouting.select_value(agent.id)
+
+    assert PersonRouting.person_retrieval_agent_value(person, retrieval) ==
+             AgentRouting.none_value()
+
+    assert PersonRouting.person_topic_agent_value(
+             person,
+             %ChannelConfig{id: channel.channel_config_id},
+             "INBOX"
+           ) == AgentRouting.select_value(agent.id)
+
+    assert PersonRouting.person_provider_agent_value(person, %ChannelConfig{
+             id: channel.channel_config_id + 1
+           }) == ""
+
+    assert PersonRouting.person_retrieval_agent_value(person, %{retrieval | id: retrieval.id + 1}) ==
+             ""
+
+    assert PersonRouting.person_topic_agent_value(
+             person,
+             %ChannelConfig{id: channel.channel_config_id},
+             "OTHER"
+           ) == ""
   end
 
   test "non-channel values have no available routing configs" do
@@ -172,5 +231,37 @@ defmodule ZaqWeb.Live.BO.System.PersonRoutingTest do
       )
 
     assert rules == []
+  end
+
+  defp insert_retrieval_channel!(channel_config_id) do
+    %RetrievalChannel{}
+    |> RetrievalChannel.changeset(%{
+      channel_config_id: channel_config_id,
+      channel_id: "person-routing-#{System.unique_integer([:positive, :monotonic])}",
+      channel_name: "Person routing",
+      team_id: "team-1",
+      team_name: "Team",
+      active: true
+    })
+    |> Repo.insert!()
+  end
+
+  defp insert_agent! do
+    credential = ai_credential_fixture()
+
+    %ConfiguredAgent{}
+    |> ConfiguredAgent.changeset(%{
+      name: "Person routing #{System.unique_integer([:positive, :monotonic])}",
+      description: "",
+      job: "Route incoming messages",
+      model: "gpt-4.1-mini",
+      credential_id: credential.id,
+      strategy: "react",
+      enabled_tool_keys: [],
+      conversation_enabled: true,
+      active: true,
+      advanced_options: %{}
+    })
+    |> Repo.insert!()
   end
 end
