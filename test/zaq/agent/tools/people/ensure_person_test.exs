@@ -1,5 +1,6 @@
 defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
   use Zaq.DataCase, async: true
+  import Zaq.CommunicationFixtures
 
   alias Jido.Action.Runtime
   alias Jido.Action.Schema
@@ -66,6 +67,7 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
                  %{
                    "company" => "Acme",
                    platform: "email",
+                   channel_config_id: connector_fixture("email").id,
                    email: "schema@example.com",
                    row_index: 3
                  },
@@ -119,7 +121,14 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
       person_id = person.id
 
       assert {:ok, %{person: %{id: ^person_id}, row: _} = result} =
-               EnsurePerson.run(%{platform: "email", email: "alice@example.com"}, @ctx)
+               EnsurePerson.run(
+                 %{
+                   platform: "email",
+                   channel_config_id: connector_fixture("email").id,
+                   email: "alice@example.com"
+                 },
+                 @ctx
+               )
 
       assert {:ok, _json} = Jason.encode(result)
       refute Map.has_key?(result, :person_id)
@@ -129,7 +138,14 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
       {:ok, _} = People.create_person(%{full_name: "Alice Smith", email: "alice@example.com"})
       count_before = Repo.aggregate(Person, :count)
 
-      EnsurePerson.run(%{platform: "email", email: "alice@example.com"}, @ctx)
+      EnsurePerson.run(
+        %{
+          platform: "email",
+          channel_config_id: connector_fixture("email").id,
+          email: "alice@example.com"
+        },
+        @ctx
+      )
 
       assert Repo.aggregate(Person, :count) == count_before
     end
@@ -141,7 +157,12 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
 
       assert {:ok, %{person: %{id: person_id}, row: _} = result} =
                EnsurePerson.run(
-                 %{platform: "email", email: "new@example.com", display_name: "New Person"},
+                 %{
+                   platform: "email",
+                   channel_config_id: connector_fixture("email").id,
+                   email: "new@example.com",
+                   display_name: "New Person"
+                 },
                  @ctx
                )
 
@@ -154,7 +175,14 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
 
     test "uses email as full_name when display_name is absent" do
       assert {:ok, %{person: %{id: person_id}}} =
-               EnsurePerson.run(%{platform: "email", email: "noname@example.com"}, @ctx)
+               EnsurePerson.run(
+                 %{
+                   platform: "email",
+                   channel_config_id: connector_fixture("email").id,
+                   email: "noname@example.com"
+                 },
+                 @ctx
+               )
 
       person = Repo.get!(Person, person_id)
       assert person.email == "noname@example.com"
@@ -163,7 +191,14 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
     test "uses name field as fallback for display_name" do
       # Simulates runtime: atom keys from static params, string keys from accumulator
       params =
-        Map.merge(%{platform: "email", email: "named@example.com"}, %{"name" => "Named Person"})
+        Map.merge(
+          %{
+            platform: "email",
+            channel_config_id: connector_fixture("email").id,
+            email: "named@example.com"
+          },
+          %{"name" => "Named Person"}
+        )
 
       assert {:ok, %{person: %{id: person_id}}} =
                EnsurePerson.run(params, @ctx)
@@ -174,7 +209,14 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
 
     test "links an email PersonChannel on creation" do
       assert {:ok, %{person: %{id: person_id}}} =
-               EnsurePerson.run(%{platform: "email", email: "linked@example.com"}, @ctx)
+               EnsurePerson.run(
+                 %{
+                   platform: "email",
+                   channel_config_id: connector_fixture("email").id,
+                   email: "linked@example.com"
+                 },
+                 @ctx
+               )
 
       channels = Repo.all(from c in PersonChannel, where: c.person_id == ^person_id)
 
@@ -191,6 +233,7 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
                EnsurePerson.run(
                  %{
                    platform: "mattermost",
+                   channel_config_id: connector_fixture("mattermost").id,
                    channel_id: "user123",
                    display_name: "Bob"
                  },
@@ -207,7 +250,14 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
 
     test "defaults channel_id to email when platform is email and channel_id is absent" do
       assert {:ok, %{person: %{id: person_id}}} =
-               EnsurePerson.run(%{platform: "email", email: "implicit@example.com"}, @ctx)
+               EnsurePerson.run(
+                 %{
+                   platform: "email",
+                   channel_config_id: connector_fixture("email").id,
+                   email: "implicit@example.com"
+                 },
+                 @ctx
+               )
 
       channels = Repo.all(from c in PersonChannel, where: c.person_id == ^person_id)
       assert Enum.any?(channels, &(&1.channel_identifier == "implicit@example.com"))
@@ -218,7 +268,11 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
     test "returns an error when the people context rejects channel creation" do
       assert {:error, message} =
                EnsurePerson.run(
-                 %{platform: "email", email: "bad@example.com"},
+                 %{
+                   platform: "email",
+                   channel_config_id: connector_fixture("email").id,
+                   email: "bad@example.com"
+                 },
                  %{people_module: FailingPeople}
                )
 
@@ -230,7 +284,12 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
     test "returns all input data as string-keyed row (drops platform)" do
       params =
         Map.merge(
-          %{platform: "email", email: "row@example.com", display_name: "Row Test"},
+          %{
+            platform: "email",
+            channel_config_id: connector_fixture("email").id,
+            email: "row@example.com",
+            display_name: "Row Test"
+          },
           %{"company" => "Acme", "row_index" => 3}
         )
 
@@ -245,7 +304,14 @@ defmodule Zaq.Agent.Tools.People.EnsurePersonTest do
 
     test "row keys are all strings" do
       assert {:ok, %{row: row}} =
-               EnsurePerson.run(%{platform: "email", email: "strkeys@example.com"}, @ctx)
+               EnsurePerson.run(
+                 %{
+                   platform: "email",
+                   channel_config_id: connector_fixture("email").id,
+                   email: "strkeys@example.com"
+                 },
+                 @ctx
+               )
 
       assert Enum.all?(Map.keys(row), &is_binary/1)
     end

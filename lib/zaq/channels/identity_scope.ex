@@ -4,6 +4,8 @@ defmodule Zaq.Channels.IdentityScope do
   Provider semantics belong here; consumers compare the resulting opaque key.
   Endpoint-scoped authorities retain deployment paths. Unknown tenant scope stays
   connector-local rather than guessing that opaque IDs are globally unique.
+  Connector-local authorities require a positive connector ID; missing scope is
+  invalid rather than a shared legacy namespace.
   """
 
   @spec authority(String.t(), map() | nil) :: String.t()
@@ -31,6 +33,8 @@ defmodule Zaq.Channels.IdentityScope do
 
   def authority(_platform, config), do: connector_authority(config)
 
-  defp connector_authority(%{id: id}) when is_integer(id), do: "connector:#{id}"
-  defp connector_authority(_), do: "unscoped"
+  defp connector_authority(%{id: id}) when is_integer(id) and id > 0, do: "connector:#{id}"
+
+  defp connector_authority(_),
+    do: raise(ArgumentError, "native identity requires connector scope")
 end

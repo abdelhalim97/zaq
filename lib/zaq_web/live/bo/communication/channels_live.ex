@@ -6,6 +6,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsLive do
 
   require Logger
   alias Zaq.Channels.{AgentRouting, Bridge}
+  alias Zaq.Channels.ProviderCatalog, as: ChannelProvider
   alias Zaq.Channels.RetrievalChannel, as: RetChannel
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Connect.Credential
@@ -32,31 +33,12 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsLive do
   @pending_ingress_status_retry_ms 200
   @pending_ingress_status_max_attempts 25
 
-  @provider_labels %{
-    # Retrieval
-    "slack" => "Slack",
-    "teams" => "Microsoft Teams",
-    "mattermost" => "Mattermost",
-    "discord" => "Discord",
-    "telegram" => "Telegram",
-    "webhook" => "Webhook",
-    # Data sources
-    "disk" => "Disk",
-    "google_drive" => "Google Drive",
-    "sharepoint" => "SharePoint"
-  }
-
   @impl true
   def mount(%{"provider" => provider}, _session, socket) do
     available = socket.assigns.service_available
     kind = socket.assigns.live_action
 
-    label =
-      Map.get(
-        @provider_labels,
-        provider,
-        provider |> String.replace("_", " ") |> String.capitalize()
-      )
+    label = ChannelProvider.label(provider)
 
     back_path =
       case kind do

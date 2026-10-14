@@ -33,7 +33,14 @@ defmodule Zaq.DataCase do
   Sets up the sandbox based on the test tags.
   """
   def setup_sandbox(tags) do
-    pid = Sandbox.start_owner!(Zaq.Repo, shared: not tags[:async])
+    opts = [shared: not tags[:async]]
+
+    opts =
+      if is_integer(tags[:timeout]) and tags[:timeout] > 120_000,
+        do: Keyword.put(opts, :ownership_timeout, tags[:timeout] + 1_000),
+        else: opts
+
+    pid = Sandbox.start_owner!(Zaq.Repo, opts)
 
     case Process.whereis(Buffer) do
       buffer_pid when is_pid(buffer_pid) -> Sandbox.allow(Zaq.Repo, pid, buffer_pid)

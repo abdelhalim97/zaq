@@ -87,13 +87,13 @@ defmodule Zaq.Engine.Notifications.UserNotificationTest do
       assert {:ok,
               %{
                 status: :sent,
-                channel: "email:smtp",
+                channel: "email",
                 channel_identifier: "ops@example.com",
                 notification_log_id: log_id
               }} = Notifications.notify_user(user.id, %{subject: "Ops", message: "Check queue"})
 
       assert_received {:deliver_outgoing, %Outgoing{} = outgoing}
-      assert outgoing.provider == "email:smtp"
+      assert outgoing.provider == "email"
       assert outgoing.channel_id == "ops@example.com"
       assert outgoing.body == "Check queue"
       assert outgoing.metadata["subject"] == "Ops"

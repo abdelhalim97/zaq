@@ -15,7 +15,6 @@ defmodule Zaq.Accounts.People do
   alias Zaq.Accounts.PersonIdentities
   alias Zaq.Accounts.PersonMerger
   alias Zaq.Accounts.Team
-  alias Zaq.Channels.Bridge
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Connect.PersonLifecycle
   alias Zaq.Repo
@@ -152,22 +151,6 @@ defmodule Zaq.Accounts.People do
     end
   end
 
-  @doc "Matches an unscoped legacy or BO-owned identity by platform and identifier."
-  @spec match_by_channel(String.t(), String.t()) :: {:ok, Person.t()} | {:error, :not_found}
-  def match_by_channel(platform, channel_identifier)
-      when is_binary(platform) and is_binary(channel_identifier) and channel_identifier != "" do
-    case find_matching_channel(
-           from(c in PersonChannel, where: is_nil(c.channel_config_id)),
-           platform,
-           channel_identifier
-         ) do
-      nil -> {:error, :not_found}
-      channel -> {:ok, get_person_with_channels!(channel.person_id)}
-    end
-  end
-
-  def match_by_channel(_platform, _channel_identifier), do: {:error, :not_found}
-
   @doc "Matches an opaque author identity only within its configured connector."
   @spec match_by_channel(String.t(), String.t(), pos_integer()) ::
           {:ok, Person.t()} | {:error, :not_found}
@@ -190,62 +173,6 @@ defmodule Zaq.Accounts.People do
   end
 
   def match_by_channel(_platform, _identifier, _config_id), do: {:error, :not_found}
-
-  @doc "Binds an old unscoped opaque identity only when its provider has one known connector."
-  @spec link_legacy_channel_to_connector(String.t(), String.t(), pos_integer()) ::
-          {:ok, PersonChannel.t()} | {:error, term()}
-  def link_legacy_channel_to_connector(platform, identifier, config_id) do
-    if valid_legacy_scope?(platform, identifier, config_id) do
-      bind_legacy_channel(platform, identifier, config_id)
-    else
-      {:error, :not_found}
-    end
-  end
-
-  defp valid_legacy_scope?(platform, identifier, config_id)
-       when is_binary(platform) and platform != "email" and is_binary(identifier) and
-              identifier != "" and is_integer(config_id) and config_id > 0,
-       do: true
-
-  defp valid_legacy_scope?(_, _, _), do: false
-
-  defp bind_legacy_channel(platform, identifier, config_id) do
-    PersonMerger.transaction(fn ->
-      config_ids =
-        Repo.all(
-          from c in ChannelConfig,
-            where: c.provider == ^platform and c.kind == "retrieval",
-            select: c.id,
-            limit: 2
-        )
-
-      if config_ids != [config_id], do: Repo.rollback(:ambiguous_connector)
-
-      channel =
-        find_matching_channel(
-          from(c in PersonChannel, where: is_nil(c.channel_config_id), lock: "FOR UPDATE"),
-          platform,
-          identifier
-        )
-
-      if is_nil(channel), do: Repo.rollback(:not_found)
-
-      identity =
-        PersonIdentities.claim(channel.person_id, platform, %{
-          "channel_config_id" => config_id,
-          "channel_id" => identifier
-        })
-        |> linked!()
-
-      case channel
-           |> PersonChannel.changeset(%{channel_config_id: config_id})
-           |> Ecto.Changeset.put_change(:person_identity_id, identity.id)
-           |> Repo.update() do
-        {:ok, linked} -> linked
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
-  end
 
   @doc """
   Matches a person by priority: email → phone → {platform, channel_identifier}.
@@ -272,13 +199,28 @@ defmodule Zaq.Accounts.People do
           {:ok, Person.t()} | {:error, term()}
   def find_or_create_from_channel(platform, attrs) do
     retry? = not Repo.in_transaction?()
-    platform_str = platform |> to_string() |> canonical_platform()
+    platform_str = to_string(platform)
 
     attrs_with_platform =
       attrs
       |> stringify_keys()
       |> Map.put_new("platform", platform_str)
 
+    origin = %{
+      platform: platform_str,
+      channel_config_id: attrs_with_platform["channel_config_id"]
+    }
+
+    with {:ok, config_id} <- ChannelConfig.resolve_person_channel_connector(platform_str, origin) do
+      discover_with_retry(
+        platform_str,
+        Map.put(attrs_with_platform, "channel_config_id", config_id),
+        retry?
+      )
+    end
+  end
+
+  defp discover_with_retry(platform_str, attrs_with_platform, retry?) do
     case discover_person(platform_str, attrs_with_platform) do
       {:error, %Ecto.Changeset{} = changeset} = error ->
         # Retry only after the failed transaction has rolled back. A concurrent
@@ -299,21 +241,23 @@ defmodule Zaq.Accounts.People do
         opts[:constraint_name] in [
           "people_email_index",
           "person_identities_platform_authority_identifier_index",
-          "channels_connector_identifier_index",
-          "channels_platform_channel_identifier_index"
+          "channels_connector_identifier_index"
         ]
     end)
   end
 
   defp discover_person(platform, attrs) do
     Repo.transaction(fn ->
+      unless ChannelConfig.person_channel_connector?(platform, attrs["channel_config_id"]),
+        do: Repo.rollback(:connector_mismatch)
+
       person =
         case match_discovered_person(platform, attrs) do
           {:ok, person} ->
             person
 
           {:error, :not_found} ->
-            attrs |> insert_partial_person() |> linked!()
+            insert_partial_person(attrs, platform) |> linked!()
 
           {:error, reason} ->
             Repo.rollback(reason)
@@ -352,15 +296,13 @@ defmodule Zaq.Accounts.People do
 
   defp match_connector_person(platform, %{"channel_config_id" => id} = attrs)
        when is_integer(id) and id > 0 do
-    # Legacy links may establish a match only within their connector. Native
+    # Connector links establish a match only within their connector. Native
     # identities above carry the provider's cross-connector authority.
     case match_by_channel(platform, attrs["channel_id"] || "", id) do
-      {:error, :not_found} -> match_by_email(attrs)
+      {:error, :not_found} -> match_normalized_person(attrs)
       result -> result
     end
   end
-
-  defp match_connector_person(_platform, attrs), do: match_normalized_person(attrs)
 
   defp linked!({:ok, value}), do: value
   defp linked!({:error, reason}), do: Repo.rollback(reason)
@@ -481,9 +423,9 @@ defmodule Zaq.Accounts.People do
     end
   end
 
-  def create_person(attrs) do
+  def create_person(attrs, opts \\ []) do
     attrs = Map.put_new(stringify_keys(attrs), "incomplete", true)
-    persist_person(Person.changeset(%Person{}, attrs), :insert)
+    persist_person(Person.changeset(%Person{}, attrs), :insert, opts)
   end
 
   def update_person(%Person{} = person, attrs) do
@@ -599,32 +541,76 @@ defmodule Zaq.Accounts.People do
     person |> Person.merge_result_changeset(attrs) |> Repo.update()
   end
 
-  defp persist_person(changeset, operation) do
-    link_email? = operation == :insert or Ecto.Changeset.changed?(changeset, :email)
-
+  defp persist_person(changeset, operation, opts \\ []) do
     Repo.transaction(fn ->
       person = apply(Repo, operation, [changeset]) |> linked!()
-      email_link = if link_email?, do: maybe_link_email_channel(person), else: {:ok, nil}
+      claim_profile_email!(person, changeset, operation)
 
-      case email_link do
-        {:ok, _} ->
-          person
+      if operation == :insert or Ecto.Changeset.changed?(changeset, :email),
+        do: link_profile_email!(person, changeset, operation, opts)
 
-        {:error, error} ->
-          # Person forms render email, while channel forms render identifier.
-          # Keep the original Person changes and never expose another owner.
-          Repo.rollback(email_link_error(changeset, error, operation))
+      old_email = changeset.data.email
+
+      if old_email && old_email != person.email do
+        PersonIdentities.release_email(person.id, old_email)
       end
+
+      person
     end)
   end
 
-  defp email_link_error(changeset, error, operation) do
-    changeset =
-      Enum.reduce(error.errors, changeset, fn {_field, {message, opts}}, acc ->
-        Ecto.Changeset.add_error(acc, :email, message, opts)
-      end)
+  defp link_profile_email!(%Person{email: nil}, _, _, _), do: :ok
 
-    %{changeset | action: operation}
+  defp link_profile_email!(person, changeset, operation, opts) do
+    existing =
+      Repo.exists?(
+        from c in PersonChannel,
+          where:
+            c.person_id == ^person.id and c.platform == "email" and
+              c.channel_identifier == ^person.email
+      )
+
+    unless existing do
+      result =
+        with {:ok, config_id} <-
+               ChannelConfig.resolve_person_channel_connector("email", opts[:origin]) do
+          ensure_channel_linked(person, "email", %{
+            "channel_id" => person.email,
+            "channel_config_id" => config_id
+          })
+        end
+
+      case result do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          changeset
+          |> Ecto.Changeset.add_error(
+            :email,
+            "cannot link email to its default connector: #{inspect(reason)}"
+          )
+          |> Map.put(:action, operation)
+          |> Repo.rollback()
+      end
+    end
+  end
+
+  defp claim_profile_email!(%Person{email: nil}, _, _), do: :ok
+
+  defp claim_profile_email!(person, changeset, operation) do
+    case PersonIdentities.claim(person.id, "email", %{"channel_id" => person.email}) do
+      {:ok, _} ->
+        :ok
+
+      {:error, error} ->
+        failed =
+          Enum.reduce(error.errors, changeset, fn {_, {message, opts}}, acc ->
+            Ecto.Changeset.add_error(acc, :email, message, opts)
+          end)
+
+        Repo.rollback(%{failed | action: operation})
+    end
   end
 
   def delete_person(%Person{} = person) do
@@ -829,6 +815,12 @@ defmodule Zaq.Accounts.People do
   defp bind_channel_identity!(changeset, action) do
     channel = Ecto.Changeset.apply_changes(changeset)
 
+    unless ChannelConfig.person_channel_connector?(channel.platform, channel.channel_config_id) do
+      Repo.rollback(
+        Ecto.Changeset.add_error(changeset, :channel_config_id, "does not match the platform")
+      )
+    end
+
     attrs = %{
       "channel_config_id" => channel.channel_config_id,
       "channel_id" => channel.channel_identifier
@@ -912,6 +904,7 @@ defmodule Zaq.Accounts.People do
     email = Person.normalize_email(email)
 
     case email && Repo.get_by(Person, email: email) do
+      nil when is_binary(email) -> PersonIdentities.lookup("email", %{"channel_id" => email})
       nil -> {:error, :not_found}
       person -> {:ok, person}
     end
@@ -928,9 +921,13 @@ defmodule Zaq.Accounts.People do
 
   defp match_by_phone(_), do: {:error, :not_found}
 
-  defp match_by_channel(%{"platform" => platform, "channel_id" => channel_id})
+  defp match_by_channel(%{
+         "platform" => platform,
+         "channel_id" => channel_id,
+         "channel_config_id" => config_id
+       })
        when is_binary(platform) and is_binary(channel_id) and channel_id != "" do
-    match_by_channel(platform, channel_id)
+    match_by_channel(platform, channel_id, config_id)
   end
 
   defp match_by_channel(_), do: {:error, :not_found}
@@ -955,24 +952,14 @@ defmodule Zaq.Accounts.People do
 
     query = from(c in PersonChannel, where: c.person_id == ^person.id)
 
-    query =
-      if is_nil(config_id),
-        do: from(c in query, where: is_nil(c.channel_config_id)),
-        else: from(c in query, where: c.channel_config_id == ^config_id)
+    query = from(c in query, where: c.channel_config_id == ^config_id)
 
     existing = find_matching_channel(query, platform, channel_id)
 
     if existing do
-      cond do
-        not PersonIdentities.current_scope?(existing) ->
-          {:error, :identity_scope_changed}
-
-        existing.person_identity_id ->
-          {:ok, existing}
-
-        true ->
-          existing |> Ecto.Changeset.change() |> bind_channel_identity!(:update) |> Repo.update()
-      end
+      if PersonIdentities.current_scope?(existing),
+        do: {:ok, existing},
+        else: {:error, :identity_scope_changed}
     else
       add_channel(%{
         person_id: person.id,
@@ -1065,38 +1052,8 @@ defmodule Zaq.Accounts.People do
   defp merge_resource_people(_person, _other_id, _precedence),
     do: {:error, :invalid_merge_precedence}
 
-  defp canonical_platform(platform) do
-    case Bridge.provider_to_bridge_key(platform) do
-      nil -> platform
-      key -> to_string(key)
-    end
-  end
-
-  # Called from create_person/update_person with a resolved Person struct.
-  defp maybe_link_email_channel(%Person{email: email} = person)
-       when is_binary(email) and email != "" do
-    ensure_channel_linked(person, "email", %{
-      "channel_id" => email,
-      "email" => email,
-      "display_name" => person.full_name
-    })
-  end
-
-  defp maybe_link_email_channel(_person), do: {:ok, nil}
-
   defp link_discovery_channels(person, platform, attrs) do
-    email = if is_binary(attrs["email"]), do: Person.normalize_email(attrs["email"])
-    email_attrs = %{"channel_id" => email, "display_name" => attrs["display_name"]}
-    links = [{platform, attrs}] ++ if(email, do: [{"email", email_attrs}], else: [])
-
-    links
-    |> Enum.uniq_by(fn {platform, attrs} ->
-      {platform, attrs["channel_config_id"],
-       PersonChannel.normalize_identifier(platform, attrs["channel_id"])}
-    end)
-    |> Enum.each(fn {platform, attrs} ->
-      ensure_channel_linked(person, platform, attrs) |> linked!()
-    end)
+    ensure_channel_linked(person, platform, attrs) |> linked!()
   end
 
   defp backfill_person(person, attrs) do
@@ -1114,7 +1071,7 @@ defmodule Zaq.Accounts.People do
       |> maybe_put_if_nil(:full_name, effective_name, attrs, "display_name")
 
     if map_size(updates) > 0 do
-      person |> Person.update_changeset(updates) |> Repo.update()
+      update_person(person, updates)
     else
       {:ok, person}
     end
@@ -1131,17 +1088,20 @@ defmodule Zaq.Accounts.People do
     end
   end
 
-  defp insert_partial_person(channel_attrs) do
+  defp insert_partial_person(channel_attrs, platform) do
     full_name = channel_attrs["display_name"] || channel_attrs["channel_id"] || "Unknown"
 
-    %Person{}
-    |> Person.changeset(%{
-      full_name: full_name,
-      email: channel_attrs["email"],
-      phone: channel_attrs["phone"],
-      incomplete: true
-    })
-    |> Repo.insert()
+    opts = [origin: %{platform: platform, channel_config_id: channel_attrs["channel_config_id"]}]
+
+    create_person(
+      %{
+        full_name: full_name,
+        email: channel_attrs["email"],
+        phone: channel_attrs["phone"],
+        incomplete: true
+      },
+      opts
+    )
   end
 
   defp or_match({:ok, person}, _fallback), do: {:ok, person}

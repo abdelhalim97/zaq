@@ -18,7 +18,7 @@ channel when delivery succeeds.
 ```
 Caller
   → Notification.build/1              ← validates and constructs struct
-  → Notifications.notify/1            ← filters to configured channels,
+  → Notifications.notify/1            ← filters enabled connectors/bridges,
                                           creates NotificationLog (status: pending),
                                           tries each channel sequentially
       → Channels.Api :deliver_outgoing           ← platform-specific delivery
@@ -43,16 +43,19 @@ The public API. All callers go through this module.
   - Returns `{:ok, %{status: :sent, channel: platform, channel_identifier: identifier}}` when a channel succeeds
   - Returns `{:error, %{status: :failed}}` when all configured channels fail
 
-Channel eligibility: a channel is included only if its platform appears in
-`channel_configs` with `kind: "retrieval"` and `enabled: true`, AND an adapter
-is registered for it in the internal `@adapter_registry`.
+Notifications filter recipients by enabled, non-archived matching connectors and
+configured bridges. Channels validates exact scope again at delivery. Each
+connector owns actual transport selection inside its existing `send_reply/2`;
+there is no separate notification preflight or transport-resolution protocol.
 
-Registered platforms:
-
-| Platform | Adapter |
-|---|---|
-| `"email:smtp"` | `Zaq.Channels.EmailBridge` (SMTP via `Zaq.Channels.EmailBridge.SmtpSender`) |
-| `"mattermost"` | `Zaq.Channels.Retrieval.Mattermost.Notification` |
+Application-facing email recipients and messages use platform `"email"`.
+Notifications preserve the selected PersonChannel's `channel_config_id` through
+filtering and the outgoing message; results and attempt logs retain that platform.
+EmailBridge alone resolves receiving origins to sending connections and applies
+its existing unbound-delivery default policy. Engine does not rewrite an origin
+ID into a sending connector ID. Configured bridges are owned by Channels rather
+than a notification adapter registry. Profile emails become ordinary scoped
+PersonChannels at creation/update; notification delivery has no profile-email fallback.
 
 ### `Zaq.Engine.Notifications.Notification` — struct
 
@@ -65,6 +68,9 @@ Optional: `recipient_channels`, `sender` (default `"system"`), `recipient_name`,
 `recipient_ref`, `html_body`, `metadata`.
 
 Each channel must be `%{platform: String.t(), identifier: String.t()}`.
+An optional positive `channel_config_id` selects its connector; Person-derived
+recipients always carry their stored scope. BO-account email has no Person link
+and uses the bridge's unbound delivery policy.
 Empty `recipient_channels` is valid.
 
 `recipient_ref` type: `{:user, integer()} | {:person, integer()} | nil`

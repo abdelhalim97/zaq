@@ -2,11 +2,11 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
   use Zaq.DataCase, async: false
 
   import Ecto.Query
+  import Zaq.CommunicationFixtures
 
   @moduletag capture_log: true
 
   alias Zaq.Accounts.People
-  alias Zaq.Accounts.PersonChannel
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Messages.Outgoing
   alias Zaq.Engine.Notifications
@@ -16,7 +16,8 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
   defmodule NotificationConfig do
     def get(:zaq, :channels, _default) do
       %{
-        email: %{bridge: Zaq.Channels.EmailBridge}
+        email: %{bridge: Zaq.Channels.EmailBridge},
+        telegram: %{bridge: Zaq.Channels.JidoChatBridge}
       }
     end
   end
@@ -28,6 +29,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
     def fetch_connection_details(_provider), do: %{}
     def fetch_connection_details_for_config(_config), do: %{}
     def fetch_channel_config(provider), do: Bridge.fetch_channel_config(provider)
+    def fetch_channel_config(provider, id), do: Bridge.fetch_channel_config(provider, id)
 
     def send_reply(%Outgoing{} = outgoing, _connection_details) do
       send(self(), {:delivered, outgoing.provider, outgoing.channel_id})
@@ -36,12 +38,26 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
   end
 
   defmodule ErrorCommunicationBridge do
+    alias Zaq.Channels.Bridge
+    def fetch_channel_config(provider), do: Bridge.fetch_channel_config(provider)
+
+    def fetch_channel_config(provider, id),
+      do: Bridge.fetch_channel_config(provider, id)
+
+    def fetch_connection_details_for_config(_config), do: %{}
     def bridge_for(_provider), do: __MODULE__
     def fetch_connection_details(_provider), do: %{}
     def send_reply(%Outgoing{}, _connection_details), do: {:error, :delivery_failed}
   end
 
   defmodule UnknownAwareCommunicationBridge do
+    alias Zaq.Channels.Bridge
+    def fetch_channel_config(provider), do: Bridge.fetch_channel_config(provider)
+
+    def fetch_channel_config(provider, id),
+      do: Bridge.fetch_channel_config(provider, id)
+
+    def fetch_connection_details_for_config(_config), do: %{}
     def bridge_for("coverage_unknown" <> _), do: nil
     def bridge_for(_provider), do: __MODULE__
     def fetch_connection_details(_provider), do: %{}
@@ -53,12 +69,26 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
   end
 
   defmodule NilCommunicationBridge do
+    alias Zaq.Channels.Bridge
+    def fetch_channel_config(provider), do: Bridge.fetch_channel_config(provider)
+
+    def fetch_channel_config(provider, id),
+      do: Bridge.fetch_channel_config(provider, id)
+
+    def fetch_connection_details_for_config(_config), do: %{}
     def bridge_for(_provider), do: __MODULE__
     def fetch_connection_details(_provider), do: %{}
     def send_reply(%Outgoing{}, _connection_details), do: nil
   end
 
   defmodule FirstFailCommunicationBridge do
+    alias Zaq.Channels.Bridge
+    def fetch_channel_config(provider), do: Bridge.fetch_channel_config(provider)
+
+    def fetch_channel_config(provider, id),
+      do: Bridge.fetch_channel_config(provider, id)
+
+    def fetch_connection_details_for_config(_config), do: %{}
     def bridge_for(_provider), do: __MODULE__
     def fetch_connection_details(_provider), do: %{}
 
@@ -72,6 +102,13 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
   end
 
   defmodule StaleStatusCommunicationBridge do
+    alias Zaq.Channels.Bridge
+    def fetch_channel_config(provider), do: Bridge.fetch_channel_config(provider)
+
+    def fetch_channel_config(provider, id),
+      do: Bridge.fetch_channel_config(provider, id)
+
+    def fetch_connection_details_for_config(_config), do: %{}
     import Ecto.Query
 
     alias Zaq.Engine.Messages.Outgoing
@@ -119,7 +156,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
   end
 
   @valid_attrs %{
-    recipient_channels: [%{platform: "email:smtp", identifier: "test@example.com"}],
+    recipient_channels: [%{platform: "email", identifier: "test@example.com"}],
     sender: "system",
     subject: "Hello",
     body: "World"
@@ -177,7 +214,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
       attrs = %{
         @valid_attrs
         | recipient_channels: [
-            %{platform: "email:smtp", identifier: "a@b.com"},
+            %{platform: "email", identifier: "a@b.com"},
             %{platform: "slack", identifier: "U01"}
           ]
       }
@@ -218,7 +255,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
     end
 
     test "channel missing identifier returns {:error, _}" do
-      attrs = %{@valid_attrs | recipient_channels: [%{platform: "email:smtp"}]}
+      attrs = %{@valid_attrs | recipient_channels: [%{platform: "email"}]}
       assert {:error, reason} = Notification.build(attrs)
       assert reason =~ "identifier"
     end
@@ -298,7 +335,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
       assert {:ok,
               %{
                 status: :sent,
-                channel: "email:smtp",
+                channel: "email",
                 channel_identifier: "test@example.com",
                 notification_log_id: log_id
               }} =
@@ -308,7 +345,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
                )
 
       assert is_integer(log_id)
-      assert_receive {:delivered, "email:smtp", "test@example.com"}
+      assert_receive {:delivered, "email", "test@example.com"}
 
       reloaded = Repo.get!(NotificationLog, log_id)
 
@@ -318,7 +355,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
                reloaded.channels_tried,
                &Map.take(&1, ["platform", "identifier", "status"])
              ) == [
-               %{"identifier" => "test@example.com", "platform" => "email:smtp", "status" => "ok"}
+               %{"identifier" => "test@example.com", "platform" => "email", "status" => "ok"}
              ]
     end
 
@@ -344,14 +381,14 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
           @valid_attrs
           | recipient_channels: [
               %{platform: provider, identifier: "bad-platform"},
-              %{platform: "email:smtp", identifier: "fallback@example.com"}
+              %{platform: "email", identifier: "fallback@example.com"}
             ]
         })
 
       assert {:ok,
               %{
                 status: :sent,
-                channel: "email:smtp",
+                channel: "email",
                 channel_identifier: "fallback@example.com",
                 notification_log_id: log_id
               }} =
@@ -360,7 +397,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
                  channels_event_opts: [bridge_module: UnknownAwareCommunicationBridge]
                )
 
-      assert_receive {:delivered, "email:smtp", "fallback@example.com"}
+      assert_receive {:delivered, "email", "fallback@example.com"}
 
       reloaded = Repo.get!(NotificationLog, log_id)
 
@@ -376,45 +413,8 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
                  "status" => "error"
                },
                %{
-                 "platform" => "email:smtp",
+                 "platform" => "email",
                  "identifier" => "fallback@example.com",
-                 "status" => "ok"
-               }
-             ]
-    end
-
-    test "email:imap maps to email and delivers" do
-      {:ok, n} =
-        Notification.build(%{
-          @valid_attrs
-          | recipient_channels: [%{platform: "email:imap", identifier: "imap@example.com"}]
-        })
-
-      assert {:ok,
-              %{
-                status: :sent,
-                channel: "email:imap",
-                channel_identifier: "imap@example.com",
-                notification_log_id: log_id
-              }} =
-               Notifications.notify(n,
-                 config: NotificationConfig,
-                 channels_event_opts: [bridge_module: OkCommunicationBridge]
-               )
-
-      assert_receive {:delivered, "email:imap", "imap@example.com"}
-
-      reloaded = Repo.get!(NotificationLog, log_id)
-
-      assert reloaded.status == "sent"
-
-      assert Enum.map(
-               reloaded.channels_tried,
-               &Map.take(&1, ["platform", "identifier", "status"])
-             ) == [
-               %{
-                 "platform" => "email:imap",
-                 "identifier" => "imap@example.com",
                  "status" => "ok"
                }
              ]
@@ -474,7 +474,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
               %{
                 status: :sent,
                 notification_log_id: log_id,
-                channel: "email:smtp",
+                channel: "email",
                 channel_identifier: "test@example.com",
                 reason: :stale_record
               }} =
@@ -483,7 +483,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
                  channels_event_opts: [bridge_module: StaleStatusCommunicationBridge]
                )
 
-      assert_receive {:delivered_after_stale_status, "email:smtp", "test@example.com"}
+      assert_receive {:delivered_after_stale_status, "email", "test@example.com"}
 
       reloaded = Repo.get!(NotificationLog, log_id)
 
@@ -493,7 +493,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
                reloaded.channels_tried,
                &Map.take(&1, ["platform", "identifier", "status"])
              ) == [
-               %{"platform" => "email:smtp", "identifier" => "test@example.com", "status" => "ok"}
+               %{"platform" => "email", "identifier" => "test@example.com", "status" => "ok"}
              ]
     end
 
@@ -525,8 +525,8 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
         Notification.build(%{
           @valid_attrs
           | recipient_channels: [
-              %{platform: "email:smtp", identifier: "first@example.com"},
-              %{platform: "email:smtp", identifier: "second@example.com"}
+              %{platform: "email", identifier: "first@example.com"},
+              %{platform: "email", identifier: "second@example.com"}
             ]
         })
 
@@ -536,8 +536,8 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
                  channels_event_opts: [bridge_module: OkCommunicationBridge]
                )
 
-      assert_receive {:delivered, "email:smtp", "first@example.com"}
-      refute_received {:delivered, "email:smtp", "second@example.com"}
+      assert_receive {:delivered, "email", "first@example.com"}
+      refute_received {:delivered, "email", "second@example.com"}
     end
 
     test "first channel fails, second succeeds and returns the successful channel" do
@@ -545,8 +545,8 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
         Notification.build(%{
           @valid_attrs
           | recipient_channels: [
-              %{platform: "email:smtp", identifier: "first@example.com"},
-              %{platform: "email:smtp", identifier: "second@example.com"}
+              %{platform: "email", identifier: "first@example.com"},
+              %{platform: "email", identifier: "second@example.com"}
             ]
         })
 
@@ -646,14 +646,14 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
     test "resolves person channels in preferred fallback order" do
       {:ok, person} = People.create_person(%{full_name: "Multi Email"})
 
-      Repo.insert!(%PersonChannel{
+      person_channel_fixture(%{
         person_id: person.id,
         platform: "email",
         channel_identifier: "second@example.com",
         weight: 20
       })
 
-      Repo.insert!(%PersonChannel{
+      person_channel_fixture(%{
         person_id: person.id,
         platform: "email",
         channel_identifier: "first@example.com",
@@ -677,7 +677,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
     test "uses dm_channel_id as the delivery identifier when present" do
       {:ok, person} = People.create_person(%{full_name: "DM Person", email: nil})
 
-      Repo.insert!(%PersonChannel{
+      person_channel_fixture(%{
         person_id: person.id,
         platform: "email",
         channel_identifier: "person@example.com",
@@ -695,7 +695,7 @@ defmodule Zaq.Engine.Notifications.NotificationTest do
     test "falls back to channel_identifier when dm_channel_id is missing" do
       {:ok, person} = People.create_person(%{full_name: "DM Person", email: nil})
 
-      Repo.insert!(%PersonChannel{
+      person_channel_fixture(%{
         person_id: person.id,
         platform: "email",
         channel_identifier: "person@example.com",

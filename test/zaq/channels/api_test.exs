@@ -12,18 +12,23 @@ defmodule Zaq.Channels.ApiTest do
   alias Zaq.Repo
   alias Zaq.Types.EncryptedString
 
-  defp insert_config(provider) do
+  defp insert_config(provider, attrs \\ %{}) do
     value = System.unique_integer([:positive])
 
     %ChannelConfig{}
-    |> ChannelConfig.changeset(%{
-      name: "#{provider}-#{value}",
-      provider: to_string(provider),
-      kind: "retrieval",
-      url: "https://#{value}.example.invalid",
-      token: "token-#{value}",
-      enabled: true
-    })
+    |> ChannelConfig.changeset(
+      Map.merge(
+        %{
+          name: "#{provider}-#{value}",
+          provider: to_string(provider),
+          kind: "retrieval",
+          url: "https://#{value}.example.invalid",
+          token: "token-#{value}",
+          enabled: true
+        },
+        attrs
+      )
+    )
     |> Repo.insert!()
   end
 
@@ -264,11 +269,18 @@ defmodule Zaq.Channels.ApiTest do
   end
 
   test "confirmed email delivery captures only receipt evidence, and persistence failure does not relabel delivery" do
+    sender = insert_config(:"email:smtp")
+
+    origin =
+      insert_config(:"email:imap", %{
+        settings: %{"imap" => %{"selected_mailboxes" => ["INBOX"], "smtp_config_id" => sender.id}}
+      })
+
     outgoing = %Outgoing{
       body: "visible answer",
       channel_id: "receiver@example.com",
-      provider: :"email:imap",
-      routing_context: %{channel_config_id: 12, conversation_type: :recipient_addressed},
+      provider: :email,
+      routing_context: %{channel_config_id: origin.id, conversation_type: :recipient_addressed},
       metadata: %{assistant_message_id: "existing-id", trace: [%{private: "do not forward"}]}
     }
 
@@ -601,10 +613,13 @@ defmodule Zaq.Channels.ApiTest do
   end
 
   test "final channel delivery reports transport timeout even when the outgoing answer exists" do
+    config = insert_config(:mattermost)
+
     outgoing = %Outgoing{
       body: "5 in Arabic is ٥ — pronounced khamsa (خمسة).",
       channel_id: "c1",
-      provider: :mattermost
+      provider: :mattermost,
+      routing_context: %{channel_config_id: config.id}
     }
 
     event =

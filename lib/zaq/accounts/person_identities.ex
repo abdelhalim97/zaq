@@ -12,7 +12,7 @@ defmodule Zaq.Accounts.PersonIdentities do
 
   @doc "Checks the stored authority before using a connector link after configuration edits."
   @spec current_scope?(PersonChannel.t()) :: boolean()
-  def current_scope?(%PersonChannel{person_identity_id: nil}), do: true
+  def current_scope?(%PersonChannel{person_identity_id: nil}), do: false
 
   def current_scope?(%PersonChannel{} = channel) do
     expected =
@@ -85,14 +85,47 @@ defmodule Zaq.Accounts.PersonIdentities do
     end
   end
 
-  @doc "Releases an identity only after its last explicit connector link was removed."
+  @doc "Releases an identity only after its connector links and profile email reference were removed."
   @spec release_unlinked(pos_integer() | nil) :: :ok
   def release_unlinked(nil), do: :ok
 
   def release_unlinked(id) do
-    if not Repo.exists?(from(c in PersonChannel, where: c.person_identity_id == ^id)),
-      do: Repo.delete_all(from(i in PersonIdentity, where: i.id == ^id))
+    query =
+      from(i in PersonIdentity,
+        as: :identity,
+        where: i.id == ^id,
+        where:
+          not exists(
+            from(c in PersonChannel, where: c.person_identity_id == parent_as(:identity).id)
+          ),
+        where:
+          not exists(
+            from(p in Person,
+              where:
+                p.id == parent_as(:identity).person_id and
+                  parent_as(:identity).platform == "email" and
+                  parent_as(:identity).authority == "global" and
+                  p.email == parent_as(:identity).identifier
+            )
+          )
+      )
+
+    Repo.delete_all(query)
 
     :ok
+  end
+
+  @doc "Releases an obsolete profile email only when no connector link retains it."
+  @spec release_email(pos_integer(), String.t()) :: :ok
+  def release_email(person_id, email) do
+    case Repo.get_by(PersonIdentity,
+           person_id: person_id,
+           platform: "email",
+           authority: "global",
+           identifier: email
+         ) do
+      nil -> :ok
+      identity -> release_unlinked(identity.id)
+    end
   end
 end

@@ -279,6 +279,20 @@ defmodule Zaq.Channels.Bridge do
 
   def provider_to_bridge_key(_provider), do: nil
 
+  @doc "Connector-owned incoming eligibility and routing topics, including disabled connectors."
+  @spec incoming_routing(map(), keyword()) :: map()
+  def incoming_routing(%{provider: provider} = config, opts \\ []) do
+    case bridge_for(provider, opts) do
+      nil ->
+        %{incoming?: false, topics: []}
+
+      bridge ->
+        if Code.ensure_loaded?(bridge) and function_exported?(bridge, :incoming_routing, 1),
+          do: bridge.incoming_routing(config),
+          else: %{incoming?: true, topics: []}
+    end
+  end
+
   @doc "Resolves configured bridge for provider."
   @spec resolve_bridge(atom() | String.t()) :: {:ok, module()} | {:error, term()}
   def resolve_bridge(provider, opts \\ []) do

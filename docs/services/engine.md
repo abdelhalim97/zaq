@@ -943,6 +943,11 @@ Distributed server invalidation remains a later consumer integration.
 
 ### Conversations Context (`Zaq.Engine.Conversations`)
 
+List-time resolution of a missing `person_id` matches stored channel/author
+identifiers only within the conversation's `channel_config_id`. Equal identifiers
+on another connector cannot supply ownership; conversations without connector
+scope remain unresolved. This association does not grant history access.
+
 #### Message lifecycle gates
 
 These gates authorize different operations; a stored message is not permission to
@@ -1229,6 +1234,19 @@ trusted actor.
   `Zaq.Engine.PeopleGateway.dispatch/2`.
 - Gateway maps operations (`:filter`, `:create`, `:update`, `:delete`, `:bulk_delete`,
   team/channel operations, etc.) to `Zaq.Accounts.People` domain calls.
+- Channel add/edit requires an explicit matching retrieval connector; existing
+  connector bindings are immutable. `:channel_routing_targets` returns disabled
+  and enabled non-archived communication connectors, while `:person_routing_rules`
+  supplies persisted overrides. BO caches these datasets outside validation.
+  `ChannelConfig` supplies management discovery; connector-owned incoming eligibility
+  and topic metadata determine which links expose
+  incoming routing controls; Engine and BO do not inspect transport provider names.
+  BO's shared routing input and form adapter produce the ordinary `rules` list,
+  separately from channel `attrs`. `PeopleGateway` validates each rule's Person,
+  connector, retrieval-channel and topic scope against the saved link, including
+  clear requests. It reuses `IncomingMessageRouting.apply_rule_commands/2` inside
+  the channel transaction, so routing errors roll back channel changes too.
+  `IncomingMessageRouting` does not decode BO form fields or discover connector choices.
 - Session administration uses fixed `:list_person_sessions`, `:revoke_person_session`,
   and `:revoke_all_person_sessions` operations. The gateway resolves the canonical
   Person from the positive `person_id` before calling `PeopleAuth`; BO receives only
@@ -1258,22 +1276,29 @@ platform, including platform-only updates. Only stored platform `email` uses the
 trim/Unicode-lowercase policy; its identifier is required. Other platform IDs retain
 their case and whitespace. Ingress maps `email:imap` to `email`. People matching/linking
 and identity channel selection normalize incoming identifiers and match stored values
-exactly; runtime discovery does not scan or repair legacy variants. The global unique
-index `channels_platform_channel_identifier_index` enforces one owner for each
-`(platform, channel_identifier)` across all people. The same identifier on different
-platforms is allowed. Both channel changesets attach conflicts to `channel_identifier`
+exactly; runtime discovery does not scan or repair legacy variants. The unique
+index `channels_connector_identifier_index` distinguishes links by
+`(platform, channel_config_id, channel_identifier)`. Native identity ownership
+remains unique within Channels-defined authority, independently of connector links.
+Both channel changesets attach conflicts to `channel_identifier`
 with **This channel identifier is already assigned.**; BO renders its existing field
 error without disclosing the owner.
 
-Person create/update, partial discovery, linking and backfill are atomic. Email
-channels are linked on creation or an actual email change; unrelated profile edits
-and unchanged canonical emails do not repair missing channels or check their ownership.
-Clearing email stores `nil` and preserves prior channel identities. Failed
-email linking rolls back the Person edit and reports the error on the Person
-form's `email` field. Failed channel discovery leaves no orphan Person or partial
-backfill. Discovery links each distinct incoming channel/email identity once, including
-the email used to create or backfill a profile. After a conflict on `people_email_index`
-or `channels_platform_channel_identifier_index`, discovery retries once outside its
+Creating a Person with an email, or adding/changing its profile email, creates a
+normal connector-scoped email link in the same transaction. An explicit email
+origin wins; other creation paths use `ChannelConfig`'s default connector selection
+(the designated sender, or the sole non-archived sender). Disabled senders remain
+bindable, but cannot deliver until enabled. Missing or ambiguous defaults return
+an email changeset error rather than creating an unscoped link. Existing matching
+links, preferences and connector bindings are retained when the default changes.
+Clearing email preserves prior links. Profile emails also claim global native
+ownership through `PersonIdentities`; ownership conflicts roll back all writes.
+Identity release retains both connector and profile references.
+`People.match_person/1` also resolves canonical email native identities retained
+by existing links after profile email is cleared, without unscoped channel lookup
+or profile mutation.
+Failed discovery leaves no orphan Person or partial backfill. After a conflict on `people_email_index`, native
+identity ownership or `channels_connector_identifier_index`, discovery retries once outside its
 rolled-back transaction and rereads the committed winner. When called inside an
 existing transaction it propagates the error instead of querying aborted SQL.
 Contradictory email/phone and channel owners return a conflict, never reassign or
@@ -1454,7 +1479,9 @@ Rule write commands accept a required `rules` list. Each rule carries optional s
 
 - Single exit point for all outbound communication from ZAQ.
 - `notify/1` — accepts only a validated `%Notification{}` struct.
-  - Filters `recipient_channels` against enabled `ChannelConfig` rows.
+  - Filters recipients to enabled matching connectors and configured bridges,
+    retaining their application-facing platform and connector scope. See the
+    [Notifications contract](notifications.md) for eligibility and delivery.
   - Creates a `NotificationLog` record, then delivers inline through Channels.
   - Returns a structured sent/skipped/failed result with final channel details on success.
 - `bridge_available?/1` — returns true if a bridge is configured for the given platform.
@@ -1471,6 +1498,8 @@ preserved verbatim. Its NimbleOptions field uses `{:map, :any, :any}` because pl
 - Fields: `recipient_channels`, `sender`, `subject`, `body`, `html_body`,
   `recipient_name`, `recipient_ref`, `metadata`.
 - `recipient_ref` type: `{:user, integer()} | {:person, integer()} | nil`.
+- Recipient scope and logging follow the
+  [Notifications contract](notifications.md); transport resolution stays in Channels.
 
 ### Notification Log (`Zaq.Engine.Notifications.NotificationLog`)
 

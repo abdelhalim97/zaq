@@ -4,6 +4,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
   use ZaqWeb, :live_view
   on_mount {ZaqWeb.Live.BO.Communication.ServiceGate, [:channels]}
 
+  alias Zaq.Channels.ProviderCatalog, as: ChannelProvider
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Event
   alias Zaq.NodeRouter
@@ -28,47 +29,47 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
   @retrieval_cards [
     %{
       id: "slack",
-      label: "Slack",
+      label: ChannelProvider.label("slack"),
       color: "#4A154B",
       desc:
         "Connect workspaces, post messages, and trigger workflows from Slack channels and DMs."
     },
     %{
       id: "teams",
-      label: "Microsoft Teams",
+      label: ChannelProvider.label("teams"),
       color: "#464EB8",
       desc: "Send alerts and notifications directly into Teams channels via incoming webhooks."
     },
     %{
       id: "mattermost",
-      label: "Mattermost",
+      label: ChannelProvider.label("mattermost"),
       color: "#0058CC",
       desc:
         "Self-hosted messaging with full control. Integrate bots, post to channels, and receive events."
     },
     %{
       id: "discord",
-      label: "Discord",
+      label: ChannelProvider.label("discord"),
       color: "#5865F2",
       desc:
         "Post to Discord servers via webhooks. Great for communities, dev teams, and alert routing."
     },
     %{
       id: "telegram",
-      label: "Telegram",
+      label: ChannelProvider.label("telegram"),
       color: "#26A5E4",
       desc:
         "Send and receive messages via Telegram Bot API. Ideal for ops alerts and lightweight bots."
     },
     %{
       id: "webhook",
-      label: "Webhook",
+      label: ChannelProvider.label("webhook"),
       color: "#666666",
       desc: "POST events to any HTTP endpoint. Use for custom integrations, Zapier, Make, or n8n."
     },
     %{
       id: "email",
-      label: "Email",
+      label: ChannelProvider.label("email"),
       color: "#16a34a",
       desc:
         "Configure inbound IMAP reception and outbound SMTP sending from a single email channel entry."
@@ -78,7 +79,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
   @notification_cards [
     %{
       id: "email",
-      label: "Email",
+      label: ChannelProvider.label("email"),
       color: "#16a34a",
       desc:
         "Send email notifications to users for password resets, invitations, and system alerts."
@@ -88,19 +89,19 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
   @data_source_cards [
     %{
       id: "disk",
-      label: "Disk",
+      label: ChannelProvider.label("disk"),
       color: "#64748B",
       desc: "Upload and manage documents stored on the local server disk."
     },
     %{
       id: "google_drive",
-      label: "Google Drive",
+      label: ChannelProvider.label("google_drive"),
       color: "#4285F4",
       desc: "Sync documents from Google Drive folders. Supports Docs, Sheets, PDFs, and more."
     },
     %{
       id: "sharepoint",
-      label: "SharePoint",
+      label: ChannelProvider.label("sharepoint"),
       color: "#036C70",
       desc: "Connect to SharePoint document libraries. Ingest files from sites and team drives."
     }

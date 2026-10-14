@@ -6,7 +6,12 @@ defmodule Zaq.Engine.PeopleGateway do
   alias Zaq.Accounts.People
   alias Zaq.Accounts.PeopleAuth
   alias Zaq.Accounts.PeoplePermissions
+  alias Zaq.Accounts.PersonChannel
+  alias Zaq.Channels.AgentRouting
+  alias Zaq.Engine.ChannelConfig
+  alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.MapUtils
+  alias Zaq.Repo
 
   def dispatch(:filter, %{filters: filters, opts: opts}) when is_map(filters) and is_list(opts),
     do: People.filter_people(filters, opts)
@@ -115,12 +120,43 @@ defmodule Zaq.Engine.PeopleGateway do
     end
   end
 
-  def dispatch(:add_channel, %{attrs: attrs}) when is_map(attrs), do: People.add_channel(attrs)
+  def dispatch(:channel_routing_targets, %{}) do
+    targets =
+      ChannelConfig.list_person_channel_targets()
+      |> Enum.filter(&(&1.platform in PersonChannel.supported_platforms()))
 
-  def dispatch(:update_channel, %{id: id, attrs: attrs}) when is_map(attrs) do
-    case find_channel(normalize_id(id)) do
+    {:ok, targets}
+  end
+
+  def dispatch(:person_routing_rules, %{person_id: id}),
+    do: {:ok, IncomingMessageRouting.list_person_rules(normalize_id(id))}
+
+  def dispatch(:set_person_routing_agent, %{person_id: id, choice: raw_choice}) do
+    with %{} = person <- People.get_person(normalize_id(id)),
+         {:ok, choice} <- AgentRouting.validate_choice(raw_choice) do
+      IncomingMessageRouting.apply_rule_commands(
+        [AgentRouting.rule_attrs(%{person_id: person.id}, choice)],
+        raw_errors: true
+      )
+    else
       nil -> {:error, :not_found}
-      channel -> People.update_channel(channel, MapUtils.stringify_keys(attrs))
+      error -> error
+    end
+  end
+
+  def dispatch(:add_channel, %{attrs: attrs} = params) when is_map(attrs),
+    do: save_channel(fn -> People.add_channel(attrs) end, Map.get(params, :rules, []))
+
+  def dispatch(:update_channel, %{id: id, attrs: attrs} = params) when is_map(attrs) do
+    case find_channel(normalize_id(id)) do
+      nil ->
+        {:error, :not_found}
+
+      channel ->
+        save_channel(
+          fn -> People.update_channel(channel, MapUtils.stringify_keys(attrs)) end,
+          Map.get(params, :rules, [])
+        )
     end
   end
 
@@ -166,6 +202,81 @@ defmodule Zaq.Engine.PeopleGateway do
   end
 
   def dispatch(_op, _params), do: {:error, :unsupported_people_operation}
+
+  defp save_channel(save, rules) do
+    Repo.transaction(fn ->
+      case save.() do
+        {:ok, channel} -> persist_channel_routing(channel, rules)
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+  end
+
+  defp persist_channel_routing(channel, rules) do
+    result =
+      with {:ok, rules} <- validate_channel_rules(channel, rules),
+           do: IncomingMessageRouting.apply_rule_commands(rules, raw_errors: true)
+
+    case result do
+      {:ok, _} ->
+        channel
+
+      {:error, reason} ->
+        channel
+        |> Ecto.Changeset.change()
+        |> Ecto.Changeset.add_error(
+          :channel_config_id,
+          "invalid routing selection: #{inspect(reason)}"
+        )
+        |> Repo.rollback()
+    end
+  end
+
+  # Validate the canonical commands against the saved link, not BO form field names.
+  # This also protects clear commands, which otherwise go directly to deletion.
+  defp validate_channel_rules(_channel, []), do: {:ok, []}
+
+  defp validate_channel_rules(channel, rules) when is_list(rules) do
+    case ChannelConfig.list_person_channel_targets(channel.platform, channel.channel_config_id) do
+      [%{incoming?: true} = target] ->
+        Enum.reduce_while(rules, {:ok, []}, fn rule, {:ok, acc} ->
+          validate_channel_rule(rule, channel, target, acc)
+        end)
+
+      _ ->
+        {:error, :invalid_routing_target}
+    end
+  end
+
+  defp validate_channel_rules(_, _), do: {:error, :invalid_routing_target}
+
+  defp validate_channel_rule(rule, channel, target, acc) when is_map(rule) do
+    rule = MapUtils.stringify_keys(rule)
+    person_id = rule["person_id"]
+    retrieval_id = rule["retrieval_channel_id"]
+    topic = rule["topic_id"]
+
+    valid? =
+      matching_id?(rule["channel_config_id"], channel.channel_config_id) and
+        (is_nil(person_id) or matching_id?(person_id, channel.person_id)) and
+        valid_channel_rule_target?(retrieval_id, topic, target)
+
+    if valid?,
+      do: {:cont, {:ok, acc ++ [Map.put(rule, "person_id", channel.person_id)]}},
+      else: {:halt, {:error, :invalid_routing_target}}
+  end
+
+  defp validate_channel_rule(_, _, _, _), do: {:halt, {:error, :invalid_routing_target}}
+
+  defp valid_channel_rule_target?(nil, nil, _), do: true
+  defp valid_channel_rule_target?(nil, topic, target), do: topic in target.topics
+
+  defp valid_channel_rule_target?(id, nil, target),
+    do: Enum.any?(target.retrieval_channels, &matching_id?(id, &1.id))
+
+  defp valid_channel_rule_target?(_, _, _), do: false
+
+  defp matching_id?(raw, expected), do: positive_id(raw) == {:ok, expected}
 
   defp find_channel(id) do
     People.get_channel(id)

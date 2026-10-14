@@ -30,6 +30,12 @@ defmodule Zaq.Engine.IncomingMessageRouting do
           | :default_zaq_agent
   @scope_keys [:person_id, :channel_config_id, :retrieval_channel_id, :topic_id]
 
+  @doc "Lists persisted Person overrides for administrative presentation."
+  @spec list_person_rules(pos_integer()) :: [IncomingMessageRoutingRule.t()]
+  def list_person_rules(person_id) do
+    Repo.all(from(r in IncomingMessageRoutingRule, where: r.person_id == ^person_id))
+  end
+
   @doc """
   Returns a read-only changeset including current database-backed agent eligibility
   and channel ownership validation. Persistence rechecks these policies inside its

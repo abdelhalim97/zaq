@@ -1,5 +1,6 @@
 defmodule Zaq.People.IdentityPlugTest do
   use Zaq.DataCase, async: true
+  import Zaq.CommunicationFixtures
 
   alias Zaq.Accounts.People
   alias Zaq.Accounts.Person
@@ -16,16 +17,25 @@ defmodule Zaq.People.IdentityPlugTest do
   # ── Helpers ─────────────────────────────────────────────────────────────
 
   defp incoming(overrides) do
-    struct(
-      %Incoming{
-        content: "hello",
-        channel_id: "C123",
-        provider: :slack,
-        author_id: "U123",
-        author_name: "jane"
-      },
-      overrides
-    )
+    message =
+      struct(
+        %Incoming{
+          content: "hello",
+          channel_id: "C123",
+          provider: :slack,
+          author_id: "U123",
+          author_name: "jane"
+        },
+        overrides
+      )
+
+    %{
+      message
+      | routing_context: %{
+          message.routing_context
+          | channel_config_id: connector_fixture(message.provider).id
+        }
+    }
   end
 
   defp create_complete_person do
@@ -40,6 +50,7 @@ defmodule Zaq.People.IdentityPlugTest do
       People.add_channel(%{
         "person_id" => person.id,
         "platform" => "slack",
+        "channel_config_id" => connector_fixture("slack").id,
         "channel_identifier" => "U123"
       })
 
@@ -53,6 +64,7 @@ defmodule Zaq.People.IdentityPlugTest do
       People.add_channel(%{
         "person_id" => person.id,
         "platform" => "slack",
+        "channel_config_id" => connector_fixture("slack").id,
         "channel_identifier" => "U456"
       })
 
@@ -134,6 +146,7 @@ defmodule Zaq.People.IdentityPlugTest do
         People.add_channel(%{
           "person_id" => person.id,
           "platform" => "slack",
+          "channel_config_id" => connector_fixture("slack").id,
           "channel_identifier" => "U_DM_SET"
         })
 
@@ -158,6 +171,7 @@ defmodule Zaq.People.IdentityPlugTest do
         People.add_channel(%{
           "person_id" => person.id,
           "platform" => "slack",
+          "channel_config_id" => connector_fixture("slack").id,
           "channel_identifier" => "U_NODM"
         })
 
@@ -197,6 +211,7 @@ defmodule Zaq.People.IdentityPlugTest do
         People.add_channel(%{
           "person_id" => person.id,
           "platform" => "slack",
+          "channel_config_id" => connector_fixture("slack").id,
           "channel_identifier" => "U_DM_SKIP"
         })
 
@@ -227,6 +242,7 @@ defmodule Zaq.People.IdentityPlugTest do
         People.add_channel(%{
           "person_id" => person.id,
           "platform" => "slack",
+          "channel_config_id" => connector_fixture("slack").id,
           "channel_identifier" => "U_BACKFILL"
         })
 
@@ -267,6 +283,7 @@ defmodule Zaq.People.IdentityPlugTest do
         People.add_channel(%{
           "person_id" => person.id,
           "platform" => "slack",
+          "channel_config_id" => connector_fixture("slack").id,
           "channel_identifier" => "U_DM_UPDATE"
         })
 
@@ -303,6 +320,7 @@ defmodule Zaq.People.IdentityPlugTest do
         People.add_channel(%{
           "person_id" => person.id,
           "platform" => "slack",
+          "channel_config_id" => connector_fixture("slack").id,
           "channel_identifier" => "U_DM_ALREADY"
         })
 

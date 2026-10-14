@@ -1,6 +1,7 @@
 defmodule Zaq.Accounts.PersonMergeTest do
   use Zaq.DataCase, async: false
   use ExUnitProperties
+  import Zaq.CommunicationFixtures
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Zaq.Accounts.{People, Person, PersonChannel}
@@ -155,6 +156,7 @@ defmodule Zaq.Accounts.PersonMergeTest do
       People.add_channel(%{
         person_id: loser.id,
         platform: "slack",
+        channel_config_id: connector_fixture("slack").id,
         channel_identifier: "grant-rollback"
       })
 
@@ -337,7 +339,13 @@ defmodule Zaq.Accounts.PersonMergeTest do
     assert updated.person_id == survivor.id
 
     {:ok, channel} =
-      People.add_channel(%{person_id: other.id, platform: "slack", channel_identifier: "move"})
+      People.add_channel(
+        scoped_channel_attrs(%{
+          person_id: other.id,
+          platform: "slack",
+          channel_identifier: "move"
+        })
+      )
 
     time = ~U[2026-01-01 00:00:00Z]
 
@@ -360,10 +368,19 @@ defmodule Zaq.Accounts.PersonMergeTest do
     refute Zaq.Permissions.can?(nil, :run, resource)
 
     {:ok, channel} =
-      People.add_channel(%{person_id: person.id, platform: "slack", channel_identifier: "old-id"})
+      People.add_channel(
+        scoped_channel_attrs(%{
+          person_id: person.id,
+          platform: "slack",
+          channel_identifier: "old-id"
+        })
+      )
 
     assert channel.person_id == survivor.id
-    assert {:ok, matched} = People.match_by_channel("slack", "old-id")
+
+    assert {:ok, matched} =
+             People.match_by_channel("slack", "old-id", connector_fixture("slack").id)
+
     assert matched.id == survivor.id
     assert {:ok, updated} = People.update_person(person, %{phone: "123"})
     assert updated.id == survivor.id
@@ -1077,12 +1094,15 @@ defmodule Zaq.Accounts.PersonMergeTest do
     survivor = person(nil, "Survivor")
     loser = person(nil, "Loser")
 
-    Repo.insert!(%PersonChannel{
-      person_id: loser.id,
-      platform: "telegram",
-      channel_identifier: "bad-weight",
-      weight: -1
-    })
+    invalid =
+      person_channel_fixture(%{
+        person_id: loser.id,
+        platform: "telegram",
+        channel_identifier: "bad-weight",
+        weight: 0
+      })
+
+    Repo.update_all(from(c in PersonChannel, where: c.id == ^invalid.id), set: [weight: -1])
 
     capture_writes()
     assert {:error, error} = People.merge_persons(survivor, loser)
@@ -1139,6 +1159,7 @@ defmodule Zaq.Accounts.PersonMergeTest do
       People.add_channel(%{
         person_id: person_id,
         platform: "slack",
+        channel_config_id: connector_fixture("slack").id,
         channel_identifier: identifier,
         display_name: name
       })
@@ -1226,6 +1247,7 @@ defmodule Zaq.Accounts.PersonMergeTest do
 
   defp person(email, name) do
     {:ok, person} = People.create_person(%{email: email, full_name: name})
+
     person
   end
 end

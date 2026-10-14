@@ -25,13 +25,30 @@ connector-local. Bots on the same authority therefore reuse one Person without
 requiring profile email. Normalized profile email can also join established People
 across authorities. Conflicting native/email/phone owners fail atomically. Editing a
 connector endpoint cannot reinterpret a previously bound native identity.
-Unscoped legacy/BO-owned channel identities do not directly satisfy a scoped
-lookup. On ingress, a non-email opaque identity can be bound transactionally
-to the sole stored retrieval connector for its provider; archived or
-disabled connectors still count as possible origins. With multiple connectors,
-it remains unscoped and cannot authorize either connector by guesswork.
-The unconsumed connector-scope migration links old identities only where one
-retrieval connector matches their provider, failing on ambiguous mappings.
+Every PersonChannel requires a connector and native identity binding. The
+connector-scope and native-identity migrations backfill legacy links from their sole matching
+retrieval connector, counting disabled connectors as origins, then enforce
+non-null scope and connector-specific uniqueness. Missing/ambiguous origins,
+conflicting owners and changed established identity authorities abort migration;
+operators must resolve those records before retrying. Ingress requires explicit
+connector scope and never repairs or binds legacy rows at runtime.
+Legacy email links retain their IMAP origin; where no inbox exists, the sole SMTP
+connector is the sending-only origin. Profile-only emails are backfilled to the
+default sender. New profile emails use that same default at creation; explicit
+inbox origins are retained. Sending-only links never become incoming routing targets.
+Engine's `ChannelConfig.resolve_person_channel_connector/2` resolves new links
+from platform and optional origin using configuration-owned defaults; it does not
+require a configured/running bridge. People owns transactional profile, identity
+and channel persistence. Bridges do not select defaults for Person link creation.
+Platform mapping reuses `Bridge.provider_to_bridge_key/1`.
+`Bridge.incoming_routing/1` delegates incoming eligibility and topic IDs to the
+communication connector. EmailBridge derives IMAP topics from existing mailbox
+selection helpers and excludes sending-only connectors from incoming routing.
+Module selection reuses
+`Bridge.bridge_for/2` and never guesses a bridge. Actual sending uses each bridge's
+existing `send_reply/2`; there is no separate notification preflight. Resolved sending
+coordinates remain inside Channels; outgoing origin scope and application logs
+are not rewritten. See [Notifications](notifications.md) for the consumer contract.
 `CommunicationBridge.route_incoming_message/4` stamps the connector ID from
 its configured bridge options and discards any ID supplied only in incoming
 metadata. A caller bypassing that Channels ingress path still must not be

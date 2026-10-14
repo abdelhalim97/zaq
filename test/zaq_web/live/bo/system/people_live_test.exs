@@ -4,12 +4,14 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
   import Ecto.Query
   import Phoenix.LiveViewTest
   import Zaq.AccountsFixtures
+  import Zaq.CommunicationFixtures
   import Zaq.SystemConfigFixtures
 
   alias Zaq.Accounts
   alias Zaq.Accounts.People
   alias Zaq.Accounts.PeoplePermissionGrant
   alias Zaq.Accounts.PeoplePermissions
+  alias Zaq.Accounts.PersonChannel
   alias Zaq.Accounts.PersonSession
   alias Zaq.Channels.AgentRouting
   alias Zaq.Channels.RetrievalChannel
@@ -21,6 +23,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
   alias ZaqWeb.Live.BO.System.PeopleLive
 
   setup %{conn: conn} do
+    Enum.each(PersonChannel.supported_platforms(), &connector_fixture/1)
     user = admin_fixture(%{username: "people_live_admin_#{System.unique_integer([:positive])}"})
     {:ok, user} = Accounts.change_password(user, %{password: "StrongPass1!"})
     conn = init_test_session(conn, %{user_id: user.id})
@@ -38,6 +41,17 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
         attrs
       )
       |> People.create_person()
+
+    if person.email do
+      {:ok, _} =
+        People.add_channel(
+          scoped_channel_attrs(%{
+            person_id: person.id,
+            platform: "email",
+            channel_identifier: person.email
+          })
+        )
+    end
 
     People.get_person_with_channels!(person.id)
   end
@@ -60,6 +74,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
           },
           attrs
         )
+        |> scoped_channel_attrs()
       )
 
     channel
@@ -293,6 +308,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
 
       if unquote(action) == "new" do
         view |> element("#add-channel-button") |> render_click()
+        render_change(view, "validate", %{"channel" => %{"platform" => unquote(platform)}})
       else
         view
         |> element(
@@ -307,7 +323,11 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
           else: identifier
 
       params = %{
-        "channel" => %{"platform" => unquote(platform), "channel_identifier" => duplicate}
+        "channel" => %{
+          "platform" => unquote(platform),
+          "channel_identifier" => duplicate,
+          "channel_config_id" => to_string(editable.channel_config_id)
+        }
       }
 
       view |> form("#channel-modal-form", params) |> render_submit()
@@ -327,7 +347,11 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
       # original case/whitespace variant, on both add and edit.
       view
       |> form("#channel-modal-form", %{
-        "channel" => %{"platform" => unquote(platform), "channel_identifier" => identifier}
+        "channel" => %{
+          "platform" => unquote(platform),
+          "channel_identifier" => identifier,
+          "channel_config_id" => to_string(editable.channel_config_id)
+        }
       })
       |> render_submit()
 
@@ -343,7 +367,11 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
 
       view
       |> form("#channel-modal-form", %{
-        "channel" => %{"platform" => unquote(platform), "channel_identifier" => corrected}
+        "channel" => %{
+          "platform" => unquote(platform),
+          "channel_identifier" => corrected,
+          "channel_config_id" => to_string(editable.channel_config_id)
+        }
       })
       |> render_submit()
 
@@ -774,10 +802,15 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
     assert has_element?(view, "h3", "Add Channel")
 
     channel_identifier = "@modal-#{System.unique_integer([:positive])}"
+    render_change(view, "validate", %{"channel" => %{"platform" => "slack"}})
 
     view
     |> form("#channel-modal-form", %{
-      "channel" => %{"platform" => "slack", "channel_identifier" => channel_identifier}
+      "channel" => %{
+        "platform" => "slack",
+        "channel_identifier" => channel_identifier,
+        "channel_config_id" => to_string(connector_fixture("slack").id)
+      }
     })
     |> render_submit()
 
@@ -820,10 +853,15 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
   test "channel edit modal saves person provider and retrieval routing", %{conn: conn} do
     person = person_fixture(%{"full_name" => "Channel Routed"})
 
-    channel =
-      channel_fixture(person, %{"platform" => "slack", "channel_identifier" => "@routing"})
+    # Routing facts require a configured bridge; Slack is disabled in config/config.exs.
+    config = insert_channel_config(%{provider: "mattermost", name: "Mattermost Workspace"})
 
-    config = insert_channel_config(%{provider: "slack", name: "Slack Workspace"})
+    channel =
+      channel_fixture(person, %{
+        "platform" => "mattermost",
+        "channel_identifier" => "@routing",
+        "channel_config_id" => config.id
+      })
 
     retrieval =
       insert_retrieval_channel(config, %{channel_name: "support", channel_id: "support-1"})
@@ -837,7 +875,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
     |> element("[phx-click='select_person'][phx-value-id='#{person.id}']")
     |> render_click()
 
-    assert render(view) =~ "Slack Workspace"
+    assert render(view) =~ "Mattermost Workspace"
 
     view
     |> element(
@@ -849,15 +887,17 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
     assert has_element?(view, "#person-retrieval-routing-select-#{retrieval.id}")
 
     view
-    |> form("#channel-modal-form", %{
+    |> form("#channel-modal-form")
+    |> render_submit(%{
       "channel" => %{
-        "platform" => "slack",
+        "platform" => "mattermost",
         "channel_identifier" => "@routing",
-        "provider_agent_ids" => %{to_string(config.id) => to_string(provider_agent.id)},
-        "retrieval_agent_ids" => %{to_string(retrieval.id) => to_string(retrieval_agent.id)}
+        "rules" => %{
+          "#{config.id}::" => %{"choice" => to_string(provider_agent.id)},
+          "#{config.id}:#{retrieval.id}:" => %{"choice" => to_string(retrieval_agent.id)}
+        }
       }
     })
-    |> render_submit()
 
     assert IncomingMessageRouting.get_rule(%{
              person_id: person.id,
@@ -905,7 +945,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
     html = render(view)
     assert html =~ "Email IMAP"
     refute html =~ "Email SMTP"
-    assert html =~ "mailbox INBOX"
+    assert html =~ "topic INBOX"
 
     channel =
       person.id
@@ -922,19 +962,17 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
     assert has_element?(view, "#person-topic-routing-select-#{imap.id}-SU5CT1g")
 
     view
-    |> form("#channel-modal-form", %{
+    |> form("#channel-modal-form")
+    |> render_submit(%{
       "channel" => %{
         "platform" => "email",
         "channel_identifier" => "routed@example.com",
-        "topic_agent_ids" => %{
-          to_string(imap.id) => %{
-            "INBOX" => AgentRouting.none_value(),
-            "Support" => to_string(agent.id)
-          }
+        "rules" => %{
+          "#{imap.id}::SU5CT1g" => %{"choice" => AgentRouting.none_value()},
+          "#{imap.id}::U3VwcG9ydA" => %{"choice" => to_string(agent.id)}
         }
       }
     })
-    |> render_submit()
 
     assert IncomingMessageRouting.get_rule(%{
              person_id: person.id,
@@ -1261,6 +1299,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLiveTest do
       People.add_channel(%{
         "person_id" => person.id,
         "platform" => "slack",
+        "channel_config_id" => connector_fixture("slack").id,
         "channel_identifier" => "@edit-me"
       })
 

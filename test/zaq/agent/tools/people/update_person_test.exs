@@ -1,5 +1,6 @@
 defmodule Zaq.Agent.Tools.People.UpdatePersonTest do
   use Zaq.DataCase, async: true
+  import Zaq.CommunicationFixtures, only: [connector_fixture: 1]
 
   alias Jido.Action.Runtime
   alias Jido.Action.Schema
@@ -49,6 +50,7 @@ defmodule Zaq.Agent.Tools.People.UpdatePersonTest do
       assert :ok =
                UpdatePerson.validate_channel(%{
                  platform: "telegram",
+                 channel_config_id: connector_fixture("telegram").id,
                  channel_identifier: "@valid"
                })
 
@@ -68,7 +70,13 @@ defmodule Zaq.Agent.Tools.People.UpdatePersonTest do
                  %{
                    person_id: 1,
                    attrs: %{full_name: "Updated"},
-                   channels: [%{platform: "telegram", channel_identifier: "@updated"}],
+                   channels: [
+                     %{
+                       platform: "telegram",
+                       channel_config_id: connector_fixture("telegram").id,
+                       channel_identifier: "@updated"
+                     }
+                   ],
                    merge_with_person_id: 2,
                    merge_precedence: "person"
                  },
@@ -163,7 +171,13 @@ defmodule Zaq.Agent.Tools.People.UpdatePersonTest do
                %{
                  person_id: person.id,
                  attrs: %{full_name: "Updated"},
-                 channels: [%{platform: "telegram", channel_identifier: "@updated"}]
+                 channels: [
+                   %{
+                     platform: "telegram",
+                     channel_config_id: connector_fixture("telegram").id,
+                     channel_identifier: "@updated"
+                   }
+                 ]
                },
                @ctx
              )
@@ -179,6 +193,7 @@ defmodule Zaq.Agent.Tools.People.UpdatePersonTest do
       People.add_channel(%{
         person_id: person.id,
         platform: "mattermost",
+        channel_config_id: connector_fixture("mattermost").id,
         channel_identifier: "old-id"
       })
 
@@ -205,7 +220,13 @@ defmodule Zaq.Agent.Tools.People.UpdatePersonTest do
              UpdatePerson.run(
                %{
                  person_id: person.id,
-                 channels: [%{platform: "telegram", channel_identifier: "@loser"}],
+                 channels: [
+                   %{
+                     platform: "telegram",
+                     channel_config_id: connector_fixture("telegram").id,
+                     channel_identifier: "@loser"
+                   }
+                 ],
                  attrs: %{full_name: "Explicit name"},
                  merge_with_person_id: other.id,
                  merge_precedence: "other"

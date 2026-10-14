@@ -1,6 +1,7 @@
 defmodule Zaq.Engine.PeopleGatewayTest do
   use Zaq.DataCase, async: true
   use ExUnitProperties
+  import Zaq.CommunicationFixtures
 
   alias Zaq.Accounts.People
   alias Zaq.Accounts.PersonChannel
@@ -234,6 +235,7 @@ defmodule Zaq.Engine.PeopleGatewayTest do
       People.add_channel(%{
         "person_id" => person.id,
         "platform" => "slack",
+        "channel_config_id" => connector_fixture("slack").id,
         "channel_identifier" => "@chanp"
       })
 
@@ -290,6 +292,7 @@ defmodule Zaq.Engine.PeopleGatewayTest do
       People.add_channel(%{
         person_id: owner.id,
         platform: "slack",
+        channel_config_id: connector_fixture("slack").id,
         channel_identifier: "gateway-owner"
       })
 
@@ -316,6 +319,7 @@ defmodule Zaq.Engine.PeopleGatewayTest do
       People.add_channel(%{
         "person_id" => person.id,
         "platform" => "slack",
+        "channel_config_id" => connector_fixture("slack").id,
         "channel_identifier" => "@before-#{ts}"
       })
 
@@ -341,7 +345,9 @@ defmodule Zaq.Engine.PeopleGatewayTest do
              PeopleGateway.dispatch(:update_resource, %{
                id: person.id,
                attrs: %{full_name: "Composite Updated #{ts}"},
-               channels: [%{platform: "telegram", channel_identifier: "@comp-#{ts}"}]
+               channels: [
+                 scoped_channel_attrs(%{platform: "telegram", channel_identifier: "@comp-#{ts}"})
+               ]
              })
 
     assert updated.full_name == "Composite Updated #{ts}"

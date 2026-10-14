@@ -295,7 +295,7 @@ defmodule Zaq.Engine.PeopleAuthGatewayTest do
       slack: %{bridge: PeopleAuthDeliveryMock}
     })
 
-    {:ok, _} =
+    {:ok, fallback_config} =
       ChannelConfig.upsert_by_provider("slack", %{
         name: "Fallback",
         kind: "retrieval",
@@ -309,6 +309,7 @@ defmodule Zaq.Engine.PeopleAuthGatewayTest do
       People.add_channel(%{
         person_id: person.id,
         platform: "slack",
+        channel_config_id: fallback_config.id,
         channel_identifier: "fallback-person",
         weight: 1
       })
@@ -363,7 +364,7 @@ defmodule Zaq.Engine.PeopleAuthGatewayTest do
   test "skipped notification is not success and its challenge is invalidated" do
     {:ok, person} = People.create_person(%{full_name: "Portal", email: "portal@example.test"})
     {:ok, _} = PeoplePermissions.grant(:everyone, :access_profile)
-    Repo.delete_all(Zaq.Engine.ChannelConfig)
+    Repo.update_all(Zaq.Engine.ChannelConfig, set: [enabled: false])
 
     assert {:error, :delivery_failed} =
              PeopleAuthGateway.request_challenge(" PORTAL@example.test ", {127, 0, 0, 22})

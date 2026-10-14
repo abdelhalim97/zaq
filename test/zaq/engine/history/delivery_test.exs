@@ -154,7 +154,7 @@ defmodule Zaq.Engine.History.DeliveryTest do
 
   defp author(name, address, config_id) do
     {:ok, person} =
-      People.find_or_create_from_channel("email:imap", %{
+      People.find_or_create_from_channel("email", %{
         channel_id: address,
         channel_config_id: config_id,
         display_name: name

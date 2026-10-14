@@ -179,6 +179,8 @@
         person_sessions_status={@person_sessions_status}
         teams={@teams}
         agent_options={@agent_options}
+        routing_targets={@routing_targets}
+        routing_values={@routing_values}
       />
     </:detail>
   </ZaqWeb.Components.MasterDetailLayout.master_detail>
@@ -194,5 +196,8 @@
     merge_candidates={@merge_candidates}
     selected_person={@selected_person}
     agent_options={@agent_options}
+    routing_targets={@routing_targets}
+    routing_values={@routing_values}
+    modal_routing_values={@modal_routing_values}
   />
 </ZaqWeb.Components.BOLayout.bo_layout>

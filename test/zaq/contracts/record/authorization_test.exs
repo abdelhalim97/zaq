@@ -1,5 +1,6 @@
 defmodule Zaq.Contracts.Record.AuthorizationTest do
   use Zaq.DataCase, async: true
+  import Zaq.CommunicationFixtures, only: [connector_fixture: 1]
 
   alias Zaq.Accounts.People
   alias Zaq.Contracts.Record
@@ -187,6 +188,7 @@ defmodule Zaq.Contracts.Record.AuthorizationTest do
       People.add_channel(%{
         "person_id" => person_id,
         "platform" => platform,
+        "channel_config_id" => connector_fixture(platform).id,
         "channel_identifier" => identifier
       })
 

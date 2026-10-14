@@ -53,6 +53,8 @@ defmodule Zaq.Accounts.ChannelIdentityConcurrencyTest do
 
   test "discovery propagates unrelated unique violations without retrying or leaving an orphan" do
     marker = "unrelated-unique-#{System.unique_integer([:positive])}"
+    config = race_connector(marker, "telegram")
+    cleanup(marker)
     handler = {__MODULE__, self()}
     owner = self()
 
@@ -79,6 +81,7 @@ defmodule Zaq.Accounts.ChannelIdentityConcurrencyTest do
         error =
           assert_raise Ecto.ConstraintError, fn ->
             People.find_or_create_from_channel(:telegram, %{
+              channel_config_id: config.id,
               channel_id: marker,
               display_name: marker
             })
@@ -101,6 +104,7 @@ defmodule Zaq.Accounts.ChannelIdentityConcurrencyTest do
   for platform <- ["email", "telegram"] do
     test "independent connections cannot assign the same #{platform} identity to two people" do
       marker = "channel-race-#{System.unique_integer([:positive])}"
+      config = race_connector(marker, unquote(platform))
 
       ids =
         Sandbox.unboxed_run(Repo, fn ->
@@ -122,6 +126,7 @@ defmodule Zaq.Accounts.ChannelIdentityConcurrencyTest do
           People.add_channel(%{
             person_id: id,
             platform: unquote(platform),
+            channel_config_id: config.id,
             channel_identifier: identifier
           })
         end)
@@ -139,6 +144,7 @@ defmodule Zaq.Accounts.ChannelIdentityConcurrencyTest do
 
     test "concurrent #{platform} discovery rereads the committed winner without orphan people" do
       marker = "discovery-race-#{System.unique_integer([:positive])}"
+      config = race_connector(marker, unquote(platform))
       cleanup(marker)
       identifier = if unquote(platform) == "email", do: marker <> "@example.com", else: marker
       parent = self()
@@ -169,6 +175,7 @@ defmodule Zaq.Accounts.ChannelIdentityConcurrencyTest do
 
             try do
               People.find_or_create_from_channel(unquote(platform), %{
+                channel_config_id: config.id,
                 channel_id: identifier,
                 display_name: marker
               })
@@ -217,6 +224,7 @@ defmodule Zaq.Accounts.ChannelIdentityConcurrencyTest do
 
   test "concurrent discovery of one profile email retries after rollback and retains both incoming channels" do
     marker = "profile-discovery-#{System.unique_integer([:positive])}"
+    config = race_connector(marker, "telegram")
     email = marker <> "@example.com"
     cleanup(marker)
     parent = self()
@@ -245,6 +253,7 @@ defmodule Zaq.Accounts.ChannelIdentityConcurrencyTest do
 
           try do
             People.find_or_create_from_channel(:telegram, %{
+              channel_config_id: config.id,
               channel_id: marker <> suffix,
               email: email,
               display_name: marker
@@ -304,7 +313,23 @@ defmodule Zaq.Accounts.ChannelIdentityConcurrencyTest do
     on_exit(fn ->
       Sandbox.unboxed_run(Repo, fn ->
         Repo.delete_all(from p in Person, where: p.full_name == ^marker)
+        Repo.delete_all(from c in ChannelConfig, where: c.name == ^marker)
       end)
+    end)
+  end
+
+  defp race_connector(marker, platform) do
+    Sandbox.unboxed_run(Repo, fn ->
+      provider = if platform == "email", do: "email:imap", else: platform
+
+      Repo.insert!(%ChannelConfig{
+        name: marker,
+        provider: provider,
+        kind: "retrieval",
+        url: "https://race.example.com",
+        token: "",
+        enabled: true
+      })
     end)
   end
 end

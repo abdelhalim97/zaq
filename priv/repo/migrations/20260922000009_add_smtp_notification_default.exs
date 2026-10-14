@@ -11,5 +11,15 @@ defmodule Zaq.Repo.Migrations.AddSmtpNotificationDefault do
                "provider = 'email:smtp' AND notification_default = true AND archived_at IS NULL",
              name: :channel_configs_active_smtp_notification_default_idx
            )
+
+    execute(
+      """
+      UPDATE channel_configs SET notification_default = true
+      WHERE provider = 'email:smtp' AND kind = 'retrieval' AND archived_at IS NULL
+        AND (SELECT COUNT(*) FROM channel_configs
+             WHERE provider = 'email:smtp' AND kind = 'retrieval' AND archived_at IS NULL) = 1
+      """,
+      "UPDATE channel_configs SET notification_default = false"
+    )
   end
 end

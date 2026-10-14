@@ -67,6 +67,7 @@ defmodule Zaq.Channels.CommunicationBridge do
   @callback room_capabilities(map(), String.t()) :: {:ok, map()} | {:error, term()}
   @callback room_members(map(), String.t()) :: {:ok, map()} | {:error, term()}
   @callback fetch_room_message(map(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  @callback incoming_routing(map()) :: %{incoming?: boolean(), topics: [String.t()]}
 
   @optional_callbacks send_typing: 3,
                       upsert_message: 3,
@@ -87,7 +88,8 @@ defmodule Zaq.Channels.CommunicationBridge do
                       materialize_record: 3,
                       room_capabilities: 2,
                       room_members: 2,
-                      fetch_room_message: 3
+                      fetch_room_message: 3,
+                      incoming_routing: 1
 
   defmacro __using__(_opts) do
     quote do
