@@ -10,6 +10,7 @@ defmodule ZaqWeb.E2EController do
   alias Zaq.Addons.FeatureStore
   alias Zaq.Agent.MCP
   alias Zaq.E2E.{ChannelHistoryFixture, LogCollector, PortalState, ProcessorState, Reset}
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Telemetry
   alias Zaq.Engine.Telemetry.Rollup
@@ -52,6 +53,23 @@ defmodule ZaqWeb.E2EController do
 
   # POST /e2e/channel-history — seed the approved PR A browser journey.
   def seed_channel_history(conn, _params), do: json(conn, ChannelHistoryFixture.seed!())
+
+  # Describe-local prerequisites for existing People channel journeys. Disabled
+  # connectors make administration available without starting provider listeners.
+  def seed_people_connectors(conn, _params) do
+    {:ok, email} = ChannelConfig.resolve_notification_smtp(enabled: false)
+
+    {:ok, telegram} =
+      ChannelConfig.upsert_by_provider("telegram", %{
+        name: "E2E People Telegram",
+        kind: "retrieval",
+        enabled: false,
+        url: "https://telegram.example.invalid",
+        token: "e2e-not-a-real-token"
+      })
+
+    json(conn, %{email: email.id, telegram: telegram.id})
+  end
 
   # E2E-only presentation fixture. The fake processor cannot produce per-chunk
   # indexing errors; real detector/indexing/retry behavior is tested with ExUnit.
