@@ -15,11 +15,15 @@
     {
       "text": "2026-10-14 widget configuration UX follow-up implemented and left uncommitted for review. WidgetSettings now exposes actionable field-keyed errors; BO shows trailing-slash origin, issuer/audience, SameSite, name and other validation through Design System FieldHint/FeedbackBanner, with corrected-field clearing. Removed duplicate widget ID control; DS hints now back shared Select/AgentRoutingOptions; enablement moved to modal bottom; key generation/rotation is an accessible icon action beside the secret field; archive is a connector-targeted banner icon action with revision and confirmation. Added Select/routing Storybook states and regressions for validation specificity/correction, layout, one-time key behavior, and multi-connector archive targeting. Focused: 49 tests/4 properties PASS; mix q PASS; final mix precommit --max-cases 4 PASS in 520.4s (17 doctests/191 properties/9687 tests, 0 failures, 1 existing skip, 114 excluded). Storybook Select error/hint visually inspected desktop; full authenticated modal remains for human UX review. config/dev.exs SHA256 remains 36698c368bf49c403e96932053ef7101ca3b36e7bc2658e40569ae237b0932b3; diff check clean. No commit/push by this agent. Current HEAD/origin is user-authored merge 4d63fc5c9 created during the session; the UX follow-up files remain unstaged. Ticket stays in progress pending review.",
       "timestamp": "2026-10-14T13:54:44Z"
+    },
+    {
+      "text": "2026-10-14 second widget UX review pass implemented, still no commit/push. Archive banner now uses the same trash icon vocabulary as Telegram/Mattermost. Authentication-key action is isolated in the input row with its DS hint below; generation timestamp uses shared human-readable timezone-aware formatting; backend/one-time disclosure guidance uses a new persistent DS FeedbackBanner warning state (Storybook rendered and computed warning styling verified). Installation instructions moved from inline expansion to a BO modal with escaped/copyable generated script, required src/widget ID/token endpoint/defer guidance, optional iframe-location-id/stylesheet-url/data-widget-url guidance, and exact identity-token JSON plus Cache-Control no-store/security requirements. Corrected stylesheet guidance: relative parent-page URLs are supported; absolute URLs require HTTP(S). Focused 56 tests PASS; mix q PASS. First precommit attempt aborted in asmjit before results; unchanged rerun at max-cases 2 PASS in 594.1s: 17 doctests/188 properties/9685 tests, 0 failures, 1 existing skip, 114 excluded. Warning Storybook visually inspected at desktop; full authenticated modal remains for human UX review. Both staged and unstaged diff checks pass; config/dev.exs SHA256 remains 36698c368bf49c403e96932053ef7101ca3b36e7bc2658e40569ae237b0932b3. HEAD remains 4d63fc5c9. Ticket stays in progress awaiting review.",
+      "timestamp": "2026-10-14T14:20:30Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Integrate connector-scoped base into WebBridge without committing",
   "type": "task",
-  "updated_at": "2026-10-14T13:54:44Z"
+  "updated_at": "2026-10-14T14:20:30Z"
 }
