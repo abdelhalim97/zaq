@@ -18,11 +18,15 @@
     {
       "text": "User approved minimal repairs to outdated People E2E scenarios and retirement/consolidation of four obsolete NormalizePersonEmails replay cases. Removed the automatic graph/lowest-ID replay property and the two profile-only-email replay variants; current explicit group/chain merge test now checks connector/native identity IDs, metadata, preference weight, activity timestamp, normalized matching and repeat discovery without extra links. Moved blank-name history labels to a direct current merge test. Remaining existing normalization tests unchanged. For browser prerequisites, reuse disabled sender/default resolution and ChannelConfig.upsert_by_provider through an E2E-only fixture endpoint (test/support handler; route inside existing compile-time E2E gate). Fixture response contains IDs only; no production behavior or tool exposure. Reuse/reset existing describe-level fixture pattern and shared BO helpers; seed via API rather than navigate unrelated admin pages. Preserve all duplicate/merge assertions, select explicit scoped connectors, and update friendly labels while checking platform values. First isolated unit run: 50 tests +4 properties passed.",
       "timestamp": "2026-10-14T07:29:21Z"
+    },
+    {
+      "text": "Existing People E2E repairs validated on Chromium, Firefox and WebKit: 87/87 passed on isolated _c_e2e2. Required connector selection is explicit in all existing add flows; Telegram prerequisite is seeded through the E2E-only API, with no global-reset fixture pollution or active listener. Platform dropdown assertions check friendly labels AND canonical values. Detail channel badges remain lowercase, so original merge assertions are unchanged. Relevant merge/email/scoping unit tests: 50 tests +4 properties passed. The four obsolete replay cases were removed as approved; business identity/preference/history guarantees now exercise current merge APIs. Remaining working older migration tests and migrations themselves are untouched. Action reuse: fixture-only helpers reuse existing config selection/upsert APIs and shared test support; no new production domain operation/Action/tool. Follow-up is test/fixture-only (route inside existing E2E compile guard), so no new production coverage target; overall PR coverage and final UX review remain separate. Running full precommit readiness gate next.",
+      "timestamp": "2026-10-14T07:38:44Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.5] Human UX approval and E2E finalization",
   "type": "task",
-  "updated_at": "2026-10-14T07:29:21Z"
+  "updated_at": "2026-10-14T07:38:44Z"
 }
