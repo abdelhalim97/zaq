@@ -14,7 +14,16 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
   alias Zaq.Contracts.Record
   alias Zaq.Engine.Api, as: EngineApi
   alias Zaq.Engine.{ChannelConfig, Conversations, HistoryIngress}
-  alias Zaq.Engine.Conversations.{ExecutionRecord, Message, Transcript, TranscriptHistory}
+
+  alias Zaq.Engine.Conversations.{
+    ExecutionHistory,
+    ExecutionRecord,
+    Message,
+    Transcript,
+    TranscriptHistory,
+    TranscriptMessage
+  }
+
   alias Zaq.Engine.History.Facts
   alias Zaq.Engine.Messages.Incoming
   alias Zaq.Event
@@ -515,6 +524,142 @@ defmodule Zaq.Engine.Conversations.ExecutionHistoryTest do
 
     assert {:error, :unauthorized} =
              Conversations.execution_history(binding, actor(ctx.alice), after_cursors: %{})
+  end
+
+  test "admission composer fallback contracts reject missing Person", ctx do
+    {binding, _capture} = admitted(ctx)
+    input = Repo.get!(Message, binding.user_message_id)
+    conversation = Conversations.get_conversation!(binding.conversation_id)
+
+    assert {:error, :unauthorized} = ExecutionHistory.scope(input, conversation, nil)
+    assert {:error, :unauthorized} = ExecutionHistory.project_admission(input, conversation, nil)
+
+    assert {:error, :unauthorized} =
+             ExecutionHistory.delta_admission(input, conversation, nil, %{})
+  end
+
+  test "a legacy root cannot queue a canonical child without a canonical root placement", ctx do
+    legacy =
+      Incoming.new(%{
+        content: "Legacy root",
+        provider: :mattermost,
+        channel_id: "legacy-room",
+        message_id: "legacy-queue-root",
+        person: ctx.alice,
+        author_id: "alice",
+        routing_context: %{channel_config_id: ctx.config.id}
+      })
+      |> CommunicationBridge.put_conversation_identity()
+
+    assert {:ok, root} = Conversations.admit_incoming(legacy)
+    assert Repo.get!(Message, root.user_message_id).source_provider == nil
+
+    grant(ctx)
+    child_input = incoming(ctx, ctx.alice, "canonical-queue-child", nil, "Correction")
+    assert {:ok, _} = HistoryIngress.capture(child_input)
+    assert {:ok, child} = Conversations.admit_incoming(child_input)
+    assert {:ok, _} = Conversations.admit_execution(child, actor(ctx.alice), child_input.content)
+
+    assert {:error, :unauthorized} =
+             Conversations.queue_execution_input(root.user_message_id, child, actor(ctx.alice))
+  end
+
+  test "canonical composer denies an input with no placement", ctx do
+    {binding, _} = admitted(ctx)
+    input = Repo.get!(Message, binding.user_message_id)
+    conversation = Conversations.get_conversation!(binding.conversation_id)
+    placement = Repo.get_by!(TranscriptMessage, message_id: input.id)
+    Repo.delete!(placement)
+
+    assert {:error, :unauthorized} = ExecutionHistory.scope(input, conversation, ctx.alice)
+
+    assert {:error, :unauthorized} =
+             ExecutionHistory.project_admission(input, conversation, ctx.alice)
+
+    assert {:error, :unauthorized} =
+             ExecutionHistory.delta_admission(input, conversation, ctx.alice, %{})
+  end
+
+  test "canonical composer denies a placement owned by another Person", ctx do
+    {binding, _} = admitted(ctx)
+    input = Repo.get!(Message, binding.user_message_id)
+    conversation = Conversations.get_conversation!(binding.conversation_id)
+    placement = Repo.get_by!(TranscriptMessage, message_id: input.id)
+    transcript = Repo.get!(Transcript, placement.transcript_id)
+    Repo.delete!(placement)
+
+    private =
+      %Transcript{}
+      |> Transcript.changeset(%{
+        strategy: "replicated",
+        provider: transcript.provider,
+        channel_config_id: transcript.channel_config_id,
+        scope_key: "bob-private-#{input.id}",
+        external_channel_id: transcript.external_channel_id,
+        permission_resource_type: "person_history",
+        permission_resource_id: "bob-private-#{input.id}",
+        owner_person_id: ctx.bob.id
+      })
+      |> Repo.insert!()
+
+    private = private |> Ecto.Changeset.change(next_position: 1) |> Repo.update!()
+
+    %TranscriptMessage{}
+    |> TranscriptMessage.changeset(%{
+      transcript_id: private.id,
+      message_id: input.id,
+      position: 1,
+      provenance: "captured"
+    })
+    |> Repo.insert!()
+
+    assert {:error, :unauthorized} = ExecutionHistory.scope(input, conversation, ctx.alice)
+
+    assert {:error, :unauthorized} =
+             ExecutionHistory.project_admission(input, conversation, ctx.alice)
+
+    assert {:error, :unauthorized} =
+             ExecutionHistory.delta_admission(input, conversation, ctx.alice, %{})
+  end
+
+  test "canonical composer denies ambiguous placements without choosing a replica", ctx do
+    {binding, _} = admitted(ctx)
+    input = Repo.get!(Message, binding.user_message_id)
+    conversation = Conversations.get_conversation!(binding.conversation_id)
+    placement = Repo.get_by!(TranscriptMessage, message_id: input.id)
+    transcript = Repo.get!(Transcript, placement.transcript_id)
+
+    other =
+      %Transcript{}
+      |> Transcript.changeset(%{
+        strategy: transcript.strategy,
+        provider: transcript.provider,
+        channel_config_id: transcript.channel_config_id,
+        scope_key: "duplicate-placement-#{input.id}",
+        external_channel_id: transcript.external_channel_id,
+        permission_resource_type: transcript.permission_resource_type,
+        permission_resource_id: transcript.permission_resource_id
+      })
+      |> Repo.insert!()
+
+    other = other |> Ecto.Changeset.change(next_position: 1) |> Repo.update!()
+
+    %TranscriptMessage{}
+    |> TranscriptMessage.changeset(%{
+      transcript_id: other.id,
+      message_id: input.id,
+      position: 1,
+      provenance: "captured"
+    })
+    |> Repo.insert!()
+
+    assert {:error, :unauthorized} = ExecutionHistory.scope(input, conversation, ctx.alice)
+
+    assert {:error, :unauthorized} =
+             ExecutionHistory.project_admission(input, conversation, ctx.alice)
+
+    assert {:error, :unauthorized} =
+             ExecutionHistory.delta_admission(input, conversation, ctx.alice, %{})
   end
 
   test "fixed association cursors return cumulative A then A+B without current input", ctx do

@@ -275,6 +275,37 @@ defmodule Zaq.Engine.IncomingMessageRoutingTest do
       assert get_field(changeset, :topic_id) == nil
     end
 
+    for topic_id <- ["", " \t "] do
+      test "loaded topic clears when replaced with #{inspect(topic_id)}" do
+        rule = %IncomingMessageRoutingRule{topic_id: "INBOX", routing_mode: :none}
+
+        changeset = IncomingMessageRouting.change_rule(rule, %{topic_id: unquote(topic_id)})
+
+        assert changeset.valid?
+        assert get_change(changeset, :topic_id) == nil
+        assert get_field(changeset, :topic_id) == nil
+      end
+    end
+
+    test "padded nonempty topic is trimmed for new and loaded rules" do
+      config = insert_channel_config!()
+
+      for rule <- [
+            %IncomingMessageRoutingRule{},
+            %IncomingMessageRoutingRule{topic_id: "Archive", routing_mode: :none}
+          ] do
+        changeset =
+          IncomingMessageRouting.change_rule(rule, %{
+            routing_mode: :none,
+            channel_config_id: config.id,
+            topic_id: "  INBOX \t "
+          })
+
+        assert changeset.valid?
+        assert get_field(changeset, :topic_id) == "INBOX"
+      end
+    end
+
     test "non-string topic IDs are rejected instead of silently dropped" do
       config = insert_channel_config!()
 
@@ -287,6 +318,16 @@ defmodule Zaq.Engine.IncomingMessageRoutingTest do
 
       refute changeset.valid?
       assert "is invalid" in errors_on(changeset).topic_id
+
+      loaded =
+        IncomingMessageRouting.change_rule(
+          %IncomingMessageRoutingRule{topic_id: "INBOX", routing_mode: :none},
+          %{topic_id: 123}
+        )
+
+      refute loaded.valid?
+      assert "is invalid" in errors_on(loaded).topic_id
+      assert get_field(loaded, :topic_id) == "INBOX"
     end
 
     test "missing routing mode leaves destination validation unchanged" do

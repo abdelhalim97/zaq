@@ -28,6 +28,20 @@ defmodule Zaq.Agent.ApiTest do
     end
   end
 
+  defmodule FollowupExecutor do
+    def run(%Incoming{}, opts) do
+      send(self(), {:followup_executor_called, opts})
+
+      {:followup,
+       %{
+         runtime_pid: self(),
+         server_id: "followup-deadline-fixture",
+         request_id: "native-root",
+         execution_user_message_id: "root-message"
+       }}
+    end
+  end
+
   defmodule StubMCP do
     def test_list_tools(endpoint_id, opts) do
       send(self(), {:mcp_test_called, endpoint_id, opts})
@@ -117,6 +131,23 @@ defmodule Zaq.Agent.ApiTest do
 
     def dispatch(event) do
       send(self(), {:node_router_dispatch, Keyword.get(event.opts, :action), event})
+      %{event | response: :ok}
+    end
+  end
+
+  defmodule HistoryDeniedNodeRouter do
+    def dispatch(%{opts: [action: :admit_execution, confidential: true]} = event) do
+      send(self(), {:history_admission_requested, event})
+
+      %{
+        event
+        | response:
+            {:error, {:history_access_denied, %{transcript_id: "transcript", person_id: 99}}}
+      }
+    end
+
+    def dispatch(event) do
+      send(self(), {:history_denied_other_dispatch, Keyword.get(event.opts, :action)})
       %{event | response: :ok}
     end
   end
@@ -521,6 +552,103 @@ defmodule Zaq.Agent.ApiTest do
 
     refute_received {:steer_called, _, _, _}
     refute_received {:inject_called, _, _, _}
+  end
+
+  test "steer and inject reject absent and malformed request ids and content before factory calls" do
+    invalid_requests = [
+      {%{}, :missing_request_id},
+      {%{request_id: nil, content: "valid"}, :missing_request_id},
+      {%{request_id: "", content: "valid"}, :missing_request_id},
+      {%{request_id: 42, content: "valid"}, :missing_request_id},
+      {%{request_id: "valid-id"}, :missing_content},
+      {%{request_id: "valid-id", content: nil}, :missing_content},
+      {%{request_id: "valid-id", content: ""}, :missing_content},
+      {%{request_id: "valid-id", content: 42}, :missing_content},
+      {%{"request_id" => "valid-id"}, :missing_content}
+    ]
+
+    for action <- [:steer_request, :inject_request], {request, reason} <- invalid_requests do
+      result =
+        Api.handle_event(
+          Event.new(request, :agent,
+            actor: @control_actor,
+            opts: [action: action, factory_module: StubFactory]
+          ),
+          action,
+          nil
+        )
+
+      assert result.response == {:error, reason}
+    end
+
+    refute_received {:steer_called, _, _, _}
+    refute_received {:inject_called, _, _, _}
+  end
+
+  test "run_pipeline maps Engine history admission denial to unauthorized before side effects" do
+    incoming = %Incoming{content: "bound request", channel_id: "c1", provider: :mattermost}
+
+    event =
+      pipeline_event(incoming,
+        opts: [
+          pipeline_module: StubPipeline,
+          executor_module: StubExecutor,
+          status_module: SpyStatus,
+          node_router: HistoryDeniedNodeRouter
+        ]
+      )
+
+    result = Api.handle_event(event, :run_pipeline, nil)
+
+    assert result.response == {:error, :unauthorized}
+    assert result.next_hop == nil
+    assert_received {:history_admission_requested, %{request: %{content: "bound request"}}}
+    refute_received {:pipeline_called, _, _}
+    refute_received {:executor_called, _, _}
+    refute_received {:status_broadcast, _, _, _}
+    refute_received {:history_denied_other_dispatch, _}
+  end
+
+  test "followup deadline and unavailable runtime reservation stop before preparing a root" do
+    incoming = %Incoming{content: "late correction", channel_id: "c1", provider: :mattermost}
+
+    event =
+      pipeline_event(incoming,
+        opts: [
+          executor_module: FollowupExecutor,
+          node_router: SpyNodeRouter,
+          status_module: NoopStatus,
+          prompt_guard: PassthroughPromptGuard,
+          deadline: System.monotonic_time(:millisecond) - 1
+        ]
+      )
+      |> Map.put(:assigns, %{
+        "agent_selection" => %{"agent_id" => 77},
+        "conversation_binding" => %{
+          conversation_id: "conversation-fixture",
+          user_message_id: "message-fixture",
+          finalization_token: "token-fixture"
+        }
+      })
+
+    result = Api.handle_event(event, :run_pipeline, nil)
+
+    assert_received {:followup_executor_called, _opts}
+    assert result.response == {:error, :history_handoff_timeout}
+    assert result.next_hop == nil
+    refute_received {:node_router_dispatch, :prepare_execution_followup, _}
+    refute_received {:node_router_dispatch, :finalize_incoming, _}
+    refute_received {:node_router_dispatch, :deliver_outgoing, _}
+
+    unexpired = %{
+      event
+      | opts: Keyword.put(event.opts, :deadline, System.monotonic_time(:millisecond) + 5_000)
+    }
+
+    unavailable = Api.handle_event(unexpired, :run_pipeline, nil)
+    assert unavailable.response == {:error, :stale_runtime}
+    assert unavailable.next_hop == nil
+    refute_received {:node_router_dispatch, :prepare_execution_followup, _}
   end
 
   test "inject_request returns not_found when registry entry is absent" do

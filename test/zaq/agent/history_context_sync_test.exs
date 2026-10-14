@@ -1,14 +1,23 @@
 defmodule Zaq.Agent.HistoryContextSyncTest do
+  # Deliberate coverage exceptions: binding a newly issued owner-held lease cannot fail
+  # through the public API (HistorySync.bind_reservation/1), the retirement deadline has no
+  # injectable clock and would require a 60-second wait, and OTP-only states such as
+  # non-PID supervisor children, a second kill-monitor timeout, and duplicate lifecycle
+  # entries cannot be reached through normal manager ownership. The registry-disappeared
+  # between spawn and timer scheduling branch is likewise an unsynchronizable startup race.
   use Zaq.DataCase, async: false
   use ExUnitProperties
 
   import Zaq.SystemConfigFixtures
+  import Mox
 
   alias Jido.AI.Context, as: AIContext
   alias Zaq.Accounts.People
   alias Zaq.Agent.{Api, Factory, HistorySync, RequestControl, ServerManager}
   alias Zaq.Engine.HistoryRuntimeRemovalWorker
   alias Zaq.TestSupport.{MultiAgentOpenAIStub, OpenAIStub}
+
+  setup :verify_on_exit!
 
   setup tags do
     owner = self()
@@ -205,6 +214,18 @@ defmodule Zaq.Agent.HistoryContextSyncTest do
              ServerManager.complete_history_request(ctx.scope, lease.token, ctx.seed, ctx.cursors)
 
     assert :sys.get_state(ServerManager).history[ctx.scope].lease == nil
+  end
+
+  test "three-argument history reservation uses the public default timeout", ctx do
+    input = Ecto.UUID.generate()
+
+    assert {:ok, reservation} =
+             ServerManager.reserve_history_request(ctx.pid, ctx.actor, input)
+
+    assert reservation.server_id == ctx.scope
+    assert reservation.lease.pid == ctx.pid
+    assert is_reference(reservation.lease.token)
+    assert :ok = ServerManager.abort_history_request(ctx.scope, reservation.lease.token)
   end
 
   test "admission pins are idempotent, scope-bound and released separately from the root lease",
@@ -969,6 +990,142 @@ defmodule Zaq.Agent.HistoryContextSyncTest do
       assert ServerManager.history_requests(session) == []
       assert :sys.get_state(ServerManager).history[ctx.scope] == nil
     end)
+  end
+
+  test "followup reservation reuses the lease after HistorySync adopts it", ctx do
+    input = Ecto.UUID.generate()
+    [transcript] = Map.keys(ctx.cursors)
+
+    projection = %{
+      kind: :canonical,
+      transcript_id: transcript,
+      messages: [],
+      cursors: ctx.cursors
+    }
+
+    history = %{
+      binding: %{user_message_id: input, execution_id: Ecto.UUID.generate()},
+      cursors: ctx.cursors,
+      scope: ctx.scope,
+      projection: projection
+    }
+
+    HistorySync.with_session(fn session ->
+      assert {:ok, first} =
+               HistorySync.reserve_followup(
+                 session,
+                 %{runtime_pid: ctx.pid},
+                 ctx.actor,
+                 input,
+                 1_000
+               )
+
+      assert {:ok, _opts} =
+               HistorySync.admit(
+                 [
+                   history_session: session,
+                   execution_history: history,
+                   history_reservation: first
+                 ],
+                 ctx.scope,
+                 ctx.pid,
+                 ctx.actor
+               )
+
+      assert {:ok, second} =
+               HistorySync.reserve_followup(
+                 session,
+                 %{runtime_pid: ctx.pid},
+                 ctx.actor,
+                 input,
+                 1_000
+               )
+
+      assert second.server_id == first.server_id
+      assert second.lease.token == first.lease.token
+      assert second.lease.op_id == first.lease.op_id
+      assert second.lease.pid == first.lease.pid
+      assert second.lease.cursors == first.lease.cursors
+      assert length(ServerManager.history_requests(session)) == 1
+
+      pid = ctx.pid
+      monitor = Process.monitor(pid)
+      assert :ok = ServerManager.abort_history_request(ctx.scope, first.lease.token)
+      assert_receive {:DOWN, ^monitor, :process, ^pid, _reason}, 5_000
+      assert pid == ctx.pid
+      assert ServerManager.history_requests(session) == []
+    end)
+  end
+
+  for failure <- [:raise, :exit, :error, :unmatched] do
+    @tag history_failure: failure
+    test "completion aborts its lease when the Engine history read #{failure}s", ctx do
+      [transcript] = Map.keys(ctx.cursors)
+      binding = %{user_message_id: Ecto.UUID.generate(), execution_id: Ecto.UUID.generate()}
+
+      projection = %{
+        kind: :canonical,
+        transcript_id: transcript,
+        messages: [],
+        cursors: ctx.cursors
+      }
+
+      history = %{
+        binding: binding,
+        cursors: ctx.cursors,
+        scope: ctx.scope,
+        projection: projection
+      }
+
+      expect(Zaq.NodeRouterMock, :dispatch, fn event ->
+        assert event.next_hop.destination == :engine
+        assert event.opts[:action] == :execution_history
+        assert event.opts[:confidential]
+        assert event.request == Map.put(binding, :after_cursors, ctx.cursors)
+
+        case ctx.history_failure do
+          :raise -> raise "history read failed"
+          :exit -> exit(:history_read_failed)
+          :error -> %{event | response: {:error, :engine_timeout}}
+          :unmatched -> %{event | response: %{}}
+        end
+      end)
+
+      assert {:ok, %{request: request}} =
+               Factory.ask_with_config(ctx.pid, "Answer this", ctx.agent)
+
+      assert {:ok, "Answer"} = Factory.await(request, timeout: 5_000)
+      pid = ctx.pid
+      monitor = Process.monitor(pid)
+
+      HistorySync.with_session(fn session ->
+        assert {:ok, _opts} =
+                 HistorySync.admit(
+                   [
+                     history_session: session,
+                     execution_history: history,
+                     node_router: Zaq.NodeRouterMock
+                   ],
+                   ctx.scope,
+                   ctx.pid,
+                   ctx.actor
+                 )
+
+        assert :ok =
+                 HistorySync.complete(
+                   session,
+                   %{assistant_message_id: Ecto.UUID.generate()},
+                   %{body: "Answer", metadata: %{}}
+                 )
+
+        assert ServerManager.history_requests(session) == []
+      end)
+
+      assert_receive {:DOWN, ^monitor, :process, ^pid, _reason}, 5_000
+      assert pid == ctx.pid
+      assert :sys.get_state(ServerManager).history[ctx.scope] == nil
+      refute Process.alive?(ctx.pid)
+    end
   end
 
   test "a reservation for another server incarnation is rejected without changing the runtime",

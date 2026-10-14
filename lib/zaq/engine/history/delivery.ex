@@ -66,7 +66,6 @@ defmodule Zaq.Engine.History.Delivery do
     case HistoryIngress.capture_confirmed(request) do
       {:ok, _} -> %{history_capture: :stored}
       {:error, reason} -> unavailable(reason)
-      _ -> unavailable(:invalid_response)
     end
   rescue
     _ -> unavailable(:history_capture_failed)

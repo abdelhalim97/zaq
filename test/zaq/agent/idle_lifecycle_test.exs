@@ -49,4 +49,17 @@ defmodule Zaq.Agent.IdleLifecycleTest do
     state = %{id: "server-1", lifecycle: %{idle_timeout: 1000, idle_timer: nil}}
     assert {:cont, ^state} = IdleLifecycle.handle_event(:other, state)
   end
+
+  test "persist_cron_specs/2 acknowledges cron specs" do
+    state = %{id: "server-1", lifecycle: %{idle_timeout: 1000, idle_timer: nil}}
+    cron_specs = %{daily: %{schedule: "0 0 * * *"}}
+
+    assert :ok = IdleLifecycle.persist_cron_specs(cron_specs, state)
+  end
+
+  test "terminate/2 acknowledges normal termination" do
+    state = %{id: "server-1", lifecycle: %{idle_timeout: 1000, idle_timer: nil}}
+
+    assert :ok = IdleLifecycle.terminate(:normal, state)
+  end
 end

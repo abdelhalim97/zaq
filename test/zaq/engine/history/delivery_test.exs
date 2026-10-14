@@ -123,6 +123,56 @@ defmodule Zaq.Engine.History.DeliveryTest do
     refute_enqueued(worker: HistoryDeliveryWorker)
   end
 
+  test "confirmed transport receipt survives a later association retry failure" do
+    config = connector("email:imap")
+    recipient = author("Recipient", "recipient@example.com", config.id)
+
+    outgoing = %Outgoing{
+      body: "confirmed once",
+      channel_id: "old-thread",
+      provider: "email:imap",
+      metadata: %{},
+      routing_context: %{
+        channel_config_id: config.id,
+        conversation_type: :recipient_addressed,
+        source_scope: "smtp:retry"
+      }
+    }
+
+    receipt = %{
+      confirmation: :confirmed,
+      message_id: unique_id(),
+      audience: %{
+        platform: "email",
+        sender: "system@example.com",
+        recipients: ["recipient@example.com"]
+      }
+    }
+
+    assert {:ok, %{history_capture: :stored}} = Delivery.capture({:ok, receipt}, outgoing)
+    [message] = Repo.all(Message)
+    assert message.metadata["delivery_confirmation"]["message_id"] == receipt.message_id
+
+    config |> Ecto.Changeset.change(enabled: false) |> Repo.update!()
+
+    assert {:ok,
+            %{
+              confirmation: :confirmed,
+              message_id: message_id,
+              history_capture: :unavailable,
+              history_capture_error: :invalid_delivery_scope
+            }} =
+             Delivery.capture({:ok, receipt}, outgoing)
+
+    assert message_id == receipt.message_id
+
+    assert Repo.get!(Message, message.id).metadata["delivery_confirmation"]["message_id"] ==
+             receipt.message_id
+
+    assert Repo.aggregate(Message, :count) == 1
+    assert Enum.any?(Repo.all(Transcript), &(&1.owner_person_id == recipient.id))
+  end
+
   defp connector(provider \\ "mattermost") do
     if provider == "email:imap" do
       %ChannelConfig{}

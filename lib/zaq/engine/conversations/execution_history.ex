@@ -158,6 +158,8 @@ defmodule Zaq.Engine.Conversations.ExecutionHistory do
     %{projection | messages: merged, cursors: Map.put(projection.cursors, source_id, cursor)}
   end
 
+  defp input_transcript(%{source_provider: nil}, _conversation, _person_id), do: nil
+
   defp input_transcript(input, _conversation, person_id) do
     query =
       from t in Transcript,

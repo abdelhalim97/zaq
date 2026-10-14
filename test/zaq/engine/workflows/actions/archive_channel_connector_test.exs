@@ -124,6 +124,28 @@ defmodule Zaq.Engine.Workflows.Actions.ArchiveChannelConnectorTest do
     refute_received {:channels_event, _}
   end
 
+  test "password-blocked BO actors cannot archive an existing connector" do
+    user = super_admin_fixture(%{must_change_password: true})
+    config = insert_retrieval_config()
+
+    assert {:error, :unauthorized} =
+             ArchiveChannelConnector.run(params(config), context(%{user_id: user.id}))
+
+    assert Repo.get!(ChannelConfig, config.id).enabled
+    refute_received {:channels_event, _}
+  end
+
+  test "propagates lifecycle request errors after BO actor validation" do
+    user = super_admin_fixture(%{must_change_password: false})
+    config = insert_retrieval_config()
+
+    assert {:error, :invalid_request} =
+             ArchiveChannelConnector.run(params(config), %{actor: %{user_id: user.id}, opts: nil})
+
+    assert Repo.get!(ChannelConfig, config.id).enabled
+    refute_received {:channels_event, _}
+  end
+
   test "rejects malformed params and context shapes before side effects" do
     user = super_admin_fixture(%{must_change_password: false})
     config = insert_retrieval_config()
