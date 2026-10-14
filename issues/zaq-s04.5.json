@@ -10,9 +10,15 @@
   "id": "zaq-s04.5",
   "labels": [],
   "parent": "zaq-s04",
+  "comments": [
+    {
+      "text": "During the four ownership-review corrections, human approved replacing provider/retrieval/topic native selectors with shared ZaqWeb.Select rule inputs. This is component-reuse approval, not final overall UX approval. Ran existing test/e2e/specs/people.spec.js on Chromium in isolated _c_e2e1: 23 passed, 6 failed. Five failures (merge channel flow and email/telegram duplicate add/edit same/cross person flows) submit channels without required connector selection; Telegram fixture has no configured connector. One dropdown assertion expects lowercase telegram/discord, while ProviderCatalog correctly renders Telegram/Discord. Error snapshots confirm required connector errors. No assertions weakened, no new E2E authored. Minimal fixture/selector repair and existing-browser revalidation remain pending; final precommit/approval remains blocked along with four historical NormalizePersonEmails replay failures.",
+      "timestamp": "2026-10-14T02:56:14Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.5] Human UX approval and E2E finalization",
   "type": "task",
-  "updated_at": "2026-10-13T12:20:27Z"
+  "updated_at": "2026-10-14T02:56:14Z"
 }
