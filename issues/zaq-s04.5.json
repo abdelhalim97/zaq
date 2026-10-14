@@ -26,11 +26,15 @@
     {
       "text": "Requested existing-test follow-up complete: mix q passed; isolated merge/email/scoping validation passed 50 tests +4 properties; People E2E passed all 87 existing cases across Chromium/Firefox/WebKit. Full mix precommit rerun passed 48 doctests, 240 properties, 10657 tests, zero failures (1 skipped, 122 excluded) on _c_ff1. First full run encountered one unrelated PortalConsentLiveTest 100ms render_async timeout; its 7 isolated tests passed, and the full gate rerun passed without modifying that module. No skip/timeout changes or assertion weakening. Existing six E2E mismatches and four obsolete replay failures are cleared. Remaining working normalization tests and consumed migration files unchanged. Changes confined to current merge assertions, retired four obsolete replay cases, People spec/support fixtures and one route inside the existing E2E compile guard. Follow-up changes remain uncommitted/unpushed. Overall new-feature UX/E2E/coverage approval scope remains separate.",
       "timestamp": "2026-10-14T07:59:34Z"
+    },
+    {
+      "text": "At user request, committed and pushed the validated test follow-up as d8f191f38 (test(people): update connector journeys and current merge coverage) to origin/feature/issue-768-history-b-execution. Commit qf/message hooks and push format hook passed; working tree clean. No PR merge performed.",
+      "timestamp": "2026-10-14T11:30:11Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.5] Human UX approval and E2E finalization",
   "type": "task",
-  "updated_at": "2026-10-14T07:59:34Z"
+  "updated_at": "2026-10-14T11:30:11Z"
 }
