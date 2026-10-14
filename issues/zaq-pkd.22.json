@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Julien",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-10-14T12:04:58Z",
@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "zaq-pkd",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Integrate connector-scoped base into WebBridge without committing",
   "type": "task",
-  "updated_at": "2026-10-14T12:04:58Z"
+  "updated_at": "2026-10-14T12:05:05Z"
 }
