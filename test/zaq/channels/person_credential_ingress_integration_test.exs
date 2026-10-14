@@ -7,7 +7,7 @@ defmodule Zaq.Channels.PersonCredentialIngressIntegrationTest do
   alias Zaq.Accounts.People
   alias Zaq.Agent
   alias Zaq.Agent.ServerManager
-  alias Zaq.Channels.JidoChatBridge
+  alias Zaq.Channels.{EmailBridge, JidoChatBridge}
   alias Zaq.Engine.{ChannelConfig, Connect, Conversations}
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Engine.Messages.Outgoing
@@ -40,6 +40,7 @@ defmodule Zaq.Channels.PersonCredentialIngressIntegrationTest do
       Map.new(@environment_keys, fn key -> {key, Application.fetch_env(:zaq, key)} end)
 
     Application.put_env(:zaq, :channels, %{
+      email: %{bridge: EmailBridge},
       mattermost: %{
         bridge: JidoChatBridge,
         adapter: Jido.Chat.Mattermost.Adapter,
@@ -546,6 +547,7 @@ defmodule Zaq.Channels.PersonCredentialIngressIntegrationTest do
              People.add_channel(%{
                person_id: person.id,
                platform: "mattermost",
+               channel_config_id: fixture.channel_config.id,
                channel_identifier: mattermost_user_id,
                dm_channel_id: channel_id,
                weight: 0

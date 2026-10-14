@@ -2,6 +2,7 @@ defmodule Zaq.Accounts.PeopleChannelOrderConcurrencyTest do
   use ExUnit.Case, async: false
   alias Ecto.Adapters.SQL.Sandbox
   alias Zaq.Accounts.{People, PeopleAuth, PeoplePermissions, Person, Team}
+  alias Zaq.Engine.ChannelConfig
   alias Zaq.Repo
   alias ZaqWeb.Live.People.ProfileLive
 
@@ -10,12 +11,23 @@ defmodule Zaq.Accounts.PeopleChannelOrderConcurrencyTest do
       Sandbox.unboxed_run(Repo, fn ->
         {:ok, person} = People.create_person(%{full_name: "Order concurrency"})
 
+        config =
+          Repo.insert!(%ChannelConfig{
+            name: "Order fixture",
+            provider: "slack",
+            kind: "retrieval",
+            enabled: false,
+            url: "https://slack.example.test",
+            token: ""
+          })
+
         channels =
           for index <- 1..3 do
             {:ok, channel} =
               People.add_channel(%{
                 person_id: person.id,
                 platform: "slack",
+                channel_config_id: config.id,
                 channel_identifier: "order-#{person.id}-#{index}"
               })
 
@@ -25,12 +37,16 @@ defmodule Zaq.Accounts.PeopleChannelOrderConcurrencyTest do
         %{
           person: person,
           channels: channels,
+          config_id: config.id,
           expected: Enum.map(channels, &Map.take(&1, [:id, :weight]))
         }
       end)
 
     on_exit(fn ->
-      Sandbox.unboxed_run(Repo, fn -> Repo.get(Person, fixture.person.id) |> Repo.delete!() end)
+      Sandbox.unboxed_run(Repo, fn ->
+        Repo.get(Person, fixture.person.id) |> Repo.delete!()
+        Repo.get(ChannelConfig, fixture.config_id) |> Repo.delete!()
+      end)
     end)
 
     fixture
@@ -281,9 +297,14 @@ defmodule Zaq.Accounts.PeopleChannelOrderConcurrencyTest do
     end
   end
 
-  defp write(:insert, p, _),
+  defp write(:insert, p, channels),
     do:
-      People.add_channel(%{person_id: p.id, platform: "slack", channel_identifier: "new-#{p.id}"})
+      People.add_channel(%{
+        person_id: p.id,
+        platform: "slack",
+        channel_config_id: hd(channels).channel_config_id,
+        channel_identifier: "new-#{p.id}"
+      })
 
   defp write(:delete, _, channels), do: People.delete_channel(hd(channels))
 

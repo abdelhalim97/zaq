@@ -114,7 +114,7 @@ defmodule Zaq.Ingestion.ExternalPermissions do
     case principal_identity(record, principal) do
       {:ok, channel_provider, channel_id, display_name, attrs} ->
         with {:ok, person} <-
-               ensure_channel_person(channel_provider, channel_id, display_name, attrs) do
+               ensure_contact_person(channel_provider, channel_id, display_name, attrs) do
           {:ok, :person, person.id}
         end
 
@@ -143,11 +143,9 @@ defmodule Zaq.Ingestion.ExternalPermissions do
 
   defp id_identity(_provider, _id, _display_name), do: nil
 
-  defp ensure_channel_person(provider, channel_id, display_name, extra_attrs) do
+  defp ensure_contact_person(provider, channel_id, display_name, extra_attrs) do
     attrs =
-      extra_attrs
-      |> Map.put("channel_id", channel_id)
-      |> Map.put("display_name", display_name)
+      extra_attrs |> Map.put("channel_id", channel_id) |> Map.put("display_name", display_name)
 
     People.find_or_create_from_channel(provider, attrs)
   end

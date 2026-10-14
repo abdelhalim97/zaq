@@ -1848,7 +1848,9 @@ defmodule Zaq.Engine.Conversations do
   #   2. metadata["author_id"] → PersonChannel.channel_identifier (channels keyed
   #      by a grouping key, where the sender lives in metadata)
   defp backfill_missing_person_ids(conversations) do
-    unresolved = Enum.filter(conversations, &is_nil(&1.person_id))
+    unresolved =
+      Enum.filter(conversations, &(is_nil(&1.person_id) and not is_nil(&1.channel_config_id)))
+
     if unresolved == [], do: conversations, else: do_backfill(conversations, unresolved)
   end
 
@@ -1860,6 +1862,7 @@ defmodule Zaq.Engine.Conversations do
       unresolved |> Enum.map(&Map.get(&1.metadata, "author_id")) |> Enum.reject(&is_nil/1)
 
     lookup_ids = Enum.uniq(by_channel_user_id ++ by_author_id)
+    config_ids = Enum.uniq(Enum.map(unresolved, & &1.channel_config_id))
 
     channel_map =
       if lookup_ids == [] do
@@ -1867,8 +1870,8 @@ defmodule Zaq.Engine.Conversations do
       else
         Repo.all(
           from c in PersonChannel,
-            where: c.channel_identifier in ^lookup_ids,
-            select: {c.channel_identifier, c.person_id}
+            where: c.channel_identifier in ^lookup_ids and c.channel_config_id in ^config_ids,
+            select: {{c.channel_config_id, c.channel_identifier}, c.person_id}
         )
         |> Map.new()
       end
@@ -1876,11 +1879,13 @@ defmodule Zaq.Engine.Conversations do
     # Build a map of id → resolved person_id for conversations that need updating
     updates =
       Map.new(
-        for conv <- conversations,
-            is_nil(conv.person_id),
+        for conv <- unresolved,
             resolved =
-              Map.get(channel_map, conv.channel_user_id) ||
-                Map.get(channel_map, Map.get(conv.metadata, "author_id")),
+              Map.get(channel_map, {conv.channel_config_id, conv.channel_user_id}) ||
+                Map.get(
+                  channel_map,
+                  {conv.channel_config_id, Map.get(conv.metadata, "author_id")}
+                ),
             not is_nil(resolved),
             do: {conv.id, resolved}
       )

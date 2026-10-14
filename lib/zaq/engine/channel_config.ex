@@ -14,6 +14,8 @@ defmodule Zaq.Engine.ChannelConfig do
   require Logger
 
   alias Zaq.Channels.AgentRouting
+  alias Zaq.Channels.Bridge
+  alias Zaq.Channels.RetrievalChannel
   alias Zaq.ConnectorConfig.Settings
   alias Zaq.Engine.IncomingMessageRouting
   alias Zaq.Event
@@ -286,21 +288,112 @@ defmodule Zaq.Engine.ChannelConfig do
 
   @doc "Returns enabled receiving channel configs that can route incoming messages for a person channel platform."
   def list_incoming_routing_configs_for_platform(platform) when is_binary(platform) do
-    :retrieval
-    |> list_enabled_by_kind([platform])
-    |> Enum.filter(&incoming_routing_config_for_platform?(&1, platform))
+    platform
+    |> list_person_channel_configs()
+    |> Enum.filter(&(&1.enabled and incoming_routing_config?(&1, platform)))
   end
 
   def list_incoming_routing_configs_for_platform(_platform), do: []
 
-  defp incoming_routing_config_for_platform?(%__MODULE__{provider: @imap_provider}, "email"),
-    do: true
+  @doc "Communication connectors available for Person links, including disabled entries."
+  @spec list_person_channel_configs(String.t(), pos_integer() | nil) :: [%__MODULE__{}]
+  def list_person_channel_configs(platform, config_id \\ nil)
 
-  defp incoming_routing_config_for_platform?(%__MODULE__{provider: @smtp_provider}, "email"),
-    do: false
+  def list_person_channel_configs(platform, config_id) when is_binary(platform) do
+    config_id
+    |> management_configs()
+    |> Enum.filter(&person_channel_config_for_platform?(&1, platform))
+  end
 
-  defp incoming_routing_config_for_platform?(%__MODULE__{provider: provider}, platform),
-    do: provider == platform
+  def list_person_channel_configs(_, _), do: []
+
+  @doc "Communication configuration targets, including disabled connectors and receiving scopes."
+  def list_person_channel_targets(platform \\ nil, config_id \\ nil) do
+    configs =
+      if is_nil(platform),
+        do: management_configs(config_id),
+        else: list_person_channel_configs(platform, config_id)
+
+    Enum.map(configs, fn config ->
+      routing = Bridge.incoming_routing(config)
+
+      %{
+        platform: to_string(Bridge.provider_to_bridge_key(config.provider) || config.provider),
+        incoming?: routing.incoming?,
+        config: %__MODULE__{
+          id: config.id,
+          name: config.name,
+          kind: config.kind,
+          enabled: config.enabled
+        },
+        retrieval_channels:
+          if(routing.incoming?, do: RetrievalChannel.list_by_config(config.id), else: []),
+        topics: routing.topics
+      }
+    end)
+  end
+
+  defp management_configs(config_id) do
+    query =
+      from(c in __MODULE__,
+        where: c.kind == "retrieval" and is_nil(c.archived_at),
+        order_by: [asc: c.name, asc: c.id]
+      )
+
+    query = if is_nil(config_id), do: query, else: where(query, [c], c.id == ^config_id)
+
+    query
+    |> Zaq.Repo.all()
+  end
+
+  @doc "Checks whether an explicit connector can own a Person's communication link."
+  @spec person_channel_connector?(String.t(), pos_integer()) :: boolean()
+  def person_channel_connector?(platform, config_id)
+      when is_integer(config_id) and config_id > 0 do
+    case get(config_id) do
+      %__MODULE__{kind: "retrieval", archived_at: nil} = config ->
+        person_channel_config_for_platform?(config, platform)
+
+      _ ->
+        false
+    end
+  end
+
+  def person_channel_connector?(_, _), do: false
+
+  @doc "Resolves a new Person link's explicit origin or configuration-owned default."
+  @spec resolve_person_channel_connector(String.t(), map() | nil) ::
+          {:ok, pos_integer()} | {:error, term()}
+  def resolve_person_channel_connector(platform, origin \\ nil)
+
+  def resolve_person_channel_connector(platform, %{platform: platform, channel_config_id: id})
+      when not is_nil(id) do
+    with {:ok, id} <- ParseUtils.parse_int_strict(id),
+         true <- person_channel_connector?(platform, id) do
+      {:ok, id}
+    else
+      _ -> {:error, :connector_mismatch}
+    end
+  end
+
+  def resolve_person_channel_connector("email", _origin) do
+    with {:ok, config} <- resolve_notification_smtp(enabled: false), do: {:ok, config.id}
+  end
+
+  def resolve_person_channel_connector(_, _), do: {:error, :connector_mismatch}
+
+  @doc "Whether a communication connector can receive this platform, independently of enabled state."
+  @spec incoming_routing_config?(%__MODULE__{}, String.t()) :: boolean()
+  def incoming_routing_config?(%__MODULE__{kind: "retrieval"} = config, platform) do
+    person_channel_config_for_platform?(config, platform) and
+      Bridge.incoming_routing(config).incoming?
+  end
+
+  def incoming_routing_config?(_, _), do: false
+
+  defp person_channel_config_for_platform?(config, platform) do
+    (Bridge.provider_to_bridge_key(config.provider) || config.provider) |> to_string() == platform
+  end
 
   defp normalize_filter_providers(providers) when is_list(providers) do
     providers
@@ -346,20 +439,38 @@ defmodule Zaq.Engine.ChannelConfig do
 
   def set_default_smtp_connector(_), do: {:error, :connector_mismatch}
 
-  @doc "Resolves the explicit SMTP notification default or a sole live connector."
-  def resolve_notification_smtp do
+  @doc "Resolves the SMTP default or sole connector; management may include disabled senders."
+  def resolve_notification_smtp(opts \\ []) do
     defaults =
       __MODULE__
-      |> where([c], c.provider == @smtp_provider and c.notification_default)
+      |> where(
+        [c],
+        c.provider == @smtp_provider and c.notification_default
+      )
       |> limit(2)
       |> Zaq.Repo.all()
 
     case defaults do
-      [%__MODULE__{enabled: true, archived_at: nil} = config] -> {:ok, config}
-      [%__MODULE__{}] -> {:error, :missing_default_smtp_connector}
-      [] -> resolve_by_provider(@smtp_provider)
-      _ -> {:error, :ambiguous_connector}
+      [config] ->
+        available_smtp_default(config, opts)
+
+      [] ->
+        case list_by_provider(@smtp_provider) do
+          [config] -> available_smtp_default(config, opts)
+          [] -> {:error, :not_found}
+          _ -> {:error, :ambiguous_connector}
+        end
+
+      _ ->
+        {:error, :ambiguous_connector}
     end
+  end
+
+  defp available_smtp_default(config, opts) do
+    if is_nil(config.archived_at) and config.kind == "retrieval" and
+         (config.enabled or not Keyword.get(opts, :enabled, true)),
+       do: {:ok, config},
+       else: {:error, :missing_default_smtp_connector}
   end
 
   @doc "Selects one enabled connector by ID, or only if the provider is unambiguous."

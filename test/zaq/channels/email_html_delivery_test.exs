@@ -197,6 +197,7 @@ defmodule Zaq.Channels.EmailHtmlDeliveryTest do
     test "unscoped email with multiple SMTP accounts and no default fails closed" do
       upsert_smtp_channel()
       insert_smtp_channel("second@example.com")
+      Repo.update_all(ChannelConfig, set: [notification_default: false])
 
       assert {:error, :ambiguous_connector} = deliver("hello", %{"subject" => "Ambiguous"})
       refute_received {:email, _}

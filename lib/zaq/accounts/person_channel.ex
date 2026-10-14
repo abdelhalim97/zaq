@@ -2,7 +2,7 @@ defmodule Zaq.Accounts.PersonChannel do
   @moduledoc """
   Stored communication identity and channel preferences for a Person. Email
   identifiers share Person's canonical email policy; other platforms use opaque IDs.
-  Connector-bound identifiers are distinct from unscoped legacy/BO-owned rows.
+  Every communication link belongs to an explicit connector.
   """
 
   use Ecto.Schema
@@ -13,6 +13,10 @@ defmodule Zaq.Accounts.PersonChannel do
   @valid_platforms ~w(mattermost slack microsoft_teams whatsapp email telegram discord)
 
   @type t :: %__MODULE__{}
+
+  @doc "The platforms supported by persisted Person communication links."
+  @spec supported_platforms() :: [String.t()]
+  def supported_platforms, do: @valid_platforms
 
   schema "channels" do
     field :platform, :string
@@ -49,8 +53,8 @@ defmodule Zaq.Accounts.PersonChannel do
       :person_id
     ])
     |> normalize_channel_identifier()
-    |> validate_required([:platform, :channel_identifier, :person_id])
-    |> validate_inclusion(:platform, @valid_platforms)
+    |> validate_required([:platform, :channel_identifier, :person_id, :channel_config_id])
+    |> validate_inclusion(:platform, supported_platforms())
     |> validate_weight()
     |> foreign_key_constraint(:person_id)
     |> foreign_key_constraint(:channel_config_id)
@@ -62,6 +66,7 @@ defmodule Zaq.Accounts.PersonChannel do
     channel
     |> cast(attrs, [
       :platform,
+      :channel_config_id,
       :channel_identifier,
       :username,
       :display_name,
@@ -72,24 +77,26 @@ defmodule Zaq.Accounts.PersonChannel do
       :metadata
     ])
     |> normalize_channel_identifier()
-    |> validate_required([:platform, :channel_identifier])
-    |> validate_inclusion(:platform, @valid_platforms)
+    |> validate_required([:platform, :channel_identifier, :channel_config_id])
+    |> validate_inclusion(:platform, supported_platforms())
+    |> validate_connector_unchanged(channel)
     |> validate_weight()
     |> identifier_constraint()
   end
 
   defp identifier_constraint(changeset) do
     changeset
-    |> unique_constraint([:platform, :channel_identifier],
-      name: :channels_platform_channel_identifier_index,
-      error_key: :channel_identifier,
-      message: "This channel identifier is already assigned."
-    )
     |> unique_constraint([:platform, :channel_config_id, :channel_identifier],
       name: :channels_connector_identifier_index,
       error_key: :channel_identifier,
       message: "This channel identifier is already assigned."
     )
+  end
+
+  defp validate_connector_unchanged(changeset, channel) do
+    if get_field(changeset, :channel_config_id) == channel.channel_config_id,
+      do: changeset,
+      else: add_error(changeset, :channel_config_id, "cannot be changed")
   end
 
   @doc "Changes priority alone without normalizing identity or recording communication activity."

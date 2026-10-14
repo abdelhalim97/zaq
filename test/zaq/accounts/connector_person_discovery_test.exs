@@ -124,26 +124,27 @@ defmodule Zaq.Accounts.ConnectorPersonDiscoveryTest do
     assert People.get_person!(person.id)
   end
 
-  test "legacy connector channels without a native identity remain current" do
+  test "a connector channel cannot be persisted without a native identity" do
     config = config("legacy-#{System.unique_integer([:positive])}")
     {:ok, owner} = People.create_person(%{full_name: "Legacy owner"})
 
-    channel =
-      %PersonChannel{}
-      |> PersonChannel.changeset(%{
+    changeset =
+      PersonChannel.changeset(%PersonChannel{}, %{
         platform: "mattermost",
         channel_identifier: "legacy-native",
         person_id: owner.id,
         channel_config_id: config.id,
         person_identity_id: nil
       })
-      |> Repo.insert!()
 
-    assert Repo.get!(PersonChannel, channel.id).person_identity_id == nil
-    assert PersonIdentities.current_scope?(channel)
-    assert {:ok, matched} = People.match_by_channel("mattermost", "legacy-native", config.id)
-    assert matched.id == owner.id
-    assert Repo.get!(PersonChannel, channel.id).person_identity_id == nil
+    refute PersonIdentities.current_scope?(Ecto.Changeset.apply_changes(changeset))
+
+    assert_raise Postgrex.Error, ~r/person_identity_id/, fn ->
+      Repo.insert!(changeset, mode: :savepoint)
+    end
+
+    assert {:error, :not_found} =
+             People.match_by_channel("mattermost", "legacy-native", config.id)
   end
 
   test "a deleted native identity makes its old channel snapshot out of scope" do

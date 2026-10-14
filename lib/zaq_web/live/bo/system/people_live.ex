@@ -7,6 +7,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
   alias Zaq.Accounts.Person
   alias Zaq.Accounts.PersonChannel
   alias Zaq.Accounts.Team
+  alias Zaq.Channels.ProviderCatalog, as: ChannelProvider
   alias Zaq.Ingestion
   alias ZaqWeb.Components.DesignSystem.Button, as: DSButton
   alias ZaqWeb.Components.DesignSystem.EmptyState
@@ -35,6 +36,8 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
       |> assign(:loading, false)
       |> assign(:error, nil)
       |> assign(:selected_person, nil)
+      |> assign(:routing_values, %{})
+      |> assign(:modal_routing_values, %{})
       |> assign(:person_channels, [])
       |> assign(:person_documents, [])
       |> assign(:person_sessions, [])
@@ -60,6 +63,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
       |> assign(:per_page, 20)
       |> assign(:total_count, 0)
       |> assign(:agent_options, AgentRoutingOptions.agent_options())
+      |> assign(:routing_targets, PersonRouting.routing_targets())
 
     {:ok, socket |> refresh_teams() |> refresh_people()}
   end
@@ -75,7 +79,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
         {:noreply,
          socket
          |> assign(:active_tab, :people)
-         |> assign(:selected_person, person)
+         |> put_selected_person(person)
          |> assign(:person_channels, person.channels)
          |> assign(:person_documents, person_documents)
          |> put_person_sessions(person.id)
@@ -222,7 +226,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
       {:ok, updated_survivor} ->
         {:noreply,
          socket
-         |> assign(:selected_person, updated_survivor)
+         |> put_selected_person(updated_survivor)
          |> assign(:person_channels, updated_survivor.channels)
          |> assign(:modal, nil)
          |> assign(:modal_entity, nil)
@@ -244,7 +248,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
 
     {:noreply,
      socket
-     |> assign(:selected_person, person)
+     |> put_selected_person(person)
      |> assign(:person_channels, person.channels)
      |> assign(:person_documents, person_documents)
      |> put_person_sessions(person.id)
@@ -409,7 +413,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
 
         {:noreply,
          socket
-         |> assign(:selected_person, selected_person)
+         |> put_selected_person(selected_person)
          |> assign(
            :person_channels,
            if(selected_person, do: socket.assigns.person_channels, else: [])
@@ -476,6 +480,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
      |> assign(:modal_entity, :person)
      |> assign(:modal_parent_id, nil)
      |> assign(:modal_changeset, changeset)
+     |> assign(:modal_routing_values, PersonRouting.routing_values(changeset.data))
      |> assign(:modal_errors, [])}
   end
 
@@ -601,7 +606,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
 
         socket =
           socket
-          |> assign(:selected_person, selected)
+          |> put_selected_person(selected)
           |> assign(:person_channels, if(selected, do: selected.channels, else: []))
           |> assign(:modal, nil)
           |> assign(:modal_entity, nil)
@@ -620,27 +625,40 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
     person_id = socket.assigns.modal_parent_id || socket.assigns.selected_person.id
 
     result =
-      case socket.assigns.modal do
-        :edit ->
-          people_command(:update_channel, %{
-            id: socket.assigns.modal_changeset.data.id,
-            attrs: attrs
-          })
+      case AgentRoutingOptions.form_rules(attrs["rules"]) do
+        {:ok, rules} ->
+          attrs = Map.delete(attrs, "rules")
 
-        _ ->
-          attrs
-          |> Map.put("person_id", person_id)
-          |> then(&people_command(:add_channel, %{attrs: &1}))
+          case socket.assigns.modal do
+            :edit ->
+              people_command(:update_channel, %{
+                id: socket.assigns.modal_changeset.data.id,
+                attrs: attrs,
+                rules: rules
+              })
+
+            _ ->
+              attrs
+              |> Map.put("person_id", person_id)
+              |> then(&people_command(:add_channel, %{attrs: &1, rules: rules}))
+          end
+
+        {:error, reason} ->
+          {:error,
+           Ecto.Changeset.add_error(
+             socket.assigns.modal_changeset,
+             :channel_config_id,
+             "invalid routing selection: #{inspect(reason)}"
+           )}
       end
 
     case result do
       {:ok, _channel} ->
-        routing_result = PersonRouting.maybe_persist_channel_routing_rules(person_id, attrs)
         person = fetch_person_with_channels!(person_id)
 
         socket =
           socket
-          |> assign(:selected_person, person)
+          |> put_selected_person(person)
           |> assign(:person_channels, person.channels)
           |> assign(:modal, nil)
           |> assign(:modal_entity, nil)
@@ -648,7 +666,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
           |> assign(:modal_errors, [])
           |> refresh_people()
 
-        {:noreply, maybe_put_routing_error(socket, routing_result)}
+        {:noreply, socket}
 
       {:error, changeset} ->
         {:noreply, assign(socket, :modal_changeset, changeset)}
@@ -726,7 +744,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
 
         {:noreply,
          socket
-         |> assign(:selected_person, person)
+         |> put_selected_person(person)
          |> assign(:person_channels, person.channels)
          |> assign(:confirm_delete, nil)
          |> refresh_people()}
@@ -768,7 +786,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
 
       {:noreply,
        socket
-       |> assign(:selected_person, person)
+       |> put_selected_person(person)
        |> assign(:person_channels, person.channels)}
     else
       {:noreply, socket}
@@ -787,7 +805,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
 
       {:noreply,
        socket
-       |> assign(:selected_person, person)
+       |> put_selected_person(person)
        |> assign(:person_channels, person.channels)}
     else
       {:noreply, socket}
@@ -823,7 +841,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
 
         {:noreply,
          socket
-         |> assign(:selected_person, person_with_channels)
+         |> put_selected_person(person_with_channels)
          |> assign(:person_channels, person_with_channels.channels)
          |> refresh_people()}
 
@@ -844,7 +862,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
       {:noreply,
        socket
        |> refresh_teams()
-       |> assign(:selected_person, person_with_channels)
+       |> put_selected_person(person_with_channels)
        |> assign(:person_channels, person_with_channels.channels)
        |> refresh_people()
        |> put_flash(:info, "Team \"#{name}\" created and assigned.")}
@@ -886,7 +904,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
 
         {:noreply,
          socket
-         |> assign(:selected_person, person_with_channels)
+         |> put_selected_person(person_with_channels)
          |> assign(:person_channels, person_with_channels.channels)
          |> refresh_people()}
 
@@ -946,6 +964,12 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
     EngineDispatch.dispatch(:people_command, %{op: op, params: params})
   end
 
+  defp put_selected_person(socket, person) do
+    socket
+    |> assign(:selected_person, person)
+    |> assign(:routing_values, PersonRouting.routing_values(person))
+  end
+
   defp fetch_person_sessions(person_id) do
     case people_command(:list_person_sessions, %{person_id: person_id, active_only: true}) do
       {:ok, sessions} when is_list(sessions) -> {:ok, sessions}
@@ -986,7 +1010,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
       selected ->
         {:noreply,
          socket
-         |> assign(:selected_person, selected)
+         |> put_selected_person(selected)
          |> assign(:person_channels, selected.channels)
          |> assign(:person_documents, Ingestion.list_person_permissions(selected.id))
          |> put_person_sessions(selected.id)
@@ -1276,7 +1300,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
               >
                 incomplete
               </span>
-              <% global_routing_value = PersonRouting.person_global_agent_value(@selected_person) %>
+              <% global_routing_value = PersonRouting.cached_value(@routing_values) %>
               <span
                 id="person-global-routing-badge"
                 class="font-mono text-[0.62rem] px-1.5 py-0.5 rounded zaq-bg-accent-soft zaq-text-accent border border-[var(--zaq-color-accent)]"
@@ -1538,12 +1562,14 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
                   |> Calendar.strftime("%Y-%m-%d %H:%M")}
                 </p>
                 <div
-                  :for={routing <- PersonRouting.person_channel_routing_configs(channel)}
+                  :for={
+                    routing <- PersonRouting.person_channel_routing_configs(channel, @routing_targets)
+                  }
                   class="mt-2 rounded-lg border border-black/6 bg-white px-2.5 py-2"
                 >
                   <p class="font-mono text-[0.62rem] text-black/45 truncate">
-                    {routing.config.name} ({routing.config.provider}) · provider route: {PersonRouting.routing_choice_label(
-                      PersonRouting.person_provider_agent_value(@selected_person, routing.config),
+                    {routing.config.name} · provider route: {PersonRouting.routing_choice_label(
+                      PersonRouting.cached_value(@routing_values, routing.config.id),
                       @agent_options
                     )}
                   </p>
@@ -1552,20 +1578,20 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
                     class="font-mono text-[0.6rem] text-black/35 truncate mt-1"
                   >
                     #{retrieval_channel.channel_name}: {PersonRouting.routing_choice_label(
-                      PersonRouting.person_retrieval_agent_value(@selected_person, retrieval_channel),
+                      PersonRouting.cached_value(
+                        @routing_values,
+                        routing.config.id,
+                        retrieval_channel.id
+                      ),
                       @agent_options
                     )}
                   </p>
                   <p
-                    :for={mailbox <- routing.mailboxes}
+                    :for={topic <- routing.topics}
                     class="font-mono text-[0.6rem] text-black/35 truncate mt-1"
                   >
-                    mailbox {mailbox}: {PersonRouting.routing_choice_label(
-                      PersonRouting.person_topic_agent_value(
-                        @selected_person,
-                        routing.config,
-                        mailbox
-                      ),
+                    topic {topic}: {PersonRouting.routing_choice_label(
+                      PersonRouting.cached_value(@routing_values, routing.config.id, nil, topic),
                       @agent_options
                     )}
                   </p>
@@ -1696,12 +1722,15 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
           modal={@modal}
           modal_changeset={@modal_changeset}
           agent_options={@agent_options}
+          routing_values={@modal_routing_values}
         />
         <.channel_form
           :if={@modal_entity == :channel}
           modal_changeset={@modal_changeset}
           selected_person={@selected_person}
           agent_options={@agent_options}
+          routing_targets={@routing_targets}
+          routing_values={@routing_values}
         />
         <.merge_form
           :if={@modal == :merge}
@@ -1811,9 +1840,7 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
             <option
               :for={{label, value} <- PersonRouting.routing_select_options(@agent_options)}
               value={value}
-              selected={
-                PersonRouting.person_global_agent_value(@modal_changeset.data) == to_string(value)
-              }
+              selected={PersonRouting.cached_value(@routing_values) == to_string(value)}
             >
               {label}
             </option>
@@ -1847,17 +1874,25 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
     current = Ecto.Changeset.get_field(changeset, :platform)
 
     platform_options =
-      ~w(mattermost slack microsoft_teams whatsapp telegram discord email)
+      PersonChannel.supported_platforms()
       |> Enum.map_join(fn p ->
         selected = if current == p, do: ~s( selected="selected"), else: ""
-        ~s(<option value="#{p}"#{selected}>#{p}</option>)
+        ~s(<option value="#{p}"#{selected}>#{ChannelProvider.label(p)}</option>)
       end)
       |> Phoenix.HTML.raw()
 
     assigns = assign(assigns, :platform_options, platform_options)
 
+    config_id = Ecto.Changeset.get_field(changeset, :channel_config_id)
+    connectors = PersonRouting.routing_configs_for_platform(current, assigns.routing_targets)
+
     assigns =
-      assign(assigns, :routing_configs, PersonRouting.routing_configs_for_platform(current))
+      assigns
+      |> assign(:connectors, connectors)
+      |> assign(
+        :routing_configs,
+        Enum.filter(connectors, &(&1.config.id == config_id and &1.incoming?))
+      )
 
     ~H"""
     <div class="px-6 py-5">
@@ -1868,6 +1903,40 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
         phx-submit="save"
         class="space-y-4"
       >
+        <div class="zaq-field">
+          <label for="person-channel-connector" class="zaq-field-label">Connector *</label>
+          <input
+            :if={not is_nil(@modal_changeset.data.id)}
+            type="hidden"
+            name="channel[channel_config_id]"
+            value={@modal_changeset.data.channel_config_id}
+          />
+          <select
+            id="person-channel-connector"
+            name="channel[channel_config_id]"
+            class="zaq-control-select"
+            disabled={not is_nil(@modal_changeset.data.id)}
+          >
+            <option value="">Select connector…</option>
+            <option
+              :for={target <- @connectors}
+              value={target.config.id}
+              selected={
+                Ecto.Changeset.get_field(@modal_changeset, :channel_config_id) == target.config.id
+              }
+            >
+              {target.config.name}{if target.config.enabled, do: "", else: " (disabled)"}
+            </option>
+          </select>
+          <p
+            :for={
+              {message, options} <- Keyword.get_values(@modal_changeset.errors, :channel_config_id)
+            }
+            class="zaq-field-error"
+          >
+            {translate_error({message, options})}
+          </p>
+        </div>
         <div>
           <label class="block font-mono text-[0.7rem] text-black/50 mb-1.5">Platform *</label>
           <select
@@ -1927,66 +1996,62 @@ defmodule ZaqWeb.Live.BO.System.PeopleLive do
           <div :for={routing <- @routing_configs} class="space-y-2">
             <div>
               <label class="block font-mono text-[0.65rem] text-black/45 mb-1">
-                {routing.config.name} ({routing.config.provider})
+                {routing.config.name}
               </label>
-              <select
+              <AgentRoutingOptions.rule_select
                 id={"person-provider-routing-select-#{routing.config.id}"}
-                name={"channel[provider_agent_ids][#{routing.config.id}]"}
-                class="w-full font-mono text-black text-sm px-3 py-2 rounded-lg border border-black/15 bg-white focus:outline-none focus:ring-2 focus:ring-[var(--zaq-color-accent-border)]"
-              >
-                <option
-                  :for={{label, value} <- PersonRouting.routing_select_options(@agent_options)}
-                  value={value}
-                  selected={
-                    PersonRouting.person_provider_agent_value(@selected_person, routing.config) ==
-                      to_string(value)
-                  }
-                >
-                  {label}
-                </option>
-              </select>
+                form="channel"
+                scope={%{channel_config_id: routing.config.id}}
+                options={@agent_options}
+                value={
+                  PersonRouting.form_value(
+                    @modal_changeset.params,
+                    @routing_values,
+                    routing.config.id
+                  )
+                }
+              />
             </div>
             <div :for={retrieval_channel <- routing.retrieval_channels}>
               <label class="block font-mono text-[0.65rem] text-black/45 mb-1">
                 #{retrieval_channel.channel_name}
               </label>
-              <select
+              <AgentRoutingOptions.rule_select
                 id={"person-retrieval-routing-select-#{retrieval_channel.id}"}
-                name={"channel[retrieval_agent_ids][#{retrieval_channel.id}]"}
-                class="w-full font-mono text-black text-sm px-3 py-2 rounded-lg border border-black/15 bg-white focus:outline-none focus:ring-2 focus:ring-[var(--zaq-color-accent-border)]"
-              >
-                <option
-                  :for={{label, value} <- PersonRouting.routing_select_options(@agent_options)}
-                  value={value}
-                  selected={
-                    PersonRouting.person_retrieval_agent_value(@selected_person, retrieval_channel) ==
-                      to_string(value)
-                  }
-                >
-                  {label}
-                </option>
-              </select>
+                form="channel"
+                scope={
+                  %{channel_config_id: routing.config.id, retrieval_channel_id: retrieval_channel.id}
+                }
+                options={@agent_options}
+                value={
+                  PersonRouting.form_value(
+                    @modal_changeset.params,
+                    @routing_values,
+                    routing.config.id,
+                    retrieval_channel.id
+                  )
+                }
+              />
             </div>
-            <div :for={mailbox <- routing.mailboxes}>
+            <div :for={topic <- routing.topics}>
               <label class="block font-mono text-[0.65rem] text-black/45 mb-1">
-                mailbox {mailbox}
+                topic {topic}
               </label>
-              <select
-                id={"person-topic-routing-select-#{routing.config.id}-#{Base.url_encode64(mailbox, padding: false)}"}
-                name={"channel[topic_agent_ids][#{routing.config.id}][#{mailbox}]"}
-                class="w-full font-mono text-black text-sm px-3 py-2 rounded-lg border border-black/15 bg-white focus:outline-none focus:ring-2 focus:ring-[var(--zaq-color-accent-border)]"
-              >
-                <option
-                  :for={{label, value} <- PersonRouting.routing_select_options(@agent_options)}
-                  value={value}
-                  selected={
-                    PersonRouting.person_topic_agent_value(@selected_person, routing.config, mailbox) ==
-                      to_string(value)
-                  }
-                >
-                  {label}
-                </option>
-              </select>
+              <AgentRoutingOptions.rule_select
+                id={"person-topic-routing-select-#{routing.config.id}-#{Base.url_encode64(topic, padding: false)}"}
+                form="channel"
+                scope={%{channel_config_id: routing.config.id, topic_id: topic}}
+                options={@agent_options}
+                value={
+                  PersonRouting.form_value(
+                    @modal_changeset.params,
+                    @routing_values,
+                    routing.config.id,
+                    nil,
+                    topic
+                  )
+                }
+              />
             </div>
           </div>
         </div>

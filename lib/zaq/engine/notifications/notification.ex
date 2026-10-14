@@ -20,6 +20,7 @@ defmodule Zaq.Engine.Notifications.Notification do
   ]
 
   @type channel :: %{
+          optional(:channel_config_id) => pos_integer() | nil,
           platform: String.t(),
           identifier: String.t()
         }
@@ -93,7 +94,10 @@ defmodule Zaq.Engine.Notifications.Notification do
         platform = Map.get(ch, :platform)
         identifier = Map.get(ch, :identifier)
 
-        not (is_binary(platform) and platform != "" and is_binary(identifier) and identifier != "")
+        config_id = Map.get(ch, :channel_config_id)
+
+        not (is_binary(platform) and platform != "" and is_binary(identifier) and identifier != "" and
+               (is_nil(config_id) or (is_integer(config_id) and config_id > 0)))
       end)
 
     if invalid do

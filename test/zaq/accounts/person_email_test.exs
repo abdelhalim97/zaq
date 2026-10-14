@@ -1,6 +1,7 @@
 defmodule Zaq.Accounts.PersonEmailTest do
   use Zaq.DataCase, async: true
   use ExUnitProperties
+  import Zaq.CommunicationFixtures
 
   alias Zaq.Accounts.{People, Person}
 
@@ -68,13 +69,14 @@ defmodule Zaq.Accounts.PersonEmailTest do
 
     assert {:ok, found} =
              People.find_or_create_from_channel(:slack, %{
+               "channel_config_id" => connector_fixture("slack").id,
                "email" => " ÄLİCE@Example.COM ",
                "channel_id" => "alice-slack"
              })
 
     assert found.id == person.id
     assert length(People.list_people()) == 1
-    assert Enum.count(found.channels, &(&1.platform == "email")) == 1
+    assert Enum.sort(Enum.map(found.channels, & &1.platform)) == ["email", "slack"]
     assert {:error, :not_found} = People.match_person(%{"email" => " \t"})
     assert {:error, :not_found} = People.match_person(%{"email" => nil})
   end
@@ -82,6 +84,7 @@ defmodule Zaq.Accounts.PersonEmailTest do
   test "channel discovery normalizes new partial identities and backfills existing ones" do
     assert {:ok, partial} =
              People.find_or_create_from_channel(:slack, %{
+               channel_config_id: connector_fixture("slack").id,
                channel_id: "partial-slack",
                email: " PARTIAL@Example.com "
              })
@@ -92,6 +95,7 @@ defmodule Zaq.Accounts.PersonEmailTest do
 
     assert {:ok, blank} =
              People.find_or_create_from_channel(:slack, %{
+               channel_config_id: connector_fixture("slack").id,
                channel_id: "blank-slack",
                email: " \t"
              })
@@ -101,6 +105,7 @@ defmodule Zaq.Accounts.PersonEmailTest do
 
     assert {:ok, filled} =
              People.find_or_create_from_channel(:slack, %{
+               channel_config_id: connector_fixture("slack").id,
                channel_id: "blank-slack",
                email: " FILLED@Example.com "
              })
@@ -110,6 +115,7 @@ defmodule Zaq.Accounts.PersonEmailTest do
 
     assert {:error, changeset} =
              People.find_or_create_from_channel(:slack, %{
+               channel_config_id: connector_fixture("slack").id,
                channel_id: "invalid-slack",
                email: 123
              })

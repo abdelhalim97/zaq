@@ -18,12 +18,15 @@ defmodule Zaq.Channels.IdentityScopeTest do
                "connector:41"
     end
 
-    test "invalid endpoint without an attested connector id is unscoped" do
-      assert IdentityScope.authority("mattermost", %{url: "ftp://chat.example.test/team"}) ==
-               "unscoped"
-
-      assert IdentityScope.authority("mattermost", %{id: nil, url: "ftp://chat.example.test/team"}) ==
-               "unscoped"
+    test "invalid endpoint without an attested connector id is rejected" do
+      for config <- [
+            %{url: "ftp://chat.example.test/team"},
+            %{id: nil, url: "ftp://chat.example.test/team"}
+          ] do
+        assert_raise ArgumentError, ~r/requires connector scope/, fn ->
+          IdentityScope.authority("mattermost", config)
+        end
+      end
     end
 
     test "valid endpoint canonicalizes host and retains deployment path" do

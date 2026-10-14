@@ -8,6 +8,8 @@ end
 defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
   use Zaq.DataCase, async: false
   use ExUnitProperties
+  import Zaq.CommunicationFixtures
+  @moduletag timeout: 600_000
 
   alias Zaq.Accounts.{People, Person, PersonChannel}
   alias Zaq.Engine.{Conversations, IncomingMessageRoutingRule}
@@ -42,7 +44,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
                    else: identifier
                  )}
               ] do
-            Repo.insert!(%PersonChannel{
+            legacy_channel(%{
               person_id: id,
               platform: platform,
               channel_identifier: value
@@ -59,7 +61,11 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
 
         for person <- 1..size do
           assert {:ok, %{id: ^survivor}} =
-                   People.match_by_channel("email", "chain-#{group}-#{person}@example.com")
+                   People.match_by_channel(
+                     "email",
+                     "chain-#{group}-#{person}@example.com",
+                     connector_fixture("email").id
+                   )
         end
       end
 
@@ -78,6 +84,9 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
     # Transactional DDL is restored by this serial DataCase's sandbox rollback.
     # No other test connection can see the legacy schema or its duplicate rows.
     Repo.query!("DROP INDEX IF EXISTS channels_platform_channel_identifier_index")
+    Repo.query!("DROP INDEX IF EXISTS channels_connector_identifier_index")
+    Repo.query!("ALTER TABLE channels ALTER COLUMN person_identity_id DROP NOT NULL")
+    connector_fixture("email")
 
     Repo.query!(
       "CREATE UNIQUE INDEX IF NOT EXISTS channels_person_id_platform_channel_identifier_index ON channels (person_id, platform, channel_identifier)"
@@ -93,7 +102,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
       second = legacy_person("b@example.com", "Loser")
 
       for id <- [first, second] do
-        Repo.insert!(%PersonChannel{
+        legacy_channel(%{
           person_id: id,
           platform: "telegram",
           channel_identifier: "123"
@@ -106,7 +115,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
           fourth = legacy_person(" B@EXAMPLE.COM ")
 
           for id <- [second, third, fourth] do
-            Repo.insert!(%PersonChannel{
+            legacy_channel(%{
               person_id: id,
               platform: "slack",
               channel_identifier: "hop"
@@ -114,7 +123,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
           end
 
           existing =
-            Repo.insert!(%PersonChannel{
+            legacy_channel(%{
               person_id: fourth,
               platform: "email",
               channel_identifier: " C@EXAMPLE.COM ",
@@ -149,10 +158,13 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
       for email <- emails do
         unless existing && email.id == existing.id, do: assert(email.last_interaction_at == nil)
         identifier = " " <> String.upcase(email.channel_identifier) <> " "
-        assert {:ok, %{id: ^first}} = People.match_by_channel("email", identifier)
+
+        assert {:ok, %{id: ^first}} =
+                 People.match_by_channel("email", identifier, connector_fixture("email").id)
 
         assert {:ok, %{id: ^first}} =
                  People.find_or_create_from_channel("email", %{
+                   channel_config_id: connector_fixture("email").id,
                    channel_id: identifier,
                    email: identifier
                  })
@@ -180,7 +192,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
           {third, "email", " OTHER@example.com "},
           {unrelated, "telegram", "exact"}
         ] do
-      Repo.insert!(%PersonChannel{
+      legacy_channel(%{
         person_id: person_id,
         platform: platform,
         channel_identifier: identifier
@@ -217,7 +229,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
         identifier = if platform == "email", do: " SINGLE@example.com ", else: " Exact "
 
         first =
-          Repo.insert!(%PersonChannel{
+          legacy_channel(%{
             person_id: person,
             platform: platform,
             channel_identifier: identifier,
@@ -226,7 +238,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
             last_interaction_at: ~U[2020-01-01 00:00:00Z]
           })
 
-        Repo.insert!(%PersonChannel{
+        legacy_channel(%{
           person_id: person,
           platform: platform,
           channel_identifier: identifier,
@@ -259,7 +271,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
     for platform <- ["email", "telegram"] do
       person = legacy_person(nil)
 
-      Repo.insert!(%PersonChannel{
+      legacy_channel(%{
         person_id: person,
         platform: platform,
         channel_identifier: " \t"
@@ -282,7 +294,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
     third = legacy_person("migration@example.com", "Third")
 
     winner =
-      Repo.insert!(%PersonChannel{
+      legacy_channel(%{
         person_id: first,
         platform: "email",
         channel_identifier: " MIGRATION@example.com ",
@@ -292,13 +304,13 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
         last_interaction_at: ~U[2026-01-01 00:00:00Z]
       })
 
-    Repo.insert!(%PersonChannel{
+    legacy_channel(%{
       person_id: first,
       platform: "email",
       channel_identifier: "migration@example.com"
     })
 
-    Repo.insert!(%PersonChannel{
+    legacy_channel(%{
       person_id: second,
       platform: "email",
       channel_identifier: "Migration@example.com",
@@ -310,14 +322,20 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
       last_interaction_at: ~U[2026-03-01 00:00:00Z]
     })
 
-    Repo.insert!(%PersonChannel{
+    legacy_channel(%{
       person_id: third,
       platform: "email",
       channel_identifier: "migration@example.com"
     })
 
     {:ok, channel} =
-      People.add_channel(%{person_id: second, platform: "slack", channel_identifier: "migration"})
+      People.add_channel(
+        scoped_channel_attrs(%{
+          person_id: second,
+          platform: "slack",
+          channel_identifier: "migration"
+        })
+      )
 
     {:ok, conversation} =
       Conversations.create_conversation(%{person_id: third, channel_type: "slack"})
@@ -356,7 +374,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
     person = legacy_person(nil)
 
     for identifier <- [" LEGACY-BEFORE@example.com ", "legacy-blocked@example.com"] do
-      Repo.insert!(%PersonChannel{
+      legacy_channel(%{
         person_id: person,
         platform: "email",
         channel_identifier: identifier
@@ -400,7 +418,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
     alias_id = legacy_person("retained-loser@example.com")
 
     for id <- [merged, alias_id] do
-      Repo.insert!(%PersonChannel{
+      legacy_channel(%{
         person_id: id,
         platform: "telegram",
         channel_identifier: "rollback-emails"
@@ -472,7 +490,7 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
     fallback = legacy_person("Label@example.com", "")
 
     for {identifier, weight} <- [{"lower-priority-label", 9}, {"primary-label", 0}] do
-      Repo.insert!(%PersonChannel{
+      legacy_channel(%{
         person_id: nameless,
         platform: "slack",
         channel_identifier: identifier,
@@ -504,5 +522,10 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
 
   defp legacy_person(email, name \\ "Person") do
     Repo.insert!(%Person{email: email, full_name: name}).id
+  end
+
+  defp legacy_channel(attrs) do
+    config = connector_fixture(attrs.platform)
+    Repo.insert!(struct(PersonChannel, Map.put(attrs, :channel_config_id, config.id)))
   end
 end

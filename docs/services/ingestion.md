@@ -96,6 +96,10 @@ if those continue failing, investigate provider access and metadata-fetch errors
 - `can_access_file?/2` — returns true if a user may access a file; super admins bypass all checks; Everyone grants provide public access; documents with no permission rows are private (admin-only)
 - `list_document_permissions/1` — list all permissions for a document with their persisted `source_key` (preloads `:person`, `:team`); manual and provider-sourced rows can coexist for a principal
 - `list_person_permissions/1` — list all permissions for a person (preloads `:document`)
+- External ACL principals delegate to shared People discovery. Email contacts
+  receive an ordinary link to the default email connector at creation, so they
+  remain eligible for Person notifications. Missing communication scope for an
+  opaque provider identity is rejected rather than guessed by ingestion.
 - `list_folder_permissions/2` — unique set of person/team permissions across all documents under a folder
 - `set_document_permission/4` — upsert a manual permission record for `type \in [:person, :team]`, without overwriting a provider-sourced row
 - `delete_document_permission/1` — remove a permission by ID

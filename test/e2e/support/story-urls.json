@@ -31,6 +31,7 @@
   "/storybook/components/forms/checkbox",
   "/storybook/components/forms/input",
   "/storybook/components/forms/password_requirements",
+  "/storybook/components/forms/routing_select",
   "/storybook/components/forms/searchable_select",
   "/storybook/components/forms/secret_input",
   "/storybook/components/forms/select",

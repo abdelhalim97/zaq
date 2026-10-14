@@ -158,7 +158,7 @@ defmodule Zaq.Channels.Api do
 
     with {:ok, outgoing} <- outgoing_from_event(event),
          {:ok, bridge} <- resolve_bridge(bridge_module, outgoing.provider),
-         {:ok, connection_details} <- delivery_connection(bridge_module, outgoing) do
+         {:ok, connection_details} <- delivery_connection(bridge_module, outgoing, event.opts) do
       formatted_outgoing =
         outgoing |> maybe_attach_status_message_id() |> MessageFormatter.format_outgoing()
 
@@ -1000,41 +1000,46 @@ defmodule Zaq.Channels.Api do
     end
   end
 
-  defp delivery_connection(bridge_module, %Outgoing{
-         provider: provider,
-         routing_context: %{channel_config_id: id}
-       })
-       when is_integer(id) and id > 0 do
-    with {:ok, config} <- bridge_module.fetch_channel_config(provider, id) do
-      {:ok, bridge_module.fetch_connection_details_for_config(config)}
-    end
-  end
-
-  defp delivery_connection(_bridge_module, %Outgoing{routing_context: %{channel_config_id: id}})
-       when not is_nil(id), do: {:error, :invalid_connector_id}
-
-  # EmailBridge chooses the SMTP notification default (or the sole SMTP account)
-  # for unscoped sends and resolves IMAP-bound replies itself. There is no
-  # connector stored under the generic :email provider; requiring one here
-  # would prevent the bridge from applying its account-selection policy.
-  defp delivery_connection(bridge_module, %Outgoing{provider: provider})
-       when provider in [
-              :email,
-              "email",
-              :"email:smtp",
-              "email:smtp",
-              :"email:imap",
-              "email:imap"
-            ],
-       do: {:ok, bridge_module.fetch_connection_details(provider)}
-
-  defp delivery_connection(bridge_module, %Outgoing{provider: provider})
+  defp delivery_connection(bridge_module, %Outgoing{provider: provider}, _opts)
        when provider in [:web, "web"],
        do: {:ok, bridge_module.fetch_connection_details(provider)}
 
-  defp delivery_connection(bridge_module, %Outgoing{provider: provider}) do
-    with {:ok, config} <- bridge_module.fetch_channel_config(provider) do
+  defp delivery_connection(
+         bridge_module,
+         %Outgoing{provider: provider, routing_context: %{channel_config_id: id}},
+         _opts
+       )
+       when is_integer(id) and id > 0 do
+    with {:ok, config} <- Bridge.fetch_channel_config_by_id(id),
+         platform = to_string(Bridge.provider_to_bridge_key(config.provider) || config.provider),
+         true <-
+           (config.kind in [:retrieval, "retrieval"] and
+              (platform == to_string(provider) or config.provider == to_string(provider))) ||
+             {:error, :connector_mismatch} do
       {:ok, bridge_module.fetch_connection_details_for_config(config)}
+    else
+      nil -> {:error, :connector_mismatch}
+      error -> error
+    end
+  end
+
+  defp delivery_connection(
+         _bridge_module,
+         %Outgoing{routing_context: %{channel_config_id: id}},
+         _opts
+       )
+       when not is_nil(id), do: {:error, :invalid_connector_id}
+
+  defp delivery_connection(bridge_module, %Outgoing{provider: provider}, _opts) do
+    case bridge_module.fetch_channel_config(provider) do
+      {:ok, config} ->
+        {:ok, bridge_module.fetch_connection_details_for_config(config)}
+
+      {:error, {:channel_not_configured, _}} ->
+        {:ok, bridge_module.fetch_connection_details(provider)}
+
+      error ->
+        error
     end
   end
 

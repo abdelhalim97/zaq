@@ -1,6 +1,7 @@
 defmodule Zaq.Accounts.PeopleSelectionTest do
   use Zaq.DataCase, async: true
   use ExUnitProperties
+  import Zaq.CommunicationFixtures
   alias Zaq.Accounts.{People, Person, PersonChannel}
   alias Zaq.Engine.PeopleGateway
 
@@ -69,7 +70,7 @@ defmodule Zaq.Accounts.PeopleSelectionTest do
     person = Repo.insert!(%Person{full_name: "Before"})
 
     channel =
-      Repo.insert!(%PersonChannel{
+      person_channel_fixture(%{
         person_id: person.id,
         platform: "slack",
         channel_identifier: "before"
@@ -91,7 +92,7 @@ defmodule Zaq.Accounts.PeopleSelectionTest do
     person = Repo.insert!(%Person{full_name: "Rollback"})
 
     channel =
-      Repo.insert!(%PersonChannel{
+      person_channel_fixture(%{
         person_id: person.id,
         platform: "slack",
         channel_identifier: "rollback"

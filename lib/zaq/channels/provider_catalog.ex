@@ -35,6 +35,16 @@ defmodule Zaq.Channels.ProviderCatalog do
   ]
 
   @labels %{
+    "slack" => "Slack",
+    "teams" => "Microsoft Teams",
+    "microsoft_teams" => "Microsoft Teams",
+    "mattermost" => "Mattermost",
+    "discord" => "Discord",
+    "telegram" => "Telegram",
+    "webhook" => "Webhook",
+    "email" => "Email",
+    "email:imap" => "Email IMAP",
+    "email:smtp" => "Email SMTP",
     "disk" => "Disk",
     "google_drive" => "Google Drive",
     "sharepoint" => "SharePoint"

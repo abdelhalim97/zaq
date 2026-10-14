@@ -1,5 +1,6 @@
 defmodule Zaq.Engine.IncomingMessageRoutingTest do
   use Zaq.DataCase, async: true
+  import Zaq.CommunicationFixtures, only: [connector_fixture: 1]
 
   alias Zaq.Accounts.{People, Person}
   alias Zaq.Agent.ConfiguredAgent
@@ -21,6 +22,7 @@ defmodule Zaq.Engine.IncomingMessageRoutingTest do
         People.add_channel(%{
           person_id: loser.id,
           platform: "slack",
+          channel_config_id: connector_fixture("slack").id,
           channel_identifier: "move-#{loser.id}"
         })
 

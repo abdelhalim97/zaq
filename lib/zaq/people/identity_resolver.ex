@@ -110,7 +110,6 @@ defmodule Zaq.People.IdentityResolver do
   end
 
   defp validate_connector(context, platform, require_enabled \\ false)
-  defp validate_connector(%RoutingContext{channel_config_id: nil}, _platform, false), do: :ok
 
   defp validate_connector(%RoutingContext{channel_config_id: id}, platform, require_enabled)
        when is_integer(id) and id > 0 do
@@ -157,18 +156,8 @@ defmodule Zaq.People.IdentityResolver do
     end
   end
 
-  defp match_author(platform, channel_id, nil), do: People.match_by_channel(platform, channel_id)
-
-  defp match_author(platform, channel_id, config_id) do
-    case People.match_by_channel(platform, channel_id, config_id) do
-      {:error, :not_found} when platform != "email" ->
-        People.link_legacy_channel_to_connector(platform, channel_id, config_id)
-        People.match_by_channel(platform, channel_id, config_id)
-
-      match ->
-        match
-    end
-  end
+  defp match_author(platform, channel_id, config_id),
+    do: People.match_by_channel(platform, channel_id, config_id)
 
   @spec person_payload(map()) :: person_payload()
   def person_payload(person) when is_map(person) do

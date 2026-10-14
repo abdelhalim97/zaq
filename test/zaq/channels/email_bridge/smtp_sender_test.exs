@@ -54,6 +54,8 @@ defmodule Zaq.Channels.EmailBridge.SmtpSenderTest do
   end
 
   test "does not deliver via fallback settings when SMTP connector is ambiguous" do
+    Repo.update_all(ChannelConfig, set: [notification_default: false])
+
     for name <- ["Primary SMTP", "Other SMTP"] do
       %ChannelConfig{}
       |> ChannelConfig.changeset(%{
@@ -193,6 +195,7 @@ defmodule Zaq.Channels.EmailBridge.SmtpSenderTest do
 
   describe "send_notification/3" do
     test "delivers with default sender when channel config is missing" do
+      Repo.get_by!(ChannelConfig, provider: "email:smtp") |> Repo.delete!()
       assert :ok = SmtpSender.send_notification("user@example.com", payload(), %{})
 
       assert_receive {:email, email}

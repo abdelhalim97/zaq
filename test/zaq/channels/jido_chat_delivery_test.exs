@@ -6,7 +6,7 @@ defmodule Zaq.Channels.JidoChatDeliveryTest do
 
   alias Jido.Chat.Mattermost.Adapter
   alias Zaq.Accounts.{People, PeopleAuth, PeoplePermissions, PersonLoginChallenge}
-  alias Zaq.Channels.JidoChatBridge
+  alias Zaq.Channels.{EmailBridge, JidoChatBridge}
   alias Zaq.Engine.{ChannelConfig, Events, PeopleAuthGateway}
   alias Zaq.Engine.Messages.Outgoing
   alias Zaq.Engine.Notifications.NotificationLog
@@ -16,6 +16,7 @@ defmodule Zaq.Channels.JidoChatDeliveryTest do
     previous = Application.get_env(:zaq, :channels)
 
     Application.put_env(:zaq, :channels, %{
+      email: %{bridge: EmailBridge},
       mattermost: %{bridge: JidoChatBridge, adapter: Adapter}
     })
 
@@ -210,7 +211,7 @@ defmodule Zaq.Channels.JidoChatDeliveryTest do
   end
 
   defp authentication_person(connection) do
-    {:ok, _} =
+    {:ok, config} =
       ChannelConfig.upsert_by_provider("mattermost", %{
         name: "Synthetic delivery",
         kind: "retrieval",
@@ -226,6 +227,7 @@ defmodule Zaq.Channels.JidoChatDeliveryTest do
       People.add_channel(%{
         person_id: person.id,
         platform: "mattermost",
+        channel_config_id: config.id,
         channel_identifier: "private-room",
         weight: 0
       })

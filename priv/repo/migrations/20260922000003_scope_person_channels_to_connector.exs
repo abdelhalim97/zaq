@@ -6,40 +6,60 @@ defmodule Zaq.Repo.Migrations.ScopePersonChannelsToConnector do
       add :channel_config_id, references(:channel_configs, on_delete: :nothing)
     end
 
-    # A legacy provider identity can only be linked when there is exactly one
-    # retrieval connector for that provider. Do not guess from display or email.
-    execute """
-    DO $$ BEGIN
-      IF EXISTS (
-        SELECT 1 FROM channels c
-        JOIN channel_configs cc ON
-          cc.kind = 'retrieval' AND
-          (cc.provider = c.platform OR (c.platform = 'email' AND cc.provider = 'email:imap'))
-        GROUP BY c.id HAVING COUNT(DISTINCT cc.id) > 1
-      ) THEN
-        RAISE EXCEPTION 'Ambiguous connector for legacy PersonChannel identity';
-      END IF;
-    END $$
-    """
+    flush()
+    backfill(repo())
 
-    execute """
-    UPDATE channels c SET channel_config_id = cc.id
-    FROM channel_configs cc
-    WHERE cc.kind = 'retrieval' AND
-      (cc.provider = c.platform OR (c.platform = 'email' AND cc.provider = 'email:imap'))
-    """
+    alter table(:channels) do
+      modify :channel_config_id, :bigint, null: false
+    end
 
     drop index(:channels, [:platform, :channel_identifier])
 
     create unique_index(:channels, [:platform, :channel_config_id, :channel_identifier],
-             name: :channels_connector_identifier_index,
-             where: "channel_config_id IS NOT NULL"
+             name: :channels_connector_identifier_index
            )
+  end
 
-    create unique_index(:channels, [:platform, :channel_identifier],
-             name: :channels_platform_channel_identifier_index,
-             where: "channel_config_id IS NULL"
-           )
+  def backfill(repo) do
+    repo.query!("LOCK TABLE channels, channel_configs IN SHARE ROW EXCLUSIVE MODE")
+
+    %{rows: configs} =
+      repo.query!("SELECT id, provider, settings FROM channel_configs WHERE kind = 'retrieval'")
+
+    candidates =
+      Enum.map(configs, fn [id, provider, settings] ->
+        config = %{id: id, provider: provider, kind: "retrieval", settings: settings || %{}}
+
+        {id,
+         %{
+           platform: to_string(Zaq.Channels.Bridge.provider_to_bridge_key(provider) || provider),
+           incoming?: Zaq.Channels.Bridge.incoming_routing(config).incoming?
+         }}
+      end)
+
+    %{rows: channels} =
+      repo.query!("SELECT id, platform FROM channels WHERE channel_config_id IS NULL ORDER BY id")
+
+    # Validate all origins before writing. Disabled/archived connectors still
+    # count; prefer receiving origins, falling back to a sole sending origin.
+    assignments =
+      Enum.map(channels, fn [id, platform] ->
+        matching = Enum.filter(candidates, fn {_, profile} -> profile.platform == platform end)
+        receiving = Enum.filter(matching, fn {_, profile} -> profile.incoming? end)
+        origins = if receiving == [], do: matching, else: receiving
+
+        case origins do
+          [{config_id, _}] ->
+            {id, config_id}
+
+          _ ->
+            raise "PersonChannel connector backfill requires exactly one origin; channel ID: #{id}"
+        end
+      end)
+
+    Enum.each(assignments, fn {id, config_id} ->
+      repo.query!("UPDATE channels SET channel_config_id = $1 WHERE id = $2", [config_id, id])
+    end)
   end
 
   def down do
@@ -53,10 +73,6 @@ defmodule Zaq.Repo.Migrations.ScopePersonChannelsToConnector do
       END IF;
     END $$
     """
-
-    drop index(:channels, [:platform, :channel_identifier],
-           name: :channels_platform_channel_identifier_index
-         )
 
     drop index(:channels, [:platform, :channel_config_id, :channel_identifier],
            name: :channels_connector_identifier_index

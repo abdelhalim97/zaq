@@ -81,6 +81,9 @@ defmodule Zaq.Engine.Workflows.SendLeadsEmailThreadingE2ETest do
     @moduledoc false
     alias Zaq.Engine.Workflows.SendLeadsEmailThreadingE2ETest, as: Test
 
+    def send_notification(recipient, payload, metadata, _config_id),
+      do: send_notification(recipient, payload, metadata)
+
     def send_notification(recipient, payload, _metadata) do
       send(Test.collector(), {:sent, recipient, payload})
       :ok

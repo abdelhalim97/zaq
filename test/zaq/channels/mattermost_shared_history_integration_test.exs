@@ -11,6 +11,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
   alias Zaq.Agent.RequestControl
   alias Zaq.Agent.ServerManager
   alias Zaq.Channels.CommunicationBridge
+  alias Zaq.Channels.EmailBridge
   alias Zaq.Channels.JidoChatBridge
   alias Zaq.Channels.MattermostAdmin
   alias Zaq.Contracts.Record
@@ -59,6 +60,7 @@ defmodule Zaq.Channels.MattermostSharedHistoryIntegrationTest do
     Enum.each(@keys, &Application.delete_env(:zaq, &1))
 
     Application.put_env(:zaq, :channels, %{
+      email: %{bridge: EmailBridge},
       mattermost: %{
         bridge: JidoChatBridge,
         adapter: Jido.Chat.Mattermost.Adapter,

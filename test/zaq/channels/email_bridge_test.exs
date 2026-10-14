@@ -301,6 +301,8 @@ defmodule Zaq.Channels.EmailBridgeTest do
     defaults = %{
       name: "Email SMTP",
       kind: "retrieval",
+      url: "smtp://configured-in-settings",
+      token: "__smtp_unused__",
       enabled: true,
       settings: smtp_settings()
     }
@@ -813,6 +815,11 @@ defmodule Zaq.Channels.EmailBridgeTest do
   end
 
   describe "email:smtp notification delivery" do
+    setup do
+      Repo.delete_all(from c in ChannelConfig, where: c.provider == "email:smtp")
+      :ok
+    end
+
     test "an explicitly scoped SMTP send uses that account and rejects disabled accounts" do
       upsert_smtp_channel(%{settings: smtp_settings(%{"from_email" => "default@example.com"})})
       first = ChannelConfig.get_by_provider("email:smtp")

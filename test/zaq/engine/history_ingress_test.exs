@@ -862,6 +862,7 @@ defmodule Zaq.Engine.HistoryIngressTest do
     assert stored.content == "persist once"
     [target_id] = stored.metadata["history_association"]["transcript_ids"]
 
+    assert {:ok, _} = People.update_person(People.get_person!(first.id), %{email: nil})
     for channel <- People.list_person_channels(first.id), do: People.delete_channel(channel)
     replacement = author("Replacement", "email", "first@example.com", config.id)
     assert {:ok, ^message_id} = HistoryIngress.record_confirmation(delivery)

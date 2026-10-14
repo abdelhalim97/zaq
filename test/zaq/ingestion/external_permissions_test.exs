@@ -2,7 +2,7 @@ defmodule Zaq.Ingestion.ExternalPermissionsTest do
   use Zaq.DataCase, async: true
   use ExUnitProperties
 
-  alias Zaq.Accounts.{Person, PersonChannel, Team}
+  alias Zaq.Accounts.{People, Person, PersonChannel, Team}
   alias Zaq.Contracts.Record
   alias Zaq.Ingestion
   alias Zaq.Ingestion.Document
@@ -22,37 +22,41 @@ defmodule Zaq.Ingestion.ExternalPermissionsTest do
     Ingestion.list_document_permissions(doc.id)
   end
 
-  defp permission_by_channel(doc, platform, channel_id) do
-    permissions_for(doc)
-    |> Enum.find(fn permission ->
-      Repo.exists?(
-        from c in PersonChannel,
-          where:
-            c.person_id == ^permission.person_id and
-              c.platform == ^platform and
-              c.channel_identifier == ^channel_id
-      )
-    end)
-  end
-
-  test "imports plain map permission by provider id with default read rights" do
+  test "imports plain map permission by canonical Person reference with default read rights" do
     doc = create_document()
+    {:ok, person} = People.create_person(%{full_name: "Provider User"})
 
     record = %Record{
       id: "file-1",
       kind: :file,
       attributes: %{provider: "slack"},
       permissions: [
-        %{id: "provider-user-1", display_name: "Provider User", role: "custom_role"}
+        %{type: "person", target_id: to_string(person.id), role: "custom_role"}
       ]
     }
 
     assert :ok = ExternalPermissions.apply(record, [doc])
 
-    permission = permission_by_channel(doc, "slack", "provider-user-1")
-    assert permission
+    [permission] = permissions_for(doc)
+    assert permission.person_id == person.id
     assert permission.access_rights == ["read"]
     assert permission.person.full_name == "Provider User"
+  end
+
+  test "opaque provider identifiers without connector scope do not invent links or grants" do
+    doc = create_document()
+
+    record = %Record{
+      id: "unscoped",
+      kind: :file,
+      attributes: %{provider: "slack"},
+      permissions: [%{id: "provider-user-1", display_name: "Unscoped provider user"}]
+    }
+
+    assert :ok = ExternalPermissions.apply(record, [doc])
+    assert permissions_for(doc) == []
+    refute Repo.exists?(from p in Person, where: p.full_name == "Unscoped provider user")
+    refute Repo.exists?(from c in PersonChannel, where: c.channel_identifier == "provider-user-1")
   end
 
   test "ignores non-map permission principals that cannot be mapped" do

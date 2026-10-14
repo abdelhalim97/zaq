@@ -1,6 +1,7 @@
 defmodule Zaq.Accounts.PeopleSelfProfileTest do
   use Zaq.DataCase, async: true
   use ExUnitProperties
+  import Zaq.CommunicationFixtures
 
   alias Zaq.Accounts.{People, Person, PersonChannel}
 
@@ -15,6 +16,7 @@ defmodule Zaq.Accounts.PeopleSelfProfileTest do
       })
 
     [channel] = People.list_person_channels(person.id)
+
     %{person: person, channel: channel}
   end
 
@@ -102,7 +104,9 @@ defmodule Zaq.Accounts.PeopleSelfProfileTest do
     end
 
     {:ok, second} =
-      People.add_channel(%{person_id: p.id, platform: "slack", channel_identifier: "second"})
+      People.add_channel(
+        scoped_channel_attrs(%{person_id: p.id, platform: "slack", channel_identifier: "second"})
+      )
 
     assert {:ok, _} = People.update_self_channel_weight(p, c.id, %{weight: 2_147_483_647})
     assert [second.id, c.id] == Enum.map(People.list_person_channels(p.id), & &1.id)
@@ -133,13 +137,22 @@ defmodule Zaq.Accounts.PeopleSelfProfileTest do
       People.add_channel(%{
         person_id: p.id,
         platform: "slack",
+        channel_config_id: connector_fixture("slack").id,
         channel_identifier: "order-second"
       })
 
     {:ok, other} =
       People.create_person(%{full_name: "Foreign", email: "foreign-order@example.test"})
 
-    [foreign] = People.list_person_channels(other.id)
+    {:ok, foreign} =
+      People.add_channel(
+        scoped_channel_attrs(%{
+          person_id: other.id,
+          platform: "email",
+          channel_identifier: other.email
+        })
+      )
+
     original = People.list_person_channels(p.id)
     expected = Enum.map(original, &Map.take(&1, [:id, :weight]))
 
@@ -194,7 +207,13 @@ defmodule Zaq.Accounts.PeopleSelfProfileTest do
     assert People.get_channel(c.id).weight == 8
 
     {:ok, b} =
-      People.add_channel(%{person_id: p.id, platform: "slack", channel_identifier: "membership"})
+      People.add_channel(
+        scoped_channel_attrs(%{
+          person_id: p.id,
+          platform: "slack",
+          channel_identifier: "membership"
+        })
+      )
 
     assert {:error, :stale_order} = People.update_self_channel_order(p, [c.id], expected)
     expected = Enum.map(People.list_person_channels(p.id), &Map.take(&1, [:id, :weight]))
@@ -210,6 +229,7 @@ defmodule Zaq.Accounts.PeopleSelfProfileTest do
         People.add_channel(%{
           person_id: p.id,
           platform: "slack",
+          channel_config_id: connector_fixture("slack").id,
           channel_identifier: "permutation-#{index}"
         })
     end

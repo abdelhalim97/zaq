@@ -9,13 +9,13 @@ defmodule Zaq.Engine.Notifications do
   ## Usage
 
       {:ok, notification} = Notification.build(%{
-        recipient_channels: [%{platform: "email:smtp", identifier: "u@example.com"}],
+        recipient_channels: [%{platform: "email", identifier: "u@example.com"}],
         sender: "system",
         subject: "Hello",
         body: "World"
       })
       Notifications.notify(notification)
-      # => {:ok, %{status: :sent, channel: "email:smtp", channel_identifier: "u@example.com"}}
+      # => {:ok, %{status: :sent, channel: "email", channel_identifier: "u@example.com"}}
 
   ## Threading
 
@@ -44,10 +44,6 @@ defmodule Zaq.Engine.Notifications do
   alias Zaq.Engine.Notifications.NotificationLog
   alias Zaq.Event
   alias Zaq.Repo
-
-  @person_channel_platforms %{
-    "email" => "email:smtp"
-  }
 
   @type notification_result :: %{
           required(:status) => :sent | :skipped | :failed,
@@ -173,18 +169,29 @@ defmodule Zaq.Engine.Notifications do
   end
 
   def notify(%Notification{} = notification, opts) do
-    configured_platforms = configured_platforms()
-
     {channels, skipped_channels} =
       Enum.reduce(notification.recipient_channels, {[], []}, fn ch, {configured, skipped} ->
         platform = Map.get(ch, :platform)
         identifier = Map.get(ch, :identifier)
 
-        if platform in configured_platforms and bridge_available?(platform, opts) do
-          entry = %{"platform" => platform, "identifier" => identifier}
-          {configured ++ [entry], skipped}
-        else
-          {configured, skipped ++ [ch]}
+        case Enum.any?(
+               ChannelConfig.list_person_channel_configs(
+                 platform,
+                 Map.get(ch, :channel_config_id)
+               ),
+               & &1.enabled
+             ) and bridge_available?(platform, opts) do
+          true ->
+            entry = %{
+              "platform" => platform,
+              "identifier" => identifier,
+              "channel_config_id" => Map.get(ch, :channel_config_id)
+            }
+
+            {configured ++ [entry], skipped}
+
+          _ ->
+            {configured, skipped ++ [ch]}
         end
       end)
 
@@ -294,6 +301,7 @@ defmodule Zaq.Engine.Notifications do
       # The platform string as configured — the channels node resolves its own
       # bridge from it; the engine never maps providers to bridge modules.
       provider: platform,
+      routing_context: %{channel_config_id: channel["channel_config_id"]},
       thread_anchor: anchor,
       metadata:
         Map.merge(metadata, %{
@@ -422,15 +430,6 @@ defmodule Zaq.Engine.Notifications do
     end
   end
 
-  defp configured_platforms do
-    from(c in ChannelConfig,
-      where: c.kind == "retrieval" and c.enabled == true,
-      select: c.provider
-    )
-    |> Repo.all()
-    |> MapSet.new()
-  end
-
   defp fetch_person(person_id, opts) do
     people_module = Keyword.get(opts, :people_module, People)
 
@@ -514,7 +513,7 @@ defmodule Zaq.Engine.Notifications do
   defp user_channels(%{email: email}) when is_binary(email) do
     case String.trim(email) do
       "" -> []
-      email -> [%{platform: "email:smtp", identifier: email}]
+      email -> [%{platform: "email", identifier: email}]
     end
   end
 
@@ -560,7 +559,8 @@ defmodule Zaq.Engine.Notifications do
     |> Enum.sort_by(& &1.weight)
     |> Enum.map(fn channel ->
       %{
-        platform: Map.get(@person_channel_platforms, channel.platform, channel.platform),
+        platform: channel.platform,
+        channel_config_id: channel.channel_config_id,
         identifier: delivery_identifier(channel)
       }
     end)

@@ -1,10 +1,12 @@
 defmodule Zaq.Accounts.PeopleTest do
   use Zaq.DataCase, async: false
   use ExUnitProperties
+  import Zaq.CommunicationFixtures
 
   alias Zaq.Accounts.People
   alias Zaq.Accounts.Person
   alias Zaq.Accounts.PersonChannel
+  alias Zaq.Accounts.PersonIdentities
   alias Zaq.Repo
 
   describe "canonical channel identity" do
@@ -12,7 +14,20 @@ defmodule Zaq.Accounts.PeopleTest do
       person = create_person(%{email: nil})
 
       for changeset <- [&PersonChannel.changeset/2, &PersonChannel.update_changeset/2] do
-        channel = %PersonChannel{person_id: person.id, platform: "email"}
+        config = connector_fixture("email")
+
+        {:ok, identity} =
+          PersonIdentities.claim(person.id, "email", %{
+            "channel_config_id" => config.id,
+            "channel_id" => "äli̇ce@example.com"
+          })
+
+        channel = %PersonChannel{
+          person_id: person.id,
+          platform: "email",
+          channel_config_id: config.id,
+          person_identity_id: identity.id
+        }
 
         assert {:ok, stored} =
                  channel
@@ -59,7 +74,16 @@ defmodule Zaq.Accounts.PeopleTest do
 
     test "canonical creates and both update changesets report identifier uniqueness" do
       person = create_person()
-      attrs = %{person_id: person.id, platform: "email", channel_identifier: " JANE@EXAMPLE.COM "}
+      [email_channel] = People.list_person_channels(person.id)
+
+      attrs =
+        scoped_channel_attrs(%{
+          person_id: person.id,
+          platform: "email",
+          channel_config_id: email_channel.channel_config_id,
+          channel_identifier: " JANE@EXAMPLE.COM "
+        })
+
       assert {:error, duplicate} = People.add_channel(attrs)
 
       assert errors_on(duplicate).channel_identifier == [
@@ -69,6 +93,7 @@ defmodule Zaq.Accounts.PeopleTest do
       other =
         add_channel(person.id, %{
           "platform" => "email",
+          "channel_config_id" => email_channel.channel_config_id,
           "channel_identifier" => "other@example.com"
         })
 
@@ -115,7 +140,8 @@ defmodule Zaq.Accounts.PeopleTest do
 
     test "channel-only discovery and repeated variants reuse one identity and link" do
       assert {:ok, person} =
-               People.find_or_create_from_channel(:"email:imap", %{
+               People.find_or_create_from_channel(:email, %{
+                 channel_config_id: connector_fixture("email").id,
                  channel_id: " ÄLİCE@EXAMPLE.COM "
                })
 
@@ -123,19 +149,32 @@ defmodule Zaq.Accounts.PeopleTest do
       assert channel.channel_identifier == "äli̇ce@example.com"
 
       for variant <- ["äli̇ce@example.com", "\u2003ÄLİCE@EXAMPLE.COM\u00A0"] do
-        assert {:ok, matched} = People.match_person(%{platform: "email", channel_id: variant})
+        assert {:ok, matched} =
+                 People.match_person(%{
+                   platform: "email",
+                   channel_id: variant,
+                   channel_config_id: channel.channel_config_id
+                 })
+
         assert matched.id == person.id
-        assert {:ok, matched} = People.match_by_channel("email", variant)
+
+        assert {:ok, matched} =
+                 People.match_by_channel("email", variant, channel.channel_config_id)
+
         assert matched.id == person.id
 
         assert {:ok, repeated} =
-                 People.find_or_create_from_channel(:"email:imap", %{channel_id: variant})
+                 People.find_or_create_from_channel(:email, %{
+                   channel_id: variant,
+                   channel_config_id: channel.channel_config_id
+                 })
 
         assert repeated.id == person.id
         assert Enum.map(repeated.channels, & &1.id) == [channel.id]
       end
 
-      assert {:error, :not_found} = People.match_by_channel("email", " \u2003")
+      assert {:error, :not_found} =
+               People.match_by_channel("email", " \u2003", channel.channel_config_id)
     end
 
     test "mixed-case incoming email matches and links canonical storage" do
@@ -145,18 +184,24 @@ defmodule Zaq.Accounts.PeopleTest do
         People.add_channel(%{
           person_id: person.id,
           platform: "email",
+          channel_config_id: connector_fixture("email").id,
           channel_identifier: "\u2003ÄLİCE@EXAMPLE.COM "
         })
 
       assert channel.channel_identifier == "äli̇ce@example.com"
 
       assert {:ok, matched} =
-               People.match_person(%{platform: "email", channel_id: " ÄLİCE@EXAMPLE.COM "})
+               People.match_person(%{
+                 platform: "email",
+                 channel_id: " ÄLİCE@EXAMPLE.COM ",
+                 channel_config_id: channel.channel_config_id
+               })
 
       assert matched.id == person.id
 
       assert {:ok, repeated} =
-               People.find_or_create_from_channel(:"email:imap", %{
+               People.find_or_create_from_channel(:email, %{
+                 channel_config_id: channel.channel_config_id,
                  channel_id: "ÄLİCE@example.com",
                  email: "äli̇ce@example.com"
                })
@@ -164,16 +209,25 @@ defmodule Zaq.Accounts.PeopleTest do
       assert repeated.id == person.id
       assert Enum.map(People.list_person_channels(person.id), & &1.id) == [channel.id]
       assert People.get_channel(channel.id) == channel
-      assert {:error, :not_found} = People.match_by_channel("email", "absent@example.com")
+
+      assert {:error, :not_found} =
+               People.match_by_channel("email", "absent@example.com", channel.channel_config_id)
     end
 
     test "non-email channel matching keeps whitespace and case significant" do
       person = create_person(%{email: nil})
       add_channel(person.id, %{"channel_identifier" => " OpaqueID "})
-      assert {:ok, matched} = People.match_by_channel("slack", " OpaqueID ")
+
+      assert {:ok, matched} =
+               People.match_by_channel("slack", " OpaqueID ", connector_fixture("slack").id)
+
       assert matched.id == person.id
-      assert {:error, :not_found} = People.match_by_channel("slack", "opaqueid")
-      assert {:error, :not_found} = People.match_by_channel("slack", "OpaqueID")
+
+      assert {:error, :not_found} =
+               People.match_by_channel("slack", "opaqueid", connector_fixture("slack").id)
+
+      assert {:error, :not_found} =
+               People.match_by_channel("slack", "OpaqueID", connector_fixture("slack").id)
     end
   end
 
@@ -188,6 +242,7 @@ defmodule Zaq.Accounts.PeopleTest do
 
   defp create_person(attrs \\ %{}) do
     {:ok, person} = People.create_person(person_attrs(attrs))
+
     person
   end
 
@@ -196,6 +251,7 @@ defmodule Zaq.Accounts.PeopleTest do
       %{"platform" => "slack", "channel_identifier" => "@jane", "person_id" => person_id},
       overrides
     )
+    |> scoped_channel_attrs()
   end
 
   defp add_channel(person_id, attrs \\ %{}) do
@@ -261,13 +317,12 @@ defmodule Zaq.Accounts.PeopleTest do
       assert errors_on(changeset).status != []
     end
 
-    test "auto-links email channel when email is present" do
+    test "profile email creates a default connector link" do
       {:ok, person} = People.create_person(person_attrs())
       channels = People.list_person_channels(person.id)
-      assert length(channels) == 1
-      assert hd(channels).platform == "email"
-      assert hd(channels).channel_identifier == "jane@example.com"
-      assert hd(channels).weight == 0
+      assert [%{platform: "email", channel_identifier: email, channel_config_id: id}] = channels
+      assert email == person.email
+      assert id
     end
 
     test "does not auto-link email channel when email is nil" do
@@ -321,15 +376,17 @@ defmodule Zaq.Accounts.PeopleTest do
       assert errors_on(changeset).status != []
     end
 
-    test "auto-links email channel when email is set for the first time" do
+    test "setting profile email creates a default connector link" do
       person = create_person(%{email: nil})
       assert People.list_person_channels(person.id) == []
 
       {:ok, updated} = People.update_person(person, %{email: "new@example.com"})
       channels = People.list_person_channels(updated.id)
-      assert length(channels) == 1
-      assert hd(channels).platform == "email"
-      assert hd(channels).channel_identifier == "new@example.com"
+
+      assert [%{platform: "email", channel_identifier: "new@example.com", channel_config_id: id}] =
+               channels
+
+      assert id
     end
 
     test "does not duplicate email channel when email is unchanged" do
@@ -452,7 +509,12 @@ defmodule Zaq.Accounts.PeopleTest do
                People.update_person_resource(
                  person.id,
                  %{full_name: "Updated"},
-                 [%{"platform" => "telegram", "channel_identifier" => "@updated"}],
+                 [
+                   scoped_channel_attrs(%{
+                     "platform" => "telegram",
+                     "channel_identifier" => "@updated"
+                   })
+                 ],
                  %{"merge_with_person_id" => other.id, "merge_precedence" => "person"}
                )
 
@@ -535,6 +597,7 @@ defmodule Zaq.Accounts.PeopleTest do
         assert {:ok, _} =
                  People.add_channel(%{
                    "platform" => platform,
+                   "channel_config_id" => connector_fixture(platform).id,
                    "channel_identifier" => identifier,
                    "person_id" => p2.id
                  })
@@ -824,21 +887,25 @@ defmodule Zaq.Accounts.PeopleTest do
 
   # ── match_by_channel ──────────────────────────────────────────────────────
 
-  describe "match_by_channel/2" do
+  describe "match_by_channel/3" do
     test "returns person when channel exists" do
       person = create_person()
       add_channel(person.id, %{"platform" => "slack", "channel_identifier" => "@match_me"})
 
-      assert {:ok, found} = People.match_by_channel("slack", "@match_me")
+      assert {:ok, found} =
+               People.match_by_channel("slack", "@match_me", connector_fixture("slack").id)
+
       assert found.id == person.id
     end
 
     test "returns error when no channel matches" do
-      assert {:error, :not_found} = People.match_by_channel("slack", "@ghost")
+      assert {:error, :not_found} =
+               People.match_by_channel("slack", "@ghost", connector_fixture("slack").id)
     end
 
     test "returns error for empty channel_identifier" do
-      assert {:error, :not_found} = People.match_by_channel("slack", "")
+      assert {:error, :not_found} =
+               People.match_by_channel("slack", "", connector_fixture("slack").id)
     end
   end
 
@@ -868,7 +935,11 @@ defmodule Zaq.Accounts.PeopleTest do
       add_channel(person.id, %{"platform" => "slack", "channel_identifier" => "@chan_match"})
 
       assert {:ok, found} =
-               People.match_person(%{"platform" => "slack", "channel_id" => "@chan_match"})
+               People.match_person(%{
+                 "platform" => "slack",
+                 "channel_id" => "@chan_match",
+                 "channel_config_id" => connector_fixture("slack").id
+               })
 
       assert found.id == person.id
     end
@@ -889,6 +960,7 @@ defmodule Zaq.Accounts.PeopleTest do
   describe "find_or_create_from_channel/2" do
     test "creates a partial person and links channel on miss" do
       attrs = %{
+        "channel_config_id" => connector_fixture("slack").id,
         "channel_id" => "@new_bot",
         "display_name" => "New Bot",
         "email" => nil,
@@ -903,7 +975,10 @@ defmodule Zaq.Accounts.PeopleTest do
 
     test "uses channel_id as full_name when display_name absent" do
       assert {:ok, person} =
-               People.find_or_create_from_channel("slack", %{"channel_id" => "@fallback_id"})
+               People.find_or_create_from_channel("slack", %{
+                 "channel_id" => "@fallback_id",
+                 "channel_config_id" => connector_fixture("slack").id
+               })
 
       assert person.full_name == "@fallback_id"
     end
@@ -913,6 +988,7 @@ defmodule Zaq.Accounts.PeopleTest do
 
       assert {:ok, found} =
                People.find_or_create_from_channel("slack", %{
+                 "channel_config_id" => connector_fixture("slack").id,
                  "email" => "existing@example.com",
                  "channel_id" => "@existing_chan"
                })
@@ -928,6 +1004,7 @@ defmodule Zaq.Accounts.PeopleTest do
 
       assert {:ok, updated} =
                People.find_or_create_from_channel("slack", %{
+                 "channel_config_id" => connector_fixture("slack").id,
                  "channel_id" => "@backfill_me",
                  "email" => "backfilled@example.com"
                })
@@ -936,9 +1013,10 @@ defmodule Zaq.Accounts.PeopleTest do
       assert updated.email == "backfilled@example.com"
     end
 
-    test "canonicalizes email imap platform" do
+    test "stores email as the application platform for an inbox connector" do
       assert {:ok, person} =
-               People.find_or_create_from_channel("email:imap", %{
+               People.find_or_create_from_channel("email", %{
+                 "channel_config_id" => connector_fixture("email").id,
                  "channel_id" => "imap@example.com",
                  "email" => "imap@example.com"
                })
@@ -1125,9 +1203,11 @@ defmodule Zaq.Accounts.PeopleTest do
 
   describe "find_or_create_from_channel/2 email platform" do
     test "does not add a duplicate email channel when platform is already email" do
-      # When the platform IS email, maybe_link_email_channel/3 must be a no-op
-      # (no second channel should be created for the same identifier).
-      attrs = %{"channel_id" => "em@example.com", "email" => "em@example.com"}
+      attrs = %{
+        "channel_id" => "em@example.com",
+        "email" => "em@example.com",
+        "channel_config_id" => connector_fixture("email").id
+      }
 
       assert {:ok, person} = People.find_or_create_from_channel("email", attrs)
 
@@ -1139,12 +1219,18 @@ defmodule Zaq.Accounts.PeopleTest do
     test "backfills display_name onto existing person whose full_name looks like an email address" do
       # insert_partial_person seeds full_name from channel_identifier (an email address).
       # backfill_person treats that as absent so a real display_name can replace it.
-      attrs_initial = %{"channel_id" => "bot@company.com", "email" => "bot@company.com"}
+      attrs_initial = %{
+        "channel_id" => "bot@company.com",
+        "email" => "bot@company.com",
+        "channel_config_id" => connector_fixture("slack").id
+      }
+
       {:ok, person} = People.find_or_create_from_channel("slack", attrs_initial)
 
       assert person.full_name == "bot@company.com"
 
       attrs_with_name = %{
+        "channel_config_id" => connector_fixture("slack").id,
         "channel_id" => "bot@company.com",
         "email" => "bot@company.com",
         "display_name" => "Real Bot Name"

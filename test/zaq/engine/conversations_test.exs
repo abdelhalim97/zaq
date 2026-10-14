@@ -8,6 +8,7 @@ defmodule Zaq.Engine.ConversationsTest do
 
   alias Zaq.Accounts.People
   alias Zaq.Channels.CommunicationBridge
+  alias Zaq.CommunicationFixtures
   alias Zaq.Contracts.Record
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
@@ -2426,6 +2427,59 @@ defmodule Zaq.Engine.ConversationsTest do
   # ── backfill_missing_person_ids via list_conversations ───────────────
 
   describe "backfill_missing_person_ids" do
+    test "equal identifiers on different connectors never cross-link, and missing scope stays unresolved" do
+      identifier = "same-#{System.unique_integer([:positive])}"
+
+      pairs =
+        for index <- 1..2 do
+          config =
+            Repo.insert!(%ChannelConfig{
+              name: "Backfill #{index}",
+              provider: "mattermost",
+              kind: "retrieval",
+              url: "https://server#{index}.example.test",
+              token: "",
+              enabled: false
+            })
+
+          {:ok, person} = People.create_person(%{full_name: "Backfill #{index}"})
+
+          assert {:ok, _} =
+                   People.add_channel(%{
+                     person_id: person.id,
+                     platform: "mattermost",
+                     channel_config_id: config.id,
+                     channel_identifier: identifier
+                   })
+
+          {:ok, conversation} =
+            Conversations.create_conversation(%{
+              channel_type: "mattermost",
+              channel_config_id: config.id,
+              channel_user_id: identifier
+            })
+
+          {conversation.id, person.id}
+        end
+
+      {:ok, unscoped} =
+        Conversations.create_conversation(%{
+          channel_type: "mattermost",
+          channel_user_id: identifier
+        })
+
+      resolved =
+        Map.new(
+          Conversations.list_conversations(channel_user_id: identifier),
+          &{&1.id, &1.person_id}
+        )
+
+      for {conversation_id, person_id} <- pairs,
+          do: assert(resolved[conversation_id] == person_id)
+
+      assert resolved[unscoped.id] == nil
+    end
+
     test "resolves person_id from PersonChannel when conversation has channel_user_id match" do
       {:ok, person} =
         People.create_person(%{
@@ -2434,17 +2488,20 @@ defmodule Zaq.Engine.ConversationsTest do
         })
 
       channel_identifier = "bf_chan_#{System.unique_integer([:positive])}"
+      config = CommunicationFixtures.connector_fixture("mattermost")
 
       {:ok, _channel} =
         People.add_channel(%{
           "person_id" => person.id,
           "platform" => "mattermost",
+          "channel_config_id" => config.id,
           "channel_identifier" => channel_identifier
         })
 
       {:ok, conv} =
         Conversations.create_conversation(%{
           channel_type: "mattermost",
+          channel_config_id: config.id,
           channel_user_id: channel_identifier
         })
 
@@ -2464,11 +2521,13 @@ defmodule Zaq.Engine.ConversationsTest do
         })
 
       author_id = "author_#{System.unique_integer([:positive])}@example.com"
+      config = CommunicationFixtures.connector_fixture("email")
 
       {:ok, _channel} =
         People.add_channel(%{
           "person_id" => person.id,
           "platform" => "email",
+          "channel_config_id" => config.id,
           "channel_identifier" => author_id
         })
 
@@ -2477,6 +2536,7 @@ defmodule Zaq.Engine.ConversationsTest do
       {:ok, conv} =
         Conversations.create_conversation(%{
           channel_type: "email:imap",
+          channel_config_id: config.id,
           channel_user_id: thread_key,
           metadata: %{"author_id" => author_id}
         })

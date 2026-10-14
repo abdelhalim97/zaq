@@ -29,6 +29,16 @@ defmodule Zaq.Channels.EmailBridge do
   alias Zaq.NodeRouter
   alias Zaq.Utils.EmailUtils
 
+  @impl Zaq.Channels.CommunicationBridge
+  def incoming_routing(%{provider: "email:imap"} = config) do
+    %{
+      incoming?: true,
+      topics: ImapConfigHelpers.selected_mailboxes_for_listener(config)
+    }
+  end
+
+  def incoming_routing(_config), do: %{incoming?: false, topics: []}
+
   @doc "Converts an email adapter payload to the internal `%Incoming{}` format."
   @spec to_internal(map(), map()) :: Incoming.t() | {:error, term()}
   @impl true

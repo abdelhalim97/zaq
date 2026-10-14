@@ -2,8 +2,9 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   use Zaq.DataCase, async: false
   use ExUnitProperties
 
-  alias Zaq.Accounts.{People, PersonChannel}
-  alias Zaq.Channels.{Bridge, DataSourceBridge, DiskBridge}
+  alias Zaq.Accounts.People
+  alias Zaq.Channels.{Bridge, DataSourceBridge, DiskBridge, EmailBridge}
+  alias Zaq.CommunicationFixtures
   alias Zaq.Contracts.Record
   alias Zaq.Contracts.Record.Provenance
   alias Zaq.Contracts.RecordPage
@@ -351,10 +352,14 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
     end
   end
 
+  defp configure_channels(channels) do
+    Application.put_env(:zaq, :channels, Map.put(channels, :email, %{bridge: EmailBridge}))
+  end
+
   setup do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubDataSourceBridge, adapter: __MODULE__.StubAdapter},
       sharepoint: %{bridge: StubDataSourceBridge, adapter: __MODULE__.StubAdapter}
     })
@@ -418,7 +423,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   defp actor_context(person), do: %{actor: %{person: %{id: person.id}}}
 
   defp use_record_returning_bridge do
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{
         bridge: StubRecordReturningDataSourceBridge,
         adapter: __MODULE__.StubAdapter
@@ -435,7 +440,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
       }
       |> Map.merge(attrs)
 
-    Repo.insert!(%PersonChannel{} |> PersonChannel.changeset(params))
+    CommunicationFixtures.person_channel_fixture(params)
   end
 
   test "delegates datasource operations to provider bridge" do
@@ -478,7 +483,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   end
 
   test "connector scopes expose provider roots without changing saved scope identities" do
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: Zaq.Channels.JidoConnectBridge},
       sharepoint: %{bridge: Zaq.Channels.JidoConnectBridge},
       disk: %{bridge: DiskBridge}
@@ -530,7 +535,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "returns unsupported when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -546,7 +551,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "seals returned Records and nested permission Records at data-source egress" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{
         bridge: StubRecordReturningDataSourceBridge,
         adapter: __MODULE__.StubAdapter
@@ -593,7 +598,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "globally filters and denies provider records by normalized permissions" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{
         bridge: StubRecordReturningDataSourceBridge,
         adapter: __MODULE__.StubAdapter
@@ -659,7 +664,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "replace_permissions returns unsupported when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -735,7 +740,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "update_permissions returns unsupported when callback is absent" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -758,7 +763,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "returns invalid provenance when nested permission record cannot be sealed" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{
         bridge: StubRecordReturningDataSourceBridge,
         adapter: __MODULE__.StubAdapter
@@ -778,7 +783,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "does not return a partially sealed map when nested record sealing fails" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{
         bridge: StubRecordReturningDataSourceBridge,
         adapter: __MODULE__.StubAdapter
@@ -798,7 +803,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "seals a map response with non-list permissions as an invalid projection" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{
         bridge: StubRecordReturningDataSourceBridge,
         adapter: __MODULE__.StubAdapter
@@ -1111,7 +1116,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   end
 
   test "authorized read wrappers reject malformed successful record lists" do
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{
         bridge: StubMalformedDataSourceBridge,
         adapter: __MODULE__.StubAdapter
@@ -1520,7 +1525,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
     test "spreadsheet wrappers return unsupported when callbacks are not implemented" do
       original_channels = Application.get_env(:zaq, :channels)
 
-      Application.put_env(:zaq, :channels, %{
+      configure_channels(%{
         google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
       })
 
@@ -1615,7 +1620,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "download_resource returns unsupported when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -1632,7 +1637,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "sync_config_runtime falls back to Bridge.sync_config_runtime when bridge lacks sync_runtime" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -1655,7 +1660,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "list_files returns unsupported when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -1672,7 +1677,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "file CRUD/search wrappers return unsupported when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -1730,7 +1735,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "list_permissions returns unsupported when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -1747,7 +1752,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "channel_stats returns unsupported when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -1774,7 +1779,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "export_options returns empty defaults when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -1819,7 +1824,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "watch_changes returns unsupported when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -1845,7 +1850,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "unwatch_changes returns unsupported when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -1913,7 +1918,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "handle_webhook returns unsupported when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -1939,7 +1944,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
   test "oauth_default_scopes returns unsupported when callback not implemented" do
     original_channels = Application.get_env(:zaq, :channels)
 
-    Application.put_env(:zaq, :channels, %{
+    configure_channels(%{
       google_drive: %{bridge: StubNoDataSourceCallbacks, adapter: __MODULE__.StubAdapter}
     })
 
@@ -1987,7 +1992,7 @@ defmodule Zaq.Channels.DataSourceBridgeTest do
     setup do
       original_channels = Application.get_env(:zaq, :channels)
 
-      Application.put_env(:zaq, :channels, %{
+      configure_channels(%{
         disk: %{bridge: DiskBridge}
       })
 

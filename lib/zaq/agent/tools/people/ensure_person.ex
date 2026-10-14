@@ -7,11 +7,11 @@ defmodule Zaq.Agent.Tools.People.EnsurePerson do
 
   Matching priority (delegated to `People.find_or_create_from_channel/2`):
     1. native identity within the Channels-defined authority
-    2. existing connector link, then canonical email (legacy unscoped inputs also match phone)
+    2. existing connector link, then canonical email
     3. create a partial Person and link the identity
 
   Conflicting established owners fail atomically. Bot configuration identifies a
-  delivery link, not a distinct Person; supply it for server/tenant-scoped IDs.
+  delivery link, not a distinct Person; every link requires an explicit connector.
 
   On match: back-fills canonical fields (full_name, email, phone) if missing.
   On miss: creates a partial Person entry with `incomplete: true` and links
@@ -28,14 +28,16 @@ defmodule Zaq.Agent.Tools.People.EnsurePerson do
                      username, user_id). Defaults to the `email` field when
                      `platform` is `"email"`.
   - `display_name` — optional. Person display name for new entries.
-  - `channel_config_id` — optional. Connector supplying the native identity authority.
+  - `channel_config_id` — required. Connector supplying the native identity authority.
   - `email`        — optional. Email address; also used as `channel_id` for
                      `"email"` platform.
   - `phone`        — optional. Phone number for matching.
 
   ## Example
 
-      EnsurePerson.run(%{platform: "email", email: "jad@zaq.ai", display_name: "Jad"}, %{})
+  With receiving connector 12 configured:
+
+      Jido.Exec.run(EnsurePerson, %{platform: "email", channel_config_id: 12, email: "jad@zaq.ai", display_name: "Jad"}, %{})
       # => {:ok, %{person: %{id: 1, email: "jad@zaq.ai", full_name: "Jad"}, row: %{"email" => "jad@zaq.ai", "display_name" => "Jad"}}}
   """
 
@@ -47,8 +49,7 @@ defmodule Zaq.Agent.Tools.People.EnsurePerson do
         %{
           platform: Zoi.string(description: "Channel platform: email, mattermost, slack, etc."),
           channel_config_id:
-            Zoi.integer(description: "Connector supplying the native identity authority.")
-            |> Zoi.optional(),
+            Zoi.integer(description: "Connector supplying the native identity authority."),
           channel_id:
             Zoi.string(
               description:

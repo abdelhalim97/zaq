@@ -4,13 +4,13 @@ defmodule Zaq.Agent.Tools.Resources.QueryResourcesTest do
   alias Jido.Action.Runtime
   alias Jido.Action.Schema
   alias Zaq.Accounts.People
-  alias Zaq.Accounts.PersonChannel
   alias Zaq.Agent
   alias Zaq.Agent.MCP
   alias Zaq.Agent.Skill
   alias Zaq.Agent.Tools.Resources.Query
   alias Zaq.Agent.Tools.Resources.QueryResources
   alias Zaq.Channels.RetrievalChannel
+  alias Zaq.CommunicationFixtures
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.IncomingMessageRoutingRule
   alias Zaq.Permissions
@@ -964,8 +964,7 @@ defmodule Zaq.Agent.Tools.Resources.QueryResourcesTest do
         attrs
       )
 
-    {:ok, channel} = %PersonChannel{} |> PersonChannel.changeset(params) |> Repo.insert()
-    channel
+    CommunicationFixtures.person_channel_fixture(params)
   end
 
   defp channel_config_fixture(attrs) do

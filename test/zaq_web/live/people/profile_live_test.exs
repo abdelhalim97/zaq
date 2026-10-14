@@ -1,6 +1,7 @@
 defmodule ZaqWeb.Live.People.ProfileLiveTest do
   use ZaqWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
+  import Zaq.CommunicationFixtures, only: [connector_fixture: 1]
   alias Zaq.Accounts.{People, PeopleAuth, PeoplePermissions}
   alias ZaqWeb.Live.People.ProfileLive
 
@@ -109,6 +110,7 @@ defmodule ZaqWeb.Live.People.ProfileLiveTest do
       People.add_channel(%{
         person_id: person.id,
         platform: "slack",
+        channel_config_id: connector_fixture("slack").id,
         channel_identifier: "ui-second"
       })
 
@@ -169,6 +171,7 @@ defmodule ZaqWeb.Live.People.ProfileLiveTest do
       People.add_channel(%{
         person_id: person.id,
         platform: "slack",
+        channel_config_id: connector_fixture("slack").id,
         channel_identifier: "ui-stale"
       })
 
@@ -290,6 +293,7 @@ defmodule ZaqWeb.Live.People.ProfileLiveTest do
       People.add_channel(%{
         person_id: person.id,
         platform: "microsoft_teams",
+        channel_config_id: connector_fixture("microsoft_teams").id,
         channel_identifier: "teams-ui"
       })
 

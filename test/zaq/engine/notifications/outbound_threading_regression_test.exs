@@ -13,9 +13,9 @@ defmodule Zaq.Engine.Notifications.OutboundThreadingRegressionTest do
   @moduletag capture_log: true
 
   import Ecto.Query
+  import Zaq.CommunicationFixtures
 
   alias Zaq.Accounts.People
-  alias Zaq.Accounts.PersonChannel
   alias Zaq.Engine.ChannelConfig
   alias Zaq.Engine.Conversations
   alias Zaq.Engine.Notifications
@@ -44,11 +44,17 @@ defmodule Zaq.Engine.Notifications.OutboundThreadingRegressionTest do
 
   # Routes delivery to the REAL EmailBridge — only SMTP is stubbed.
   defmodule RealEmailBridgeRouter do
+    alias Zaq.Channels.Bridge
     def bridge_for(_provider), do: Zaq.Channels.EmailBridge
     def fetch_connection_details(_provider), do: %{}
+    def fetch_channel_config(provider, id), do: Bridge.fetch_channel_config(provider, id)
+    def fetch_connection_details_for_config(_config), do: %{}
   end
 
   defmodule CapturingSmtp do
+    def send_notification(recipient, payload, metadata, _id),
+      do: send_notification(recipient, payload, metadata)
+
     def send_notification(recipient, payload, _metadata) do
       send(self(), {:smtp, recipient, payload})
       :ok
@@ -59,7 +65,7 @@ defmodule Zaq.Engine.Notifications.OutboundThreadingRegressionTest do
     {:ok, person} =
       People.create_person(%{full_name: "Lead #{System.unique_integer([:positive])}"})
 
-    Repo.insert!(%PersonChannel{
+    person_channel_fixture(%{
       person_id: person.id,
       platform: "email",
       channel_identifier: "lead-#{System.unique_integer([:positive])}@example.test",

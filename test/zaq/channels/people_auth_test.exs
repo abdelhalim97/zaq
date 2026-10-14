@@ -47,7 +47,7 @@ defmodule Zaq.Channels.PeopleAuthTest do
       People.create_person(%{full_name: "Failed", email: "delivery-failed@example.test"})
 
     {:ok, _} = PeoplePermissions.grant(:everyone, :access_profile)
-    Repo.delete_all(Zaq.Engine.ChannelConfig)
+    Repo.update_all(Zaq.Engine.ChannelConfig, set: [enabled: false])
     assert {:error, :delivery_failed} = PeopleAuth.request_challenge(person.email, ip)
     assert :ok = PeopleAuthRateLimiter.check_identification(ip)
   end

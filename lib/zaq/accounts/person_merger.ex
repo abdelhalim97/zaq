@@ -91,7 +91,6 @@ defmodule Zaq.Accounts.PersonMerger do
         |> Map.merge(%{merged_person_ids: aliases, merge_history: history})
 
       channel_results = channel_results(survivor.id, channels)
-      email_channel = email_channel(survivor, attrs, channel_results)
       grants = permission_results(survivor.id, ids, relations.permissions)
       rules = routing_results(survivor.id, relations.rules)
       links = link_results(survivor.id, relations)
@@ -106,7 +105,6 @@ defmodule Zaq.Accounts.PersonMerger do
       validate_result!(
         attrs,
         channel_results,
-        email_channel,
         grants,
         rules,
         links
@@ -128,7 +126,7 @@ defmodule Zaq.Accounts.PersonMerger do
       end)
 
       PersonIdentities.transfer(survivor.id, Enum.map(losers, & &1.id))
-      apply_channels(channel_results, email_channel)
+      apply_channels(channel_results)
       apply_permissions(relations.permissions, grants, opts)
       apply_routing(rules)
       transfer_links(links)
@@ -244,6 +242,8 @@ defmodule Zaq.Accounts.PersonMerger do
         |> Map.put(:person_id, survivor_id)
         |> Map.put(:weight, first.weight)
         |> Map.put(:platform, first.platform)
+        |> Map.put(:channel_config_id, first.channel_config_id)
+        |> Map.put(:person_identity_id, first.person_identity_id)
 
       {first, attrs, rest}
     end)
@@ -480,27 +480,7 @@ defmodule Zaq.Accounts.PersonMerger do
     end)
   end
 
-  defp email_channel(survivor, attrs, channels) do
-    existing? =
-      Enum.any?(channels, fn {_row, channel, _rest} ->
-        channel.platform == "email" and channel.channel_identifier == attrs.email
-      end)
-
-    if attrs.email && attrs.email != survivor.email && not existing? do
-      weight =
-        channels |> Enum.map(fn {_, channel, _} -> channel.weight end) |> Enum.max(fn -> -1 end)
-
-      %{
-        person_id: survivor.id,
-        platform: "email",
-        channel_identifier: attrs.email,
-        display_name: attrs.full_name,
-        weight: weight + 1
-      }
-    end
-  end
-
-  defp validate_result!(attrs, channels, email, grants, rules, links) do
+  defp validate_result!(attrs, channels, grants, rules, links) do
     # Fresh schema values make Ecto field validators inspect the entire final
     # state, including invalid legacy values unchanged on a loaded record.
     Person.merge_result_changeset(%Person{}, attrs) |> valid!()
@@ -508,8 +488,6 @@ defmodule Zaq.Accounts.PersonMerger do
     Enum.each(channels, fn {_row, attrs, _rest} ->
       PersonChannel.changeset(%PersonChannel{}, attrs) |> valid!()
     end)
-
-    if email, do: PersonChannel.changeset(%PersonChannel{}, email) |> valid!()
 
     Enum.each(grants, fn {{type, id}, attrs} ->
       ResourcePermission.changeset(
@@ -550,12 +528,10 @@ defmodule Zaq.Accounts.PersonMerger do
   defp valid!(%Changeset{valid?: true}), do: :ok
   defp valid!(changeset), do: Repo.rollback(changeset)
 
-  defp apply_channels(channels, email) do
+  defp apply_channels(channels) do
     Enum.each(channels, fn {row, attrs, rest} ->
       Enum.each(rest, &(People.delete_channel(&1) |> result!()))
       People.apply_channel_merge_result(row, attrs) |> result!()
     end)
-
-    if email, do: People.add_channel(email) |> result!()
   end
 end

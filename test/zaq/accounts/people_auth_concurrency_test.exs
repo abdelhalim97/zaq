@@ -8,12 +8,13 @@ defmodule Zaq.Accounts.PeopleAuthConcurrencyTest do
     PeopleAuth,
     PeoplePermissions,
     Person,
+    PersonChannel,
     PersonLoginChallenge,
     PersonSession,
     Team
   }
 
-  alias Zaq.Engine.PeopleAuthGateway
+  alias Zaq.Engine.{ChannelConfig, PeopleAuthGateway}
   alias Zaq.Repo
   alias Zaq.TestSupport.PeopleAuthClock
 
@@ -191,6 +192,25 @@ defmodule Zaq.Accounts.PeopleAuthConcurrencyTest do
          fixture do
       %{person: person, survivor: survivor, team: team, ip: ip} = fixture
 
+      config =
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.insert!(%ChannelConfig{
+            name: "Priority race",
+            provider: "slack",
+            kind: "retrieval",
+            enabled: false,
+            url: "https://slack.example.test",
+            token: ""
+          })
+        end)
+
+      on_exit(fn ->
+        Sandbox.unboxed_run(Repo, fn ->
+          Repo.delete_all(from c in PersonChannel, where: c.channel_config_id == ^config.id)
+          Repo.delete!(config)
+        end)
+      end)
+
       {token, channel} =
         Sandbox.unboxed_run(Repo, fn ->
           {:ok, _} = PeoplePermissions.grant({:team, team.id}, :edit_profile)
@@ -199,6 +219,7 @@ defmodule Zaq.Accounts.PeopleAuthConcurrencyTest do
             People.add_channel(%{
               person_id: person.id,
               platform: "slack",
+              channel_config_id: config.id,
               channel_identifier: "priority-race-#{person.id}"
             })
 

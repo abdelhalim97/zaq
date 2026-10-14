@@ -48,13 +48,19 @@ defmodule Zaq.Agent.Tools.People.UpdatePerson do
                     platform:
                       Zoi.string(
                         description:
-                          "Person channel platform. Must be backed by an enabled communication channel config, e.g. email, mattermost, telegram, discord, slack, microsoft_teams. Required when adding a channel."
+                          "Person channel platform. Must match the selected communication connector. Required when adding a channel."
                       )
                       |> Zoi.optional(),
                     channel_identifier:
                       Zoi.string(
                         description:
                           "Primary channel identifier on the platform, such as email address, username, or user id. Required when adding a channel."
+                      )
+                      |> Zoi.optional(),
+                    channel_config_id:
+                      Zoi.integer(
+                        description:
+                          "Connector id; required for new channels, immutable for existing links."
                       )
                       |> Zoi.optional(),
                     username:
@@ -228,6 +234,9 @@ defmodule Zaq.Agent.Tools.People.UpdatePerson do
         not present?(MapUtils.fetch(channel, :channel_identifier)) ->
           {:error, "channel_identifier is required when adding a channel"}
 
+        not present?(MapUtils.fetch(channel, :channel_config_id)) ->
+          {:error, "channel_config_id is required when adding a channel"}
+
         true ->
           :ok
       end
@@ -237,16 +246,17 @@ defmodule Zaq.Agent.Tools.People.UpdatePerson do
   defp validate_channel_platform(channel) do
     platform = MapUtils.fetch(channel, :platform)
 
-    if present?(platform) and not incoming_platform?(platform) do
-      {:error, "platform must be backed by an enabled communication channel config"}
+    if present?(platform) and
+         not incoming_platform?(platform, MapUtils.fetch(channel, :channel_config_id)) do
+      {:error, "platform must match the selected communication connector"}
     else
       :ok
     end
   end
 
-  defp incoming_platform?(platform) do
+  defp incoming_platform?(platform, config_id) do
     platform
-    |> ChannelConfig.list_incoming_routing_configs_for_platform()
+    |> ChannelConfig.list_person_channel_configs(config_id)
     |> Enum.any?()
   end
 
