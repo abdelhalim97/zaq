@@ -19,11 +19,15 @@
     {
       "text": "PersonChannelRouting module deleted; its regression file moved to IncomingMessageRoutingPeopleTest and all surviving tests invoke existing IncomingMessageRouting owner. Shared scope/choice validation converts channel form into ordinary incoming-message rules; gateway transaction still rolls back channel changes on forged/invalid targets. Obsolete references removed. 757-test focused validation green.",
       "timestamp": "2026-10-13T18:46:29Z"
+    },
+    {
+      "text": "Approved review corrections in progress: remove BO form decoding/discovery from IncomingMessageRouting; keep only its Person rule query. Reuse existing apply_rule_commands/2 and PeopleGateway atomic channel save, extending the gateway to accept separate canonical rules and validate persisted person/config/retrieval/topic scope (including clear commands). Move discovery/default resolution to existing ChannelConfig queries. Extend AgentRoutingOptions with shared rule input (reuses ZaqWeb.Select) and pure form adapter; no parallel routing persistence. Human approved reuse of Select for provider/retrieval/topic controls. Configuration resolution and form conversion are local-only implementation details, not independently exposed Actions/tools; gateway remains BO Engine event boundary. Missing/ambiguous defaults and invalid explicit connectors return controlled errors with atomic rollback. Existing EmailBridge delivery remains unchanged. Verify creation without configured bridge, receiving discovery in historical backfill, source form roundtrips, forged canonical scopes/clear commands and rollback.",
+      "timestamp": "2026-10-14T02:40:05Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.3] Connector selection and atomic routing administration",
   "type": "task",
-  "updated_at": "2026-10-13T18:46:29Z"
+  "updated_at": "2026-10-14T02:40:05Z"
 }
