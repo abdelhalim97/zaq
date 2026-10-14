@@ -265,6 +265,25 @@ async function resetE2EState(request, options = {}) {
   }
 }
 
+// Seeds disabled connectors only for the People describe, not the global reset baseline.
+async function seedE2EPeopleConnectors(request, options = {}) {
+  const baseURL = normalizeBaseURL(options.baseURL);
+  const res = await request.post(`${baseURL}/e2e/people-connectors`);
+  if (!res.ok()) {
+    throw new Error(`/e2e/people-connectors returned ${res.status()} ${await res.text()}`);
+  }
+  return res.json();
+}
+
+async function selectPersonChannelConnector(page, platform, connectorId) {
+  await page.locator('select[name="channel[platform]"]').selectOption(platform);
+  const connector = page.locator('select[name="channel[channel_config_id]"]');
+  await expect(connector.locator(`option[value="${connectorId}"]`)).toHaveCount(1);
+  await connector.selectOption(String(connectorId));
+  await expect(connector).toHaveValue(String(connectorId));
+  await waitForLiveViewSettled(page);
+}
+
 async function seedE2ELLMPerformance(request, mode = "seed", options = {}) {
   const baseURL = normalizeBaseURL(options.baseURL);
   const res = await request.post(`${baseURL}/e2e/telemetry/llm-performance`, {
@@ -463,6 +482,8 @@ module.exports = {
   dismissFlash,
   normalizeBaseURL,
   resetE2EState,
+  seedE2EPeopleConnectors,
+  selectPersonChannelConnector,
   seedE2ELLMPerformance,
   createE2EAddonPackage,
   setE2ESystemConfig,

@@ -17,69 +17,6 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
 
   @version 20_260_910_194_115
 
-  property "disjoint mixed-platform chains partition once, choose lowest IDs, and rerun idempotently" do
-    check all(size <- integer(2..7), reversed <- boolean(), max_runs: 12) do
-      Repo.query!("DROP INDEX IF EXISTS channels_platform_channel_identifier_index")
-
-      groups =
-        for group <- 1..2 do
-          for person <- 1..size, do: legacy_person(" chain-#{group}-#{person}@EXAMPLE.COM ")
-        end
-
-      isolated = legacy_person(nil)
-
-      for group <- groups do
-        edges = Enum.chunk_every(group, 2, 1, :discard)
-        edges = if reversed, do: Enum.reverse(edges), else: edges
-
-        for [left, right] <- edges do
-          platform = if rem(left, 2) == 0, do: "email", else: "telegram"
-          identifier = "edge-#{left}@example.com"
-
-          for {id, value} <- [
-                {left, identifier},
-                {right,
-                 if(platform == "email",
-                   do: " " <> String.upcase(identifier) <> " ",
-                   else: identifier
-                 )}
-              ] do
-            legacy_channel(%{
-              person_id: id,
-              platform: platform,
-              channel_identifier: value
-            })
-          end
-        end
-      end
-
-      run_migration()
-
-      for {[survivor | losers], group} <- Enum.with_index(groups, 1) do
-        assert People.get_person!(survivor).merged_person_ids == losers
-        for id <- losers, do: assert(People.get_person!(id).id == survivor)
-
-        for person <- 1..size do
-          assert {:ok, %{id: ^survivor}} =
-                   People.match_by_channel(
-                     "email",
-                     "chain-#{group}-#{person}@example.com",
-                     connector_fixture("email").id
-                   )
-        end
-      end
-
-      assert People.get_person!(isolated).merged_person_ids == []
-      before = Repo.all(from p in Person, order_by: p.id)
-      channels = Repo.all(from c in PersonChannel, order_by: c.id)
-      run_migration()
-      assert Repo.all(from p in Person, order_by: p.id) == before
-      assert Repo.all(from c in PersonChannel, order_by: c.id) == channels
-      ids = List.flatten(groups) ++ [isolated]
-      Repo.delete_all(from p in Person, where: p.id in ^ids)
-    end
-  end
-
   setup do
     # Transactional DDL is restored by this serial DataCase's sandbox rollback.
     # No other test connection can see the legacy schema or its duplicate rows.
@@ -94,88 +31,6 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
 
     Repo.query!("DELETE FROM schema_migrations WHERE version = $1", [@version])
     :ok
-  end
-
-  for transitive <- [false, true] do
-    test "preserves distinct profile emails without email channels, transitive #{transitive}" do
-      first = legacy_person(" A@example.com ", "Survivor")
-      second = legacy_person("b@example.com", "Loser")
-
-      for id <- [first, second] do
-        legacy_channel(%{
-          person_id: id,
-          platform: "telegram",
-          channel_identifier: "123"
-        })
-      end
-
-      {ids, existing, expected_emails, expected_channels} =
-        if unquote(transitive) do
-          third = legacy_person("c@example.com")
-          fourth = legacy_person(" B@EXAMPLE.COM ")
-
-          for id <- [second, third, fourth] do
-            legacy_channel(%{
-              person_id: id,
-              platform: "slack",
-              channel_identifier: "hop"
-            })
-          end
-
-          existing =
-            legacy_channel(%{
-              person_id: fourth,
-              platform: "email",
-              channel_identifier: " C@EXAMPLE.COM ",
-              weight: 7,
-              metadata: %{"keep" => true},
-              last_interaction_at: ~U[2020-01-01 00:00:00Z]
-            })
-
-          {[first, second, third, fourth], existing,
-           ["a@example.com", "b@example.com", "c@example.com"], 5}
-        else
-          {[first, second], nil, ["a@example.com", "b@example.com"], 3}
-        end
-
-      assert :ok = migrate()
-      survivor = People.get_person_with_channels!(first)
-      assert survivor.email == "a@example.com"
-      assert survivor.full_name == "Survivor"
-      assert survivor.merged_person_ids == tl(ids)
-      assert length(survivor.channels) == expected_channels
-      emails = Enum.filter(survivor.channels, &(&1.platform == "email"))
-      assert Enum.sort(Enum.map(emails, & &1.channel_identifier)) == expected_emails
-
-      if existing do
-        retained = People.get_channel(existing.id)
-        assert retained.person_id == first
-        assert retained.weight == existing.weight
-        assert retained.metadata == existing.metadata
-        assert retained.last_interaction_at == existing.last_interaction_at
-      end
-
-      for email <- emails do
-        unless existing && email.id == existing.id, do: assert(email.last_interaction_at == nil)
-        identifier = " " <> String.upcase(email.channel_identifier) <> " "
-
-        assert {:ok, %{id: ^first}} =
-                 People.match_by_channel("email", identifier, connector_fixture("email").id)
-
-        assert {:ok, %{id: ^first}} =
-                 People.find_or_create_from_channel("email", %{
-                   channel_config_id: connector_fixture("email").id,
-                   channel_id: identifier,
-                   email: identifier
-                 })
-      end
-
-      assert Repo.aggregate(Person, :count) == 1
-      assert length(People.list_person_channels(first)) == expected_channels
-      assert People.get_person!(first).email == "a@example.com"
-      run_migration()
-      assert People.get_person_with_channels!(first) == survivor
-    end
   end
 
   test "mixed transitive channels and cross-field email identity merge one complete component" do
@@ -482,26 +337,6 @@ defmodule Zaq.Accounts.PersonEmailDataMigrationTest do
              People.create_person(%{full_name: "New", email: "Single@EXAMPLE.com"})
 
     assert errors_on(changeset).email == ["has already been taken"]
-  end
-
-  test "historical blank names retain priority-channel and ID labels during migration" do
-    survivor = legacy_person(" LABEL@example.com ", "Kept")
-    nameless = legacy_person("label@example.com", " ")
-    fallback = legacy_person("Label@example.com", "")
-
-    for {identifier, weight} <- [{"lower-priority-label", 9}, {"primary-label", 0}] do
-      legacy_channel(%{
-        person_id: nameless,
-        platform: "slack",
-        channel_identifier: identifier,
-        weight: weight
-      })
-    end
-
-    assert :ok = migrate()
-
-    assert Enum.map(People.get_person!(survivor).merge_history, &{&1["id"], &1["label"]}) ==
-             [{nameless, "primary-label"}, {fallback, "Person ##{fallback}"}]
   end
 
   defp run_migration do

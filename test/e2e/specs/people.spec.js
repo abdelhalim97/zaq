@@ -4,6 +4,8 @@ const {
   loginToBackOffice,
   pickSearchableSelect,
   resetE2EState,
+  seedE2EPeopleConnectors,
+  selectPersonChannelConnector,
   waitForLiveViewConnected,
   waitForLiveViewSettled,
   waitForServerRoundTrip,
@@ -55,10 +57,12 @@ const SEL = {
 }
 
 test.describe("People", () => {
+  let connectorIds
+
   test.beforeAll(async () => {
-    if (process.env.E2E_PRESERVE_STATE === "1") return
     const req = await apiRequest.newContext()
-    await resetE2EState(req)
+    if (process.env.E2E_PRESERVE_STATE !== "1") await resetE2EState(req)
+    connectorIds = await seedE2EPeopleConnectors(req)
     await req.dispose()
   })
 
@@ -489,7 +493,7 @@ test.describe("People", () => {
     await pickSearchableSelect(page, `[id^="team-select-${loserId}-"]`, teamName)
     await waitForLiveViewSettled(page)
     await page.locator(SEL.addChannelButton).click()
-    await page.locator(SEL.platformSelect).selectOption("telegram")
+    await selectPersonChannelConnector(page, "telegram", connectorIds.telegram)
     await page.locator(SEL.channelIdentifierInput).fill(`merge-channel-${ts}`)
     await page.locator(SEL.saveChannelButton).click()
     await expect(page.locator(SEL.modalOverlay)).not.toBeVisible()
@@ -497,7 +501,7 @@ test.describe("People", () => {
     // Select survivor → open merge modal
     await selectPerson(page, nameSurvivor)
     await page.locator(SEL.addChannelButton).click()
-    await page.locator(SEL.platformSelect).selectOption("email")
+    await selectPersonChannelConnector(page, "email", connectorIds.email)
     await page.locator(SEL.channelIdentifierInput).fill(` MERGE-LOSER-${ts}@EXAMPLE.COM `)
     await page.locator(SEL.saveChannelButton).click()
     await expect(page.locator("#channel-modal-form")).toContainText("This channel identifier is already assigned.")
@@ -556,13 +560,13 @@ test.describe("People", () => {
         await filterByName(page, `${ts}`)
         await selectPerson(page, owner)
         await page.locator(SEL.addChannelButton).click()
-        await page.locator(SEL.platformSelect).selectOption(platform)
+        await selectPersonChannelConnector(page, platform, connectorIds[platform])
         await page.locator(SEL.channelIdentifierInput).fill(identifier)
         await page.locator(SEL.saveChannelButton).click()
         await expect(page.locator(SEL.modalOverlay)).not.toBeVisible()
         await selectPerson(page, target)
         await page.locator(SEL.addChannelButton).click()
-        await page.locator(SEL.platformSelect).selectOption(platform)
+        await selectPersonChannelConnector(page, platform, connectorIds[platform])
         const duplicate = platform === "email" ? ` ${identifier.toUpperCase()} ` : identifier
         await page.locator(SEL.channelIdentifierInput).fill(duplicate)
         await page.locator(SEL.saveChannelButton).click()
@@ -603,8 +607,11 @@ test.describe("People", () => {
     await expect(page.locator(SEL.modalOverlay)).toBeVisible()
 
     const options = await page.locator(`${SEL.platformSelect} option`).allTextContents()
-    expect(options).toContain("telegram")
-    expect(options).toContain("discord")
+    expect(options).toContain("Telegram")
+    expect(options).toContain("Discord")
+    const values = await page.locator(`${SEL.platformSelect} option`).evaluateAll(options => options.map(option => option.value))
+    expect(values).toContain("telegram")
+    expect(values).toContain("discord")
   })
 
   // ── Filtering ─────────────────────────────────────────────────────────────

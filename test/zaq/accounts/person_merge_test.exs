@@ -245,6 +245,15 @@ defmodule Zaq.Accounts.PersonMergeTest do
     b = person("second@example.com", "Second")
     c = person("third@example.com", "Third")
 
+    [third_channel] = People.list_person_channels(c.id)
+
+    assert {:ok, retained} =
+             People.update_channel(third_channel, %{
+               weight: 7,
+               metadata: %{"keep" => true},
+               last_interaction_at: ~U[2020-01-01 00:00:00Z]
+             })
+
     capture_writes()
     assert {:ok, survivor} = People.merge_persons(b, [c, a])
     assert_received {:merge_write, "UPDATE \"people\"" <> query, params}
@@ -257,6 +266,33 @@ defmodule Zaq.Accounts.PersonMergeTest do
 
     assert Enum.sort(Enum.map(survivor.channels, & &1.channel_identifier)) ==
              ["first@example.com", "second@example.com", "third@example.com"]
+
+    saved = People.get_channel(retained.id)
+    assert saved.person_id == b.id
+    assert saved.channel_config_id == retained.channel_config_id
+    assert saved.person_identity_id == retained.person_identity_id
+    assert saved.weight == retained.weight
+    assert saved.metadata == retained.metadata
+    assert saved.last_interaction_at == retained.last_interaction_at
+
+    for email_channel <- survivor.channels do
+      identifier = " " <> String.upcase(email_channel.channel_identifier) <> " "
+
+      assert {:ok, %{id: id}} =
+               People.match_by_channel("email", identifier, email_channel.channel_config_id)
+
+      assert id == b.id
+
+      assert {:ok, %{id: ^id}} =
+               People.find_or_create_from_channel("email", %{
+                 channel_config_id: email_channel.channel_config_id,
+                 channel_id: identifier,
+                 email: identifier
+               })
+    end
+
+    assert People.get_person!(b.id).email == "second@example.com"
+    assert length(People.list_person_channels(b.id)) == 3
 
     assert survivor.full_name == "Second"
     assert People.get_person(a.id).id == b.id
@@ -281,6 +317,33 @@ defmodule Zaq.Accounts.PersonMergeTest do
     assert {:error, :self_merge} = People.merge_persons(a.id, d.id)
     assert {:ok, _} = People.delete_person(d)
     for old <- [a, b, c, d], do: assert(People.get_person(old.id) == nil)
+  end
+
+  test "merging persisted blank names retains priority-channel and ID history labels" do
+    survivor = person(nil, "Kept")
+    nameless = person(nil, "Original name")
+    fallback = person(nil, "Original fallback")
+    # These are existing persisted records, not inputs accepted by today's creation API.
+    Repo.update_all(from(p in Person, where: p.id == ^nameless.id), set: [full_name: " "])
+    Repo.update_all(from(p in Person, where: p.id == ^fallback.id), set: [full_name: ""])
+
+    for {identifier, weight} <- [{"lower-priority-label", 9}, {"primary-label", 0}] do
+      person_channel_fixture(%{
+        person_id: nameless.id,
+        platform: "slack",
+        channel_identifier: identifier,
+        weight: weight
+      })
+    end
+
+    assert {:ok, merged} = People.merge_persons(survivor.id, [nameless.id, fallback.id])
+    assert merged.full_name == "Kept"
+
+    assert Enum.map(merged.merge_history, &{&1["id"], &1["label"]}) ==
+             [{nameless.id, "primary-label"}, {fallback.id, "Person ##{fallback.id}"}]
+
+    assert People.get_person!(nameless.id).id == survivor.id
+    assert People.get_person!(fallback.id).id == survivor.id
   end
 
   test "hard deletion forgets new IDs but preserves inherited aliases and their history" do
