@@ -14,11 +14,15 @@
     {
       "text": "During the four ownership-review corrections, human approved replacing provider/retrieval/topic native selectors with shared ZaqWeb.Select rule inputs. This is component-reuse approval, not final overall UX approval. Ran existing test/e2e/specs/people.spec.js on Chromium in isolated _c_e2e1: 23 passed, 6 failed. Five failures (merge channel flow and email/telegram duplicate add/edit same/cross person flows) submit channels without required connector selection; Telegram fixture has no configured connector. One dropdown assertion expects lowercase telegram/discord, while ProviderCatalog correctly renders Telegram/Discord. Error snapshots confirm required connector errors. No assertions weakened, no new E2E authored. Minimal fixture/selector repair and existing-browser revalidation remain pending; final precommit/approval remains blocked along with four historical NormalizePersonEmails replay failures.",
       "timestamp": "2026-10-14T02:56:14Z"
+    },
+    {
+      "text": "User approved minimal repairs to outdated People E2E scenarios and retirement/consolidation of four obsolete NormalizePersonEmails replay cases. Removed the automatic graph/lowest-ID replay property and the two profile-only-email replay variants; current explicit group/chain merge test now checks connector/native identity IDs, metadata, preference weight, activity timestamp, normalized matching and repeat discovery without extra links. Moved blank-name history labels to a direct current merge test. Remaining existing normalization tests unchanged. For browser prerequisites, reuse disabled sender/default resolution and ChannelConfig.upsert_by_provider through an E2E-only fixture endpoint (test/support handler; route inside existing compile-time E2E gate). Fixture response contains IDs only; no production behavior or tool exposure. Reuse/reset existing describe-level fixture pattern and shared BO helpers; seed via API rather than navigate unrelated admin pages. Preserve all duplicate/merge assertions, select explicit scoped connectors, and update friendly labels while checking platform values. First isolated unit run: 50 tests +4 properties passed.",
+      "timestamp": "2026-10-14T07:29:21Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.5] Human UX approval and E2E finalization",
   "type": "task",
-  "updated_at": "2026-10-14T02:56:14Z"
+  "updated_at": "2026-10-14T07:29:21Z"
 }
