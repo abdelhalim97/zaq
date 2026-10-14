@@ -22,11 +22,15 @@
     {
       "text": "Existing People E2E repairs validated on Chromium, Firefox and WebKit: 87/87 passed on isolated _c_e2e2. Required connector selection is explicit in all existing add flows; Telegram prerequisite is seeded through the E2E-only API, with no global-reset fixture pollution or active listener. Platform dropdown assertions check friendly labels AND canonical values. Detail channel badges remain lowercase, so original merge assertions are unchanged. Relevant merge/email/scoping unit tests: 50 tests +4 properties passed. The four obsolete replay cases were removed as approved; business identity/preference/history guarantees now exercise current merge APIs. Remaining working older migration tests and migrations themselves are untouched. Action reuse: fixture-only helpers reuse existing config selection/upsert APIs and shared test support; no new production domain operation/Action/tool. Follow-up is test/fixture-only (route inside existing E2E compile guard), so no new production coverage target; overall PR coverage and final UX review remain separate. Running full precommit readiness gate next.",
       "timestamp": "2026-10-14T07:38:44Z"
+    },
+    {
+      "text": "Requested existing-test follow-up complete: mix q passed; isolated merge/email/scoping validation passed 50 tests +4 properties; People E2E passed all 87 existing cases across Chromium/Firefox/WebKit. Full mix precommit rerun passed 48 doctests, 240 properties, 10657 tests, zero failures (1 skipped, 122 excluded) on _c_ff1. First full run encountered one unrelated PortalConsentLiveTest 100ms render_async timeout; its 7 isolated tests passed, and the full gate rerun passed without modifying that module. No skip/timeout changes or assertion weakening. Existing six E2E mismatches and four obsolete replay failures are cleared. Remaining working normalization tests and consumed migration files unchanged. Changes confined to current merge assertions, retired four obsolete replay cases, People spec/support fixtures and one route inside the existing E2E compile guard. Follow-up changes remain uncommitted/unpushed. Overall new-feature UX/E2E/coverage approval scope remains separate.",
+      "timestamp": "2026-10-14T07:59:34Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-s04.5] Human UX approval and E2E finalization",
   "type": "task",
-  "updated_at": "2026-10-14T07:38:44Z"
+  "updated_at": "2026-10-14T07:59:34Z"
 }
