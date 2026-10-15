@@ -9,9 +9,15 @@
   "id": "zaq-atq.13",
   "labels": [],
   "parent": "zaq-atq",
+  "comments": [
+    {
+      "text": "Two new unit scenarios pass; combined isolated executor unit/integration run: 6 doctests, 1 property, 95 tests, 0 failures. Queue paths blocked by real history lease ordering; existing integration cases cover first-token and nil/blank stream failure. Other proposed defensive lines constrained by upstream validated types; no private-state forgery.",
+      "timestamp": "2026-10-15T07:29:54Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-atq] Add executor missed-line tests",
   "type": "task",
-  "updated_at": "2026-10-15T07:28:47Z"
+  "updated_at": "2026-10-15T07:29:54Z"
 }
