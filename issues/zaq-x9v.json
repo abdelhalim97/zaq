@@ -3,12 +3,12 @@
   "blocked_by": [],
   "blocks": [],
   "created": "2026-10-15T06:08:23Z",
-  "description": "Accepted widget executions that fail before a status_message_id exists lose the formatted error and recovery link. Reuse existing MessageFormatter and WebBridge deliver_widget_answer/4 (local transport projection; no new Action). Add regression coverage for formatted credential recovery, stream ordering and synchronous delivery; preserve genuine submission rejections and queued input semantics. Coordinate safe failed-body Markdown rendering with web_widget OpenChamber session ses_ec1d51360ffewsd1tDj9Jq4LXJ.",
+  "description": "Implemented WebBridge early-error delivery using existing deliver_widget_answer/4; no new Action or credential-specific transport logic. New credential recovery and synchronous terminal tests demonstrated the regression and now pass. Validation: mix q; 55 targeted tests; final mix precommit passed (48 doctests, 258 properties, 11015 tests, 0 failures). Widget session ses_ec1d51360ffewsd1tDj9Jq4LXJ implemented safe Markdown failure rendering and rebuilt its release bundle; reports 308 unit tests and 12 Chromium/Firefox/WebKit focused browser tests passed. No commits/pushes authorized. Remaining integration prerequisite: publish widget changes and update ZAQ pinned dependency d7ed897, or obtain explicit local integration setup approval. Preserve user config/dev.exs edits.",
   "id": "zaq-x9v",
   "labels": [],
   "priority": 1,
   "status": "in_progress",
   "title": "Preserve pre-stream execution errors in WebBridge widget delivery",
   "type": "bug",
-  "updated_at": "2026-10-15T06:11:50Z"
+  "updated_at": "2026-10-15T06:23:53Z"
 }
