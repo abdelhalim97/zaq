@@ -15,11 +15,15 @@
     {
       "text": "Added real installed-package reload regression to widget_host_integration_test: held native answer; close old authenticated Chat; initialize new page/proof/session in separate process, same Person topic and processing indicator; original completion must appear once. Expected red against old compiled dependency at initialization (new private envelope unsupported). Waiting for dispatched web_widget Build session, review its implementation first, then replace provisional dependency edits with reviewed revision and pin. Final precommit/coverage not yet run; do not mark complete or merge.",
       "timestamp": "2026-10-15T16:27:57Z"
+    },
+    {
+      "text": "BLOCKER: mandated fresh coverage attempt mix coveralls.json timed out during ExUnit at inner execSync590000ms (Context Mode budget600000ms). No failure summary or test/module identifying stall; cwd was not explicitly recorded by coverage role. No fresh coverage result, no coverup, no stale report used, no source/test changes by coverage role. No coverage/precommit BEAM process remains. Do not claim coverage or final landing gate passed. mix q and integrated62test suite pass. Full coverage timeout must be resolved or explicitly excepted by human before final lifecycle/merge; final precommit has not been run. Widget PR30 and ZAQ PR836 remain unmerged; ZAQ implementation remains uncommitted pending final gate/approval.",
+      "timestamp": "2026-10-15T17:11:29Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-jdu] Validate and integrate widget reconnect dependency",
   "type": "task",
-  "updated_at": "2026-10-15T16:27:57Z"
+  "updated_at": "2026-10-15T17:11:29Z"
 }
