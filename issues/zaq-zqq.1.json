@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T21:26:26Z",
+  "description": "Source issue: https://github.com/www-zaq-ai/zaq/issues/834\nParent contract: zaq-zqq (read before implementation).\n\nFunctional specifications covered with associated files to edit/add:\nInspect current baseline and existing tests before any behavior-changing edits. Audit evidence: test/zaq/agent/history_loader_test.exs expects stored-name prefixes and some bare assistant contents; test/zaq/agent/tools/accounts/history_test.exs around the flattened-list case expects role/content-only maps. Executor, InputPrompt, RequestControl and Factory suites also need exact expectation inventory. Present old versus new assertions/scenarios for header/time changes, unknown legacy authors, added projection fields, and Factory prompt composition. Obtain explicit human approval and record approver, source and exact scope in Beadwork; do not treat task creation as approval. Confirm #835 remains in the implementation baseline.\nTests to add before implementation: this is an approval/planning gate, not a test-edit task. Inventory regression tests for all downstream tasks; do not weaken assertions or silently rewrite fixtures to manufacture author evidence.\nBranches/paths validated: existing exact text assertions, nested/flat search shapes, persisted versus unpersisted timestamp semantics, native assistant/tool roles. Clarify any conflict before implementation.\nMocking plan: not applicable; inspection only.\nDocumentations to update: record the approved test-change matrix in this issue and link it from affected child issues; no application-doc changes required.\nAction reuse assessment: not applicable; no operation is implemented. Downstream work extends Conversations, People and existing History Action rather than creating parallel operations.\nAcceptance: explicit approval evidence exists for every known existing-test behavior change. New unforeseen expectation changes must pause for further approval.",
+  "id": "zaq-zqq.1",
+  "labels": [],
+  "parent": "zaq-zqq",
+  "priority": 2,
+  "status": "open",
+  "title": "[#834] Approve exact test-contract changes and confirm delivery baseline",
+  "type": "task",
+  "updated_at": "2026-10-15T21:26:26Z"
+}
