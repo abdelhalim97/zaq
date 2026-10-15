@@ -9,9 +9,15 @@
   "id": "zaq-atq.5",
   "labels": [],
   "parent": "zaq-atq",
+  "comments": [
+    {
+      "text": "Implemented nil validator + explicit nil command boundary; isolated test passes. Defensive ArgumentError rescue line 27 has no demonstrated naturally raising input; no URI mocking or production test seam introduced.",
+      "timestamp": "2026-10-15T07:29:52Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-atq] Add stylesheet missed-line tests",
   "type": "task",
-  "updated_at": "2026-10-15T07:28:40Z"
+  "updated_at": "2026-10-15T07:29:52Z"
 }
