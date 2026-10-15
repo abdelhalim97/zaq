@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T06:08:23Z",
+  "description": "Accepted widget executions that fail before a status_message_id exists lose the formatted error and recovery link. Reuse existing MessageFormatter and WebBridge deliver_widget_answer/4 (local transport projection; no new Action). Add regression coverage for formatted credential recovery, stream ordering and synchronous delivery; preserve genuine submission rejections and queued input semantics. Coordinate safe failed-body Markdown rendering with web_widget OpenChamber session ses_ec1d51360ffewsd1tDj9Jq4LXJ.",
+  "id": "zaq-x9v",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Preserve pre-stream execution errors in WebBridge widget delivery",
+  "type": "bug",
+  "updated_at": "2026-10-15T06:08:23Z"
+}
