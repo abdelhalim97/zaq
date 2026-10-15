@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T21:26:35Z",
+  "description": "Source issue: https://github.com/www-zaq-ai/zaq/issues/834\nParent contract: zaq-zqq (read before implementation).\n\nFunctional specifications covered with associated files to edit/add:\nlib/zaq/agent/tools/accounts/history.ex and test/zaq/agent/tools/accounts/history_test.exs. message_output/1 and flatten_messages/1 must forward common domain-projected author and timestamp/provenance fields. Retain raw content, current grouping/order/limits and existing inserted_at semantics. Update output schema descriptions/examples. No directory queries, owner-based inference, text-header rendering or independent fallback logic inside the Action.\nTests to add before implementation: nested conversations[].messages[] and flat messages[] field parity, multi-participant/same-name messages, missing Person, provider time versus recorded time, aliases, empty results, current requester/skip_permissions behavior, stable metadata counts and chronological order. Explicitly replace the old exact role/content-only flat-list expectation only under recorded approval.\nBranches/paths validated: chat/workflow trusted actors, privileged explicit scope, unauthorized/nil actors, data-layer failure, finite message pages and summary queries. Avoid re-resolving author metadata merely to calculate counts.\nMocking plan: real directory and Conversations reads; no domain mocks.\nDocumentations to update: History Action schema/examples/moduledoc and docs/services/agent.md recall-tool output contract.\nAction reuse assessment: extend existing accounts.fetch_history Action; Conversations owns lookup/projection. Preserve tool key, parameters, permissions and workflow eligibility; output fields are additive. No new Action or parallel search operation.\nAcceptance: every returned message representation includes the same domain-provided author/time while content remains unchanged.",
+  "id": "zaq-zqq.7",
+  "labels": [],
+  "parent": "zaq-zqq",
+  "priority": 2,
+  "status": "open",
+  "title": "[#834] Preserve attribution and timestamps in both history search representations",
+  "type": "task",
+  "updated_at": "2026-10-15T21:26:35Z"
+}
