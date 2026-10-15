@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T10:25:32Z",
+  "description": "Reuse WebWidget.Endpoint callback at feea384; preserve force_ssl rewrite_on policy and remove custom Plug.call override. Pin published dependency, run existing host ingress tests, mix q and final precommit. Local-only transport normalization; no Action or agent tool.",
+  "id": "zaq-8yx",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "[836] Adopt upstream endpoint normalization callback",
+  "type": "task",
+  "updated_at": "2026-10-15T10:25:32Z"
+}
