@@ -93,6 +93,80 @@ defmodule Zaq.Channels.Web.SyncReplyTest do
              )
   end
 
+  test "dispatch exceptions expose only a correlated submission error", %{delivery: delivery} do
+    assert %Response{
+             protocol_version: 2,
+             request_id: "request",
+             conversation_id: "chat",
+             type: :error,
+             message_id: nil,
+             payload: %{code: :dispatch_error} = payload
+           } =
+             SyncReply.run(
+               delivery,
+               "request",
+               fn _ -> raise "private dispatch exception" end,
+               1_000
+             )
+
+    refute inspect(payload) =~ "private dispatch exception"
+    refute_received {:web_response, _, _}
+  end
+
+  test "dispatch throws expose only a correlated submission error", %{delivery: delivery} do
+    assert %Response{
+             protocol_version: 2,
+             request_id: "request",
+             conversation_id: "chat",
+             type: :error,
+             message_id: nil,
+             payload: %{code: :dispatch_error} = payload
+           } =
+             SyncReply.run(
+               delivery,
+               "request",
+               fn _ -> throw({:private_failure, "secret"}) end,
+               1_000
+             )
+
+    refute inspect(payload) =~ "secret"
+    refute_received {:web_response, _, _}
+  end
+
+  test "a killed dispatch worker reports a correlated submission error", %{delivery: delivery} do
+    parent = self()
+
+    task =
+      Task.async(fn ->
+        SyncReply.run(
+          delivery,
+          "request",
+          fn _ ->
+            send(parent, {:dispatch_worker, self()})
+
+            receive do
+              :continue -> :ok
+            end
+          end,
+          2_000
+        )
+      end)
+
+    assert_receive {:dispatch_worker, worker}
+    Process.exit(worker, :kill)
+
+    assert %Response{
+             protocol_version: 2,
+             request_id: "request",
+             conversation_id: "chat",
+             type: :error,
+             message_id: nil,
+             payload: %{code: :dispatch_error}
+           } = Task.await(task, 1_000)
+
+    refute_received {:web_response, _, _}
+  end
+
   defp publish(delivery, request_id, type, payload) do
     {:ok, response} =
       Response.new(%{

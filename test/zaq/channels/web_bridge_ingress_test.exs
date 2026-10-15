@@ -48,6 +48,31 @@ defmodule Zaq.Channels.WebBridgeIngressTest do
   end
 
   describe ":web_ingress" do
+    test "returns unsupported when the configured web bridge is unavailable" do
+      actor = %{user_id: 42}
+      assert {:ok, context} = Context.new(actor, consumer: :bo)
+
+      assert {:ok, command} =
+               Command.new(%{request_id: "unsupported-1", type: :conversation_init})
+
+      event =
+        Event.new(%{payload: command, context: context}, :channels,
+          actor: actor,
+          opts: [action: :web_ingress, web_bridge_module: Zaq.Channels.NotLoadedWebBridge]
+        )
+
+      assert Api.handle_event(event, :web_ingress, nil).response == {:error, :unsupported}
+      refute_received {:engine_conversation_event, _}
+    end
+
+    test "rejects a missing or wrong-shaped ingress payload" do
+      assert Api.handle_event(Event.new(%{payload: nil}, :channels), :web_ingress, nil).response ==
+               {:error, :invalid_web_ingress}
+
+      assert Api.handle_event(Event.new(%{payload: %{}}, :channels), :web_ingress, nil).response ==
+               {:error, :invalid_web_ingress}
+    end
+
     test "BO client dispatches through the Channels role instead of invoking WebBridge" do
       actor = %{user_id: 42, person: %{id: 7, full_name: "Ada", team_ids: []}}
 

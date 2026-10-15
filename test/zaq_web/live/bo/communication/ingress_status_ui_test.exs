@@ -18,6 +18,41 @@ defmodule ZaqWeb.Live.BO.Communication.IngressStatusUITest do
     refute inspect(second) =~ "private diagnostic"
   end
 
+  test "collection sanitizes thrown values while preserving connector identity" do
+    configs = [%{id: 3, name: "Throwing connector"}]
+
+    assert [result] =
+             IngressStatusUI.collect(configs, fn _config ->
+               throw("private diagnostic")
+             end)
+
+    assert result.id == 3
+    assert result.name == "Throwing connector"
+    assert result.status == %{status: :unknown, summary: "Readiness check unavailable"}
+    refute inspect(result) =~ "private diagnostic"
+  end
+
+  test "collection preserves connector identity when a task exits" do
+    Process.flag(:trap_exit, true)
+
+    expected_id = 4
+    expected_name = "Exiting connector"
+    configs = [%{id: expected_id, name: expected_name}]
+
+    result =
+      IngressStatusUI.collect(configs, fn _config ->
+        Process.exit(self(), :kill)
+      end)
+
+    assert result == [
+             %{
+               id: expected_id,
+               name: expected_name,
+               status: %{status: :unknown, summary: "Readiness check unavailable"}
+             }
+           ]
+  end
+
   test "unknown connector health stays unknown in mixed-provider aggregation" do
     connectors = [
       %{id: 1, status: %{status: :ok}},
@@ -28,6 +63,24 @@ defmodule ZaqWeb.Live.BO.Communication.IngressStatusUITest do
     assert IngressStatusUI.label(%{status: :unknown}) == "Unknown"
     assert IngressStatusUI.tone(%{status: :unknown}) == :neutral
     assert IngressStatusUI.label(%{status: :disabled}) == "Disabled"
+  end
+
+  test "error status has unavailable label and danger tone" do
+    assert IngressStatusUI.label(%{status: :error}) == "Unavailable"
+    assert IngressStatusUI.tone(%{status: :error}) == :danger
+  end
+
+  test "multiple healthy connectors aggregate as healthy" do
+    connectors = [
+      %{id: 1, status: %{status: :ok}},
+      %{id: 2, status: %{status: "ok"}}
+    ]
+
+    assert IngressStatusUI.aggregate(connectors) == %{
+             status: :ok,
+             summary: "2/2 connectors healthy",
+             connectors: connectors
+           }
   end
 
   test "local verification uses the common label and preserves verification details" do

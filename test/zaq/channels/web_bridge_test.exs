@@ -191,4 +191,17 @@ defmodule Zaq.Channels.WebBridgeTest do
 
     refute_receive {:web_response, _, _}
   end
+
+  test "rejects malformed delivery references without publishing" do
+    context = %RoutingContext{attributes: %{"web_delivery" => %{invalid: true}}}
+
+    assert {:error, :invalid_delivery_descriptor} =
+             WebBridge.upsert_message(
+               %{},
+               %{request_id: "r1", body: "answer", routing_context: context},
+               %{}
+             )
+
+    refute_receive {:web_response, _, _}
+  end
 end

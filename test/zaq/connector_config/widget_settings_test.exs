@@ -115,4 +115,24 @@ defmodule Zaq.ConnectorConfig.WidgetSettingsTest do
              ]
            }
   end
+
+  test "validation errors cover malformed settings and invalid origin values" do
+    for settings <- [nil, []] do
+      assert WidgetSettings.validation_errors(settings) == %{
+               "settings" => ["Widget settings must be a map."]
+             }
+    end
+
+    for origin <- [nil, "https://" <> String.duplicate("a", 2_041)] do
+      settings = %{"allowed_domains" => [origin]}
+
+      assert WidgetSettings.validation_errors(settings) == %{
+               "allowed_domains" => [
+                 "Enter an exact HTTP(S) origin, for example https://example.com."
+               ]
+             }
+
+      assert {:error, :invalid_widget_settings} = WidgetSettings.validate(settings)
+    end
+  end
 end

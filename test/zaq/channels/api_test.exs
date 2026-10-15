@@ -140,6 +140,54 @@ defmodule Zaq.Channels.ApiTest do
     assert_received {:room_members, "discord", "room-1"}
   end
 
+  defmodule StubRoomCapabilitiesErrorBridge do
+    def room_capabilities(config, channel_id, _opts) do
+      send(self(), {:room_capabilities_error, config.provider, channel_id})
+      {:error, :provider_unavailable}
+    end
+  end
+
+  test "room membership propagates capability errors without requesting members" do
+    config = insert_config("discord")
+
+    event =
+      Event.new(%{channel_config_id: config.id, channel_id: "room-1"}, :channels,
+        opts: [
+          action: :channel_room_members,
+          communication_bridge_module: StubRoomCapabilitiesErrorBridge
+        ]
+      )
+
+    assert Api.handle_event(event, :channel_room_members, nil).response ==
+             {:error, :provider_unavailable}
+
+    assert_received {:room_capabilities_error, "discord", "room-1"}
+    refute_received {:room_members, _, _}
+  end
+
+  test "room membership rejects a disabled connector without bridge calls" do
+    config = insert_config("discord", %{enabled: false})
+
+    event =
+      Event.new(%{channel_config_id: config.id, channel_id: "room-1"}, :channels,
+        opts: [
+          action: :channel_room_members,
+          communication_bridge_module: StubCommunicationBridge
+        ]
+      )
+
+    assert Api.handle_event(event, :channel_room_members, nil).response == {:error, :unsupported}
+    refute_received {:room_capabilities, _, _}
+    refute_received {:room_members, _, _}
+  end
+
+  test "rejects a non-list attachment batch without hydration" do
+    event = Event.new(%{attachments: "invalid"}, :channels, opts: [confidential: true])
+
+    assert Api.handle_event(event, :hydrate_attachments, nil).response ==
+             {:error, :invalid_attachment_batch}
+  end
+
   defmodule StubCommunicationBridgeConfigError do
     def bridge_for(_provider), do: Zaq.Channels.ApiTest.StubBridgeImpl
     def bridge_for(provider, _opts), do: bridge_for(provider)
@@ -425,6 +473,11 @@ defmodule Zaq.Channels.ApiTest do
       {:ok, %{status: "unwatched"}}
     end
 
+    def unwatch_archived_item(provider, params) do
+      send(self(), {:ds_unwatch_archived_item, provider, params})
+      {:ok, %{status: "archived_unwatched"}}
+    end
+
     def create_file(provider, params, context) do
       send(self(), {:ds_create_file, provider, params, context})
       {:ok, %{status: "created", record: %{"id" => "f1"}}}
@@ -614,6 +667,25 @@ defmodule Zaq.Channels.ApiTest do
     assert %{delivered_outgoing | metadata: %{}} == outgoing
   end
 
+  test "deliver_outgoing rejects an invalid connector id before bridge delivery" do
+    outgoing = %Outgoing{
+      body: "ok",
+      channel_id: "c1",
+      provider: :mattermost,
+      routing_context: %RoutingContext{channel_config_id: "bad"}
+    }
+
+    event =
+      Event.new(outgoing, :channels,
+        opts: [action: :deliver_outgoing, bridge_module: StubCommunicationBridge]
+      )
+
+    assert Api.handle_event(event, :deliver_outgoing, nil).response ==
+             {:error, :invalid_connector_id}
+
+    refute_received {:bridge_send_reply, _, _}
+  end
+
   test "final channel delivery reports transport timeout even when the outgoing answer exists" do
     config = insert_config(:mattermost)
 
@@ -750,6 +822,38 @@ defmodule Zaq.Channels.ApiTest do
                      %{url: "https://example.test", token: "token"}}
 
     assert Map.take(bridged_request, Map.keys(request)) == request
+  end
+
+  test "upsert_message rejects an invalid connector id before bridge upsert" do
+    outgoing = %Outgoing{
+      body: "partial",
+      channel_id: "c1",
+      provider: :mattermost,
+      metadata: %{request_id: "r-invalid-connector"},
+      routing_context: %RoutingContext{channel_config_id: "bad"}
+    }
+
+    event =
+      Event.new(outgoing, :channels,
+        opts: [action: :upsert_message, bridge_module: StubCommunicationBridge]
+      )
+
+    assert Api.handle_event(event, :upsert_message, nil).response ==
+             {:error, :invalid_connector_id}
+
+    refute_received {:bridge_upsert_message, _, _, _}
+  end
+
+  test "rejects upsert_message when the event has no upsert payload" do
+    event =
+      Event.new(:not_an_upsert, :channels,
+        opts: [action: :upsert_message, bridge_module: StubCommunicationBridge]
+      )
+
+    assert Api.handle_event(event, :upsert_message, nil).response ==
+             {:error, {:invalid_request, :missing_upsert_payload}}
+
+    refute_received {:bridge_upsert_message, _, _, _}
   end
 
   test "status upsert selects the same provider connector as its request" do
@@ -1164,6 +1268,23 @@ defmodule Zaq.Channels.ApiTest do
 
     assert result.response == {:ok, %{status: "unwatched"}}
     assert_received {:ds_unwatch_item, :google_drive, ^params}
+  end
+
+  test "handles data_source_unwatch_archived_item action" do
+    params = %{"channel_id" => "watch-archived", "resource_id" => "resource-archived"}
+
+    event =
+      Event.new(%{provider: :google_drive, params: params}, :channels,
+        opts: [
+          action: :data_source_unwatch_archived_item,
+          data_source_bridge_module: StubDataSourceBridge
+        ]
+      )
+
+    assert Api.handle_event(event, :data_source_unwatch_archived_item, nil).response ==
+             {:ok, %{status: "archived_unwatched"}}
+
+    assert_received {:ds_unwatch_archived_item, :google_drive, ^params}
   end
 
   test "handles data_source_create_file action" do
@@ -1639,6 +1760,26 @@ defmodule Zaq.Channels.ApiTest do
     assert_received {:comm_handle_webhook, "slack", ^payload}
   end
 
+  test "rejects an invalid conversation webhook connector id without dispatching" do
+    payload = %{"event" => "message"}
+
+    event =
+      Event.new(
+        %{type: "conversation", provider: "slack", config_id: "42", payload: payload},
+        :channels,
+        opts: [
+          action: :webhook_delivered,
+          communication_bridge_module: StubCommunicationWebhookBridge
+        ]
+      )
+
+    assert Api.handle_event(event, :webhook_delivered, nil).response ==
+             {:error, :invalid_connector_id}
+
+    refute_received {:comm_handle_scoped_webhook, _, _, _}
+    refute_received {:comm_handle_webhook, _, _}
+  end
+
   test "forwards connector-scoped conversation webhook without using provider-only handler" do
     payload = %{"path" => "/channels/webhook/conversation/slack/42"}
 
@@ -1902,6 +2043,28 @@ defmodule Zaq.Channels.ApiTest do
 
     result = Api.handle_event(event, :fetch_profile, nil)
     assert result.response == {:error, :unsupported}
+  end
+
+  test "fetch_profile accepts a nil connector id and rejects an invalid one" do
+    nil_id =
+      Event.new(%{provider: :mattermost, author_id: "user-1", channel_config_id: nil}, :channels,
+        opts: [action: :fetch_profile, bridge_module: StubCommunicationBridge]
+      )
+
+    assert Api.handle_event(nil_id, :fetch_profile, nil).response == {:ok, %{id: "user-1"}}
+    assert_received {:bridge_fetch_profile, "user-1", %{provider: :mattermost}}
+
+    invalid_id =
+      Event.new(
+        %{provider: :mattermost, author_id: "user-1", channel_config_id: "bad"},
+        :channels,
+        opts: [action: :fetch_profile, bridge_module: StubCommunicationBridge]
+      )
+
+    assert Api.handle_event(invalid_id, :fetch_profile, nil).response ==
+             {:error, :invalid_connector_id}
+
+    refute_received {:bridge_fetch_profile, _, _}
   end
 
   test "fetch_profile returns no_bridge when bridge missing" do

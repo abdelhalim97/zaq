@@ -193,6 +193,25 @@ defmodule Zaq.Agent.ExecutorTest do
     def dispatch(%Zaq.Event{} = event), do: %{event | response: :ok}
   end
 
+  defmodule MalformedAdmissionRouter do
+    def dispatch(%Zaq.Event{opts: [action: :admit_execution, confidential: true]} = event),
+      do: %{event | response: {:ok, %{kind: :unexpected}}}
+
+    def dispatch(%Zaq.Event{} = event), do: %{event | response: :ok}
+  end
+
+  defmodule AdmissionMustNotAskFactory do
+    def ask_with_config(_server, _content, _configured_agent, _opts),
+      do: send(self(), :unexpected_factory_ask)
+  end
+
+  defmodule DirectBusyFactory do
+    def ask_with_config(runtime, _content, _configured_agent, _opts) do
+      send(self(), {:direct_busy_factory_called, runtime})
+      {:error, {:rejected, :busy}}
+    end
+  end
+
   defmodule NativeFailureFactory do
     def ask_with_config(_server, _content, _agent, _opts) do
       {:ok,
@@ -680,6 +699,49 @@ defmodule Zaq.Agent.ExecutorTest do
   end
 
   describe "coverage gaps" do
+    test "malformed confidential execution admission fails closed before factory creation" do
+      outgoing =
+        Executor.run(@incoming,
+          agent_id: "stub",
+          agent_module: CoverageStubAgent,
+          server_manager_module: CoverageStubServerManager,
+          factory_module: AdmissionMustNotAskFactory,
+          status_module: CoverageStubStatus,
+          node_router: MalformedAdmissionRouter,
+          event: Keyword.fetch!(@base_opts, :event),
+          conversation_binding: %{
+            conversation_id: Ecto.UUID.generate(),
+            user_message_id: Ecto.UUID.generate(),
+            execution_id: Ecto.UUID.generate(),
+            finalization_token: "finalization-token"
+          }
+        )
+
+      assert outgoing.metadata.error
+      assert outgoing.metadata.reason =~ "history_unavailable"
+      refute_received {:coverage_ensure_server, _, _, _}
+      refute_received :unexpected_factory_ask
+    end
+
+    test "a direct noncanonical factory busy rejection is surfaced without stopping its runtime" do
+      outgoing =
+        Executor.run(@incoming,
+          agent_id: "stub",
+          agent_module: CoverageStubAgent,
+          server_manager_module: CoverageStubServerManager,
+          factory_module: DirectBusyFactory,
+          status_module: CoverageStubStatus,
+          node_router: StubNodeRouter,
+          event: Keyword.fetch!(@base_opts, :event)
+        )
+
+      assert outgoing.metadata.error
+      assert outgoing.metadata.reason == ":agent_execution_failed"
+      assert_received {:direct_busy_factory_called, runtime}
+      assert Process.alive?(runtime)
+      refute_received {:stopped_failed_runtime, _, _, _}
+    end
+
     test "a via name lookup exception returns a graceful runtime error" do
       outgoing =
         Executor.run(
