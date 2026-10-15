@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "zaq-zqq.7"
+  ],
   "blocks": [],
   "created": "2026-10-15T21:26:37Z",
   "description": "Source issue: https://github.com/www-zaq-ai/zaq/issues/834\nParent contract: zaq-zqq (read before implementation).\n\nFunctional specifications covered with associated files to edit/add:\nlib/zaq/agent/retrieval.ex module/function documentation; docs/services/agent.md and docs/services/engine.md plus relevant public API docs. Mark Retrieval and ask as deprecated documentation, exclude this separate generation path from attribution work, and leave existing Pipeline/diagnostics callers unchanged. Do not add a compiler deprecation warning that breaks still-supported callers under warnings-as-errors without separately agreed migration scope. Read docs/documentation.md before editing.\nTests to add before implementation: documentation-only task requires no new application tests; preserve existing Retrieval tests/behavior. Verify documented modules/APIs exist and examples match finalized projection/header shape.\nBranches/paths validated: persisted Sent at, fallback Recorded at, no fabricated time; unknown authors; merged aliases; batch ownership; no runtime refresh; no author/time refs; Factory existing Jido functions; raw-body/search representation distinctions. Document no automatic legacy author backfill.\nMocking plan: not applicable.\nDocumentations to update: the files above, adjusting earlier per-task documentation into one coherent owner contract without duplicating policy documents.\nAction reuse assessment: no new operation. Documentation describes reuse of Conversations/People/History Action/InputPrompt and Jido APIs, not a new supported Retrieval execution path.\nAcceptance: deprecated status is clear, existing code behavior remains intact, and docs accurately describe all user-approved constraints.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[#834] Document attribution contract and deprecate legacy Retrieval API",
   "type": "task",
-  "updated_at": "2026-10-15T21:26:37Z"
+  "updated_at": "2026-10-15T21:26:38Z"
 }
