@@ -6,9 +6,15 @@
   "description": "Reuse WebBridge final BO projection and Measurements/MessageHelpers; preserve latency and LLM/tool/turn counts across completion and history. Local-only response projection, no new Action or tool; widget projection remains public-only. Add parity regression; mix q and isolated tests.",
   "id": "zaq-zlg",
   "labels": [],
+  "comments": [
+    {
+      "text": "Implemented BO measurements projection and completion/history message-info parity regression including zero tool count. mix q passed; bridge suite 10 tests passed. Upstream Endpoint work pending in OpenChamber ses_ec0f8d5bbffemTXZk14F86HbbI; final validation not yet run.",
+      "timestamp": "2026-10-15T10:10:05Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[836] Preserve BO completion measurements",
   "type": "bug",
-  "updated_at": "2026-10-15T10:07:05Z"
+  "updated_at": "2026-10-15T10:10:05Z"
 }
