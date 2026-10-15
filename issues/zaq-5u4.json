@@ -6,9 +6,15 @@
   "description": "Local-only LiveView timer names; reuse existing ingress refresh for all providers, preserve behavior and adapt test event names mechanically. No new Action. Validate index LiveView tests and mix q.",
   "id": "zaq-5u4",
   "labels": [],
+  "comments": [
+    {
+      "text": "Generalized existing periodic timer/event names to ingress status; mechanically updated existing test event without changing behavior/assertions. mix q passed; widget/index LiveView suites 42 tests passed. Endpoint integration and final validation pending.",
+      "timestamp": "2026-10-15T10:10:10Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[836] Generalize ingress refresh scheduling",
   "type": "task",
-  "updated_at": "2026-10-15T10:08:47Z"
+  "updated_at": "2026-10-15T10:10:10Z"
 }
