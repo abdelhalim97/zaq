@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T21:26:32Z",
+  "description": "Source issue: https://github.com/www-zaq-ai/zaq/issues/834\nParent contract: zaq-zqq (read before implementation).\n\nFunctional specifications covered with associated files to edit/add:\nlib/zaq/agent/input_prompt.ex and factory.ex; matching input_prompt_test.exs and factory tests. InputPrompt.render_message/2 renders normalized author/time/content with the agreed text header and existing attachment handling. Quote/escape only the author name onto one line; preserve body text. Choose Sent at or Recorded at from provenance, omit absent timestamp and absent Person identifier. Use DateUtils.format_ts/1; never call utc_now to invent message time. Preserve native system/tool roles and tool-call pairing; do not wrap tool payloads merely to repeat identity.\nFactory.runtime_system_prompt/2 composes one explanatory instruction with configured job and skill index. Existing build_runtime_config and ensure_system_prompt/2 -\u003e Jido.AI.set_system_prompt/3 handle initial/warm prompt configuration. No new transport/update mechanism or configured-agent special case.\nTests to add before implementation: exact headers, empty/attachment-only bodies, quotes/newlines/control-like strings/Unicode in names, no time, source/recorded time, name/body separation property tests, preserved attachment handles, Factory job/skills/system override composition and no duplicated instruction. Verify native tool-call structure remains intact.\nBranches/paths validated: known/unknown human, assistant name/fallback, supplied raw message containing header-like text. Avoid duplicate rendering by call-path ownership, not heuristic parsing of user content. Token budgeting receives formatted text naturally; no RequestTransformer rendering changes.\nMocking plan: pure renderer tests and real Factory/Jido integration; only provider transport mocked.\nDocumentations to update: InputPrompt/Factory moduledocs and docs/services/agent.md explaining header semantics, timestamp provenance and user-controlled text not being authority.\nAction reuse assessment: extend existing InputPrompt presentation and Factory lifecycle. Local-only formatter with no database, permissions or side effects; reuse Jido system-prompt API. No new Action/tool.\nAcceptance: one formatter and one existing prompt configuration flow cover all configured agents.",
+  "id": "zaq-zqq.5",
+  "labels": [],
+  "parent": "zaq-zqq",
+  "priority": 2,
+  "status": "open",
+  "title": "[#834] Add compact message renderer and Factory prompt integration",
+  "type": "task",
+  "updated_at": "2026-10-15T21:26:32Z"
+}
