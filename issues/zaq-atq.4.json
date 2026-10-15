@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T07:16:44Z",
+  "description": "Implement full per-file test-coverage-planner handoff for bridge-client, after parent overlap review. Additive tests only; preserve existing expectations and config/dev.exs. General planner owns scenario design, mini-worker owns implementation; parent reviews and serializes validation. Action reuse: not applicable — no operation changes. Report naturally unreachable branches instead of adding production hooks.",
+  "id": "zaq-atq.4",
+  "labels": [],
+  "parent": "zaq-atq",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-atq] Add bridge-client missed-line tests",
+  "type": "task",
+  "updated_at": "2026-10-15T07:16:44Z"
+}
