@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [
     "zaq-atq.1",
+    "zaq-atq.10",
     "zaq-atq.2",
     "zaq-atq.3",
     "zaq-atq.4",
@@ -21,5 +22,5 @@
   "status": "open",
   "title": "[zaq-atq] Review quality and targeted coverage",
   "type": "task",
-  "updated_at": "2026-10-15T07:17:02Z"
+  "updated_at": "2026-10-15T07:17:03Z"
 }
