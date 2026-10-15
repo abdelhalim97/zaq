@@ -9,9 +9,15 @@
   "id": "zaq-atq.16",
   "labels": [],
   "parent": "zaq-atq",
+  "comments": [
+    {
+      "text": "Seven new focused tests pass. Line 145 requires ID-less config but real Bridge paths return persisted configs with IDs; no production seam added.",
+      "timestamp": "2026-10-15T07:29:56Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-atq] Add communication-bridge missed-line tests",
   "type": "task",
-  "updated_at": "2026-10-15T07:28:49Z"
+  "updated_at": "2026-10-15T07:29:56Z"
 }
