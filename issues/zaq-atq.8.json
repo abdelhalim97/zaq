@@ -17,11 +17,15 @@
     {
       "text": "Review detected swallowed Mox unexpected-call failures in otherwise-normal save fixtures. Worker added explicit successful save expectations and runtime assertions; follow-up review found added snapshot also needs its own capability expectation. Correction delegated before acceptance.",
       "timestamp": "2026-10-15T07:31:36Z"
+    },
+    {
+      "text": "Final review correction verified: explicit expectations cover both creation dispatches plus final capability snapshot; normal save outcomes asserted synced and snapshot capabilities available. All 10 isolated tests pass.",
+      "timestamp": "2026-10-15T07:33:41Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-atq] Add widget-connector-settings missed-line tests",
   "type": "task",
-  "updated_at": "2026-10-15T07:31:36Z"
+  "updated_at": "2026-10-15T07:33:41Z"
 }
