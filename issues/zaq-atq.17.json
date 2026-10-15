@@ -24,9 +24,15 @@
   "id": "zaq-atq.17",
   "labels": [],
   "parent": "zaq-atq",
+  "comments": [
+    {
+      "text": "First mix q failed (exit10): alias suggestions in web_widget_live_coverage_test:158 and web_bridge_adapter_failures_test:155,159; nesting3/max2 and complexity13/max9 in web_bridge_widget_failures_test.Router.dispatch:10,29. Detailed behavior-preserving alias/helper-extraction plan delegated to mini-worker, no lint suppression. Formatting only changed test files; config/dev.exs SHA1 preserved.",
+      "timestamp": "2026-10-15T07:37:53Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-atq] Review quality and targeted coverage",
   "type": "task",
-  "updated_at": "2026-10-15T07:17:08Z"
+  "updated_at": "2026-10-15T07:37:53Z"
 }
