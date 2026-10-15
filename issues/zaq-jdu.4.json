@@ -3,7 +3,9 @@
   "blocked_by": [
     "zaq-jdu.3"
   ],
-  "blocks": [],
+  "blocks": [
+    "zaq-jdu.5"
+  ],
   "created": "2026-10-15T16:00:58Z",
   "description": "Await explicit approval of implemented reload-during-processing, cross-tab delivery and processing indicator before new E2E authoring.",
   "id": "zaq-jdu.4",
@@ -13,5 +15,5 @@
   "status": "open",
   "title": "[zaq-jdu] Human UX approval for reconnect recovery",
   "type": "task",
-  "updated_at": "2026-10-15T16:01:13Z"
+  "updated_at": "2026-10-15T16:01:14Z"
 }
