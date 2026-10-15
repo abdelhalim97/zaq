@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T21:26:39Z",
+  "description": "Source issue: https://github.com/www-zaq-ai/zaq/issues/834\nParent contract: zaq-zqq (read before implementation).\n\nFunctional specifications covered with associated files to edit/add:\nFinal review of all #834 production/test/docs changes. No speculative production changes in this task; any discovered correction must be tracked with tests and approval gates as applicable. Record commands/results and exceptions in Beadwork and eventual PR.\nTests to add before implementation: downstream tasks must already have tests first. Verify coverage matrix includes live, queued, steering, canonical/legacy restore, both search forms, timestamps/provenance, trust failures, merge/missing identity, property invariants and provider-boundary payloads. Add reproductions for any discovered gap before its fix. No new browser E2E planned because there is no UI change; reassess if scope expands.\nBranches/paths validated: preserve native tool exchange, attachments, existing history isolation/cursors/permissions, raw persistence/admission, and common lookup/formatting. Verify no fresh message timestamps, runtime rename-refresh, author/time refs, RequestTransformer renderer, or legacy Retrieval migration slipped in.\nMocking plan: only external APIs; real domain/Repo/runtime integration.\nDocumentations to update: Beadwork validation notes and PR summary linking #834; record explicit existing-test approval evidence.\nAction reuse assessment: final review must verify shared People lookup, Conversations projections, existing History Action, shared InputPrompt and Factory/Jido prompt path; no duplicated operations or bypassed permission/service boundaries.\nValidation: issue-level isolated tests and mix q after each implementation issue. After implementation and review approval, follow dedicated coverage phase (fresh mix coveralls.json, timeout 600000 ms, then mix coverup only on success; approved coverage tooling as available). Run final mix precommit with 900000 ms timeout after all corrections/coverage; repeat required checks after changes. Record blockers instead of claiming success.\nAcceptance: prepare PR referencing/closes #834 only when implementation is verified; link that PR to the session. Obtain final human approval after gates pass. Commit/push/merge only with explicit authorization, never directly to main. This planning session must not mark implementation complete.",
+  "id": "zaq-zqq.9",
+  "labels": [],
+  "parent": "zaq-zqq",
+  "priority": 2,
+  "status": "open",
+  "title": "[#834] Validate review coverage and prepare authorized landing",
+  "type": "task",
+  "updated_at": "2026-10-15T21:26:39Z"
+}
