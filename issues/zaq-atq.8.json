@@ -13,11 +13,15 @@
     {
       "text": "Implemented 10 tests, isolated pass. Planner reachability exceptions: line 65 requires nonbinary stored base URL incompatible with string storage; line 177 unsaved persist_key branch is blocked by public existing-connector lookup.",
       "timestamp": "2026-10-15T07:29:53Z"
+    },
+    {
+      "text": "Review detected swallowed Mox unexpected-call failures in otherwise-normal save fixtures. Worker added explicit successful save expectations and runtime assertions; follow-up review found added snapshot also needs its own capability expectation. Correction delegated before acceptance.",
+      "timestamp": "2026-10-15T07:31:36Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-atq] Add widget-connector-settings missed-line tests",
   "type": "task",
-  "updated_at": "2026-10-15T07:29:53Z"
+  "updated_at": "2026-10-15T07:31:36Z"
 }
