@@ -57,6 +57,53 @@ defmodule Zaq.Channels.WebBridgeTest do
                     }}
   end
 
+  test "BO completion preserves the message information available after reload", %{
+    routing_context: context
+  } do
+    alias ZaqWeb.Live.BO.Communication.MessageHelpers
+
+    measurements = %{
+      "latency_ms" => 1250,
+      "llm_call_count" => 2,
+      "tool_call_count" => 0,
+      "turn_count" => 2
+    }
+
+    metadata = %{
+      request_id: "measurements-request",
+      measurements: measurements,
+      prompt_tokens: 100,
+      completion_tokens: 20,
+      total_tokens: 120,
+      trace: []
+    }
+
+    outgoing = %Outgoing{
+      body: "answer",
+      provider: :web,
+      channel_id: "bo",
+      routing_context: context,
+      metadata: metadata
+    }
+
+    assert {:ok, %{delivered: true}} = WebBridge.send_reply(outgoing, %{})
+    assert_receive {:web_response, :pipeline_result, %Response{payload: payload}}
+
+    live_info = MessageHelpers.message_info_from_runtime(payload)
+
+    persisted_info =
+      MessageHelpers.message_info_from_message(%{
+        metadata: %{"measurements" => measurements},
+        prompt_tokens: 100,
+        completion_tokens: 20,
+        total_tokens: 120,
+        trace: []
+      })
+
+    assert live_info == persisted_info
+    assert Map.take(live_info.measurements, Map.keys(measurements)) == measurements
+  end
+
   test "streaming upsert preserves atom stage and replacement intent", %{routing_context: context} do
     request = %{
       request_id: "r1",

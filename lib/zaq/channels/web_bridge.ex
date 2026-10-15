@@ -1143,6 +1143,7 @@ defmodule Zaq.Channels.WebBridge do
       agent: metadata_value(metadata, :agent),
       model: metadata_value(metadata, :model),
       latency_ms: metadata_value(metadata, :latency_ms),
+      measurements: metadata_value(metadata, :measurements) || %{},
       prompt_tokens: metadata_value(metadata, :prompt_tokens),
       completion_tokens: metadata_value(metadata, :completion_tokens),
       total_tokens: metadata_value(metadata, :total_tokens),

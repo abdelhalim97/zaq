@@ -262,7 +262,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLiveTest do
     )
 
     send(view.pid, :refresh_widget_statuses)
-    send(list.pid, :refresh_widget_ingress_statuses)
+    send(list.pid, :refresh_ingress_statuses)
     render_async(view, 5_000)
     render_async(list, 5_000)
     assert has_element?(view, "#widget-health-#{config.id}", "Unknown")

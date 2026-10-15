@@ -133,7 +133,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
      |> assign(:ingress_status_loading, ingress_status_loading(configured_providers))
      |> assign(:ingress_status_refresh_attempts, 0)
      |> assign(:ingress_status_modal, nil)
-     |> assign(:widget_refresh_timer, nil)
+     |> assign(:ingress_refresh_timer, nil)
      |> schedule_ingress_status_refresh(configured_providers)}
   end
 
@@ -143,7 +143,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
      socket
      |> IngressStatusUI.apply_async_result(result)
      |> maybe_schedule_pending_ingress_status_refresh()
-     |> schedule_widget_status_refresh()}
+     |> schedule_periodic_ingress_status_refresh()}
   end
 
   @impl true
@@ -151,9 +151,9 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
     {:noreply, retry_ingress_status_refresh(socket)}
   end
 
-  def handle_info(:refresh_widget_ingress_statuses, socket) do
-    if socket.assigns.widget_refresh_timer,
-      do: Process.cancel_timer(socket.assigns.widget_refresh_timer)
+  def handle_info(:refresh_ingress_statuses, socket) do
+    if socket.assigns.ingress_refresh_timer,
+      do: Process.cancel_timer(socket.assigns.ingress_refresh_timer)
 
     configured = configured_retrieval_providers()
 
@@ -161,7 +161,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
       socket
       |> assign(:configured_ingress_providers, configured)
       |> assign(:stats, compute_stats())
-      |> assign(:widget_refresh_timer, nil)
+      |> assign(:ingress_refresh_timer, nil)
 
     {:noreply, retry_ingress_status_refresh(socket)}
   end
@@ -422,11 +422,11 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
     )
   end
 
-  defp schedule_widget_status_refresh(socket) do
+  defp schedule_periodic_ingress_status_refresh(socket) do
     if connected?(socket) and socket.assigns.service_available and
-         is_nil(socket.assigns.widget_refresh_timer) do
-      timer = Process.send_after(self(), :refresh_widget_ingress_statuses, 15_000)
-      assign(socket, :widget_refresh_timer, timer)
+         is_nil(socket.assigns.ingress_refresh_timer) do
+      timer = Process.send_after(self(), :refresh_ingress_statuses, 15_000)
+      assign(socket, :ingress_refresh_timer, timer)
     else
       socket
     end

@@ -6,19 +6,15 @@ defmodule ZaqWeb.Endpoint do
 
   # Endpoint-owned ingress normalization must precede adapter cookie/socket guards.
   # The backend must be isolated behind ingress that overwrites forwarded headers.
-  defoverridable call: 2
-
-  @impl Plug
-  def call(conn, opts) do
+  @impl WebWidget.Endpoint
+  def web_widget_normalize(conn) do
     rewrite_on =
       case config(:force_ssl) do
         options when is_list(options) -> Keyword.get(options, :rewrite_on, [])
         _ -> []
       end
 
-    conn
-    |> Plug.RewriteOn.call(Plug.RewriteOn.init(rewrite_on))
-    |> super(opts)
+    Plug.RewriteOn.call(conn, Plug.RewriteOn.init(rewrite_on))
   end
 
   # The session will be stored in the cookie and signed,
