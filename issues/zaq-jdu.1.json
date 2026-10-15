@@ -9,9 +9,15 @@
   "id": "zaq-jdu.1",
   "labels": [],
   "parent": "zaq-jdu",
+  "comments": [
+    {
+      "text": "ZAQ private binding implemented: Engine init adds resolved Person internally, WebBridge returns server-only response/delivery envelope with connector+Person topic; public payload excludes binding/Person/topic; all adapter ingress/internal channel events confidential. Property tests verify recipient/connector separation and alias sender IDs resolving to same Person. mix q passed; 50 focused tests incl 3 properties passed. Widget project dispatched via OpenChamber ses_ebfb14437ffeVUfBBcZDCG7SDf on user's request, Build/current branch explicitly authorized. Await package implementation/review before dependency pin or closing issue.",
+      "timestamp": "2026-10-15T16:13:01Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-jdu] Bind widget delivery to ZAQ-resolved recipient",
   "type": "task",
-  "updated_at": "2026-10-15T16:01:15Z"
+  "updated_at": "2026-10-15T16:13:01Z"
 }
