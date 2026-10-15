@@ -9,9 +9,15 @@
   "id": "zaq-atq.9",
   "labels": [],
   "parent": "zaq-atq",
+  "comments": [
+    {
+      "text": "Implemented 10 passing LiveView tests including direct async failure, unavailable IDs, key/stale errors, invalid domains/agent, runtime warning, installation errors and policy hints. Parent review required explicit runtime cleanup, timer try/after, and removing unused expressions; corrected and retested. Exceptions: real NodeRouter agent-list/non-Event/rescue/catch failure seams (452-453,481,484-486) absent; selection_required modal state (571-572) not reachable from valid UI events.",
+      "timestamp": "2026-10-15T07:33:40Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-atq] Add web-widget-live missed-line tests",
   "type": "task",
-  "updated_at": "2026-10-15T07:28:43Z"
+  "updated_at": "2026-10-15T07:33:40Z"
 }
