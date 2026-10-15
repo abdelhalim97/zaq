@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T16:00:46Z",
+  "description": "After binding: test-first Chat accepts authorized first edit/terminal, keeps conversation and message consistency, local receipt correlation, history dedup and terminal monotonicity. Extend read-only Agent boundary using RequestControl/Factory, authorized actor and canonical input correlation; no execution snapshot store, no Conversations edits. Cover idle/active/unknown, steering, finalization and queued recovery events. Existing behavior changes explicitly approved by user. Protocol docs and focused tests per issue.",
+  "id": "zaq-jdu.2",
+  "labels": [],
+  "parent": "zaq-jdu",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-jdu] Recover authorized cross-page responses and processing",
+  "type": "task",
+  "updated_at": "2026-10-15T16:00:46Z"
+}
