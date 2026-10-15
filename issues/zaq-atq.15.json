@@ -9,9 +9,15 @@
   "id": "zaq-atq.15",
   "labels": [],
   "parent": "zaq-atq",
+  "comments": [
+    {
+      "text": "Both edited API/ingress files pass: 121 tests. Reachability exceptions: 962-963 outside concrete OutboundHttp contract; 1076 nil result excluded by Bridge fetch contract; 1135 malformed keyword opts excluded by Event contract.",
+      "timestamp": "2026-10-15T07:29:55Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-atq] Add channels-api missed-line tests",
   "type": "task",
-  "updated_at": "2026-10-15T07:28:49Z"
+  "updated_at": "2026-10-15T07:29:55Z"
 }
