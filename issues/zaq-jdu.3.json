@@ -11,9 +11,15 @@
   "id": "zaq-jdu.3",
   "labels": [],
   "parent": "zaq-jdu",
+  "comments": [
+    {
+      "text": "Added real installed-package reload regression to widget_host_integration_test: held native answer; close old authenticated Chat; initialize new page/proof/session in separate process, same Person topic and processing indicator; original completion must appear once. Expected red against old compiled dependency at initialization (new private envelope unsupported). Waiting for dispatched web_widget Build session, review its implementation first, then replace provisional dependency edits with reviewed revision and pin. Final precommit/coverage not yet run; do not mark complete or merge.",
+      "timestamp": "2026-10-15T16:27:57Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-jdu] Validate and integrate widget reconnect dependency",
   "type": "task",
-  "updated_at": "2026-10-15T16:01:13Z"
+  "updated_at": "2026-10-15T16:27:57Z"
 }
