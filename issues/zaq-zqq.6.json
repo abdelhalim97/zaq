@@ -12,8 +12,8 @@
   "labels": [],
   "parent": "zaq-zqq",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[#834] Wire normalized presentation into immediate queued and restored inputs",
   "type": "task",
-  "updated_at": "2026-10-15T21:26:36Z"
+  "updated_at": "2026-10-15T21:47:01Z"
 }
