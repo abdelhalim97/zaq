@@ -923,20 +923,10 @@ defmodule Zaq.Channels.WebBridge do
     started = Helper.present?(metadata_value(metadata, :status_message_id))
     failed = metadata_value(metadata, :error) == true
 
-    if failed and not started do
-      with :ok <-
-             widget_event(
-               delivery,
-               metadata_value(metadata, :request_id),
-               :error,
-               %{code: :submission_rejected},
-               nil
-             ) do
-        {:ok, %{delivered: true}}
-      end
-    else
-      deliver_widget_answer(outgoing, delivery, started, failed)
-    end
+    # An execution can fail before its first status update (for example, during
+    # credential resolution). Preserve its public answer as a terminal message;
+    # absence of a stream does not make it a submission rejection.
+    deliver_widget_answer(outgoing, delivery, started, failed)
   end
 
   defp deliver_final(%Outgoing{} = outgoing, %Delivery{} = delivery) do

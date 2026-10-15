@@ -1,9 +1,15 @@
 defmodule Zaq.Channels.Web.WidgetDeliveryTest do
   use ExUnit.Case, async: true
 
-  alias Zaq.Channels.Web.{Delivery, Response}
+  alias Zaq.Agent.ErrorMessage
+  alias Zaq.Channels.MessageFormatter
+  alias Zaq.Channels.Web.{Delivery, Response, SyncReply}
   alias Zaq.Channels.WebBridge
   alias Zaq.Engine.Messages.{Incoming, Outgoing}
+
+  defmodule PortalUrl do
+    def credentials, do: "https://zaq.example.test/people/credentials"
+  end
 
   setup do
     topic = "widget:#{Ecto.UUID.generate()}"
@@ -88,6 +94,53 @@ defmodule Zaq.Channels.Web.WidgetDeliveryTest do
     refute_received {:web_response, "message_complete", _}
   end
 
+  test "credential failure before streaming preserves recovery text and starts a failed message",
+       %{
+         incoming: incoming
+       } do
+    reason = %{reason: :personal_credential_required}
+
+    outgoing =
+      incoming
+      |> Outgoing.from_pipeline_result(%{
+        answer: ErrorMessage.from_reason(reason),
+        error: true,
+        error_recovery: ErrorMessage.recovery_for(reason)
+      })
+      |> MessageFormatter.format_outgoing(people_portal_url_module: PortalUrl)
+
+    assert outgoing.body =~ "https://zaq.example.test/people/credentials"
+    refute outgoing.metadata[:status_message_id]
+
+    assert {:ok, %{delivered: true, confirmation: :confirmed}} =
+             WebBridge.send_reply(outgoing, %{})
+
+    assert_receive {:web_response, "typing", %Response{payload: %{active: true}}}
+
+    assert_receive {:web_response, "message_create",
+                    %Response{
+                      message_id: "assistant",
+                      request_id: "request",
+                      payload: %{body: ""}
+                    }}
+
+    assert_receive {:web_response, "typing", %Response{payload: %{active: false}}}
+
+    assert_receive {:web_response, "message_failed",
+                    %Response{
+                      message_id: "assistant",
+                      request_id: "request",
+                      conversation_id: "chat",
+                      payload: payload
+                    }}
+
+    assert payload.body == outgoing.body
+    assert payload.error
+    refute Map.has_key?(payload, :error_recovery)
+    refute_received {:web_response, "error", _}
+    refute_received {:web_response, "message_complete", _}
+  end
+
   test "activity projection never exposes reasoning or internal submission disposition", %{
     incoming: incoming
   } do
@@ -97,6 +150,30 @@ defmodule Zaq.Channels.Web.WidgetDeliveryTest do
     assert payload.label == "Retrieving information"
     refute Map.has_key?(payload, :body)
     refute Map.has_key?(payload, :execution_disposition)
+  end
+
+  test "synchronous delivery returns an early failure body instead of a submission rejection", %{
+    delivery: delivery,
+    incoming: incoming
+  } do
+    body = "Please connect your personal credentials."
+
+    dispatch = fn private_delivery ->
+      incoming =
+        put_in(
+          incoming.routing_context.attributes["web_delivery"],
+          Delivery.reference(private_delivery)
+        )
+
+      incoming
+      |> Outgoing.from_pipeline_result(%{answer: body, error: true})
+      |> WebBridge.send_reply(%{})
+    end
+
+    assert %Response{type: :message_failed, message_id: "assistant", payload: %{body: ^body}} =
+             SyncReply.run(delivery, "request", dispatch, 1_000)
+
+    refute_received {:web_response, _, _}
   end
 
   test "persistence failure ends its started stream without exposing exception details", %{
