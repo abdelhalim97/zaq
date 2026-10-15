@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T16:00:39Z",
+  "description": "Test-first Engine initialization returns internal person ID; WebBridge constructs opaque Delivery in private envelope. Adapter stores it and subscribes before sends. Reuse IdentityResolver, Delivery and Runtime subscription. Test same Person across pages, connector/person isolation, no browser leakage, failures. Edit Engine.Api, WebBridge, widget Protocol/Session/Runtime/Chat. Update protocol owners.",
+  "id": "zaq-jdu.1",
+  "labels": [],
+  "parent": "zaq-jdu",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-jdu] Bind widget delivery to ZAQ-resolved recipient",
+  "type": "task",
+  "updated_at": "2026-10-15T16:00:39Z"
+}
