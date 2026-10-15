@@ -15,11 +15,15 @@
     {
       "text": "Implementation and package reconciliation complete; exact widget0b949ca pinned; full final precommit green. Await human UX approval of refresh during processing and same-recipient multi-tab delivery before authoring planned consolidated browser regression. This is distinct from final code/merge approval; do not close this gate automatically.",
       "timestamp": "2026-10-15T17:40:26Z"
+    },
+    {
+      "text": "Human refreshed during native processing: same conversation restored, Assistant is working header visible, original answer arrived. UX gap is missing in-conversation running indicator for already-running turn. User approved presentation-only generic Preparing your answer fallback until real assistant update, without synthetic message IDs or pending-submission state. Dispatched widget session ses_ebfb14437ffeVUfBBcZDCG7SDf to implement on authorized current PR30 branch, return result for review/pin. Overall UX approval remains pending; no new feature E2E yet.",
+      "timestamp": "2026-10-15T18:19:37Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-jdu] Human UX approval for reconnect recovery",
   "type": "task",
-  "updated_at": "2026-10-15T17:40:26Z"
+  "updated_at": "2026-10-15T18:19:37Z"
 }
