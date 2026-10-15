@@ -3,7 +3,9 @@
   "blocked_by": [
     "zaq-zqq.2"
   ],
-  "blocks": [],
+  "blocks": [
+    "zaq-zqq.4"
+  ],
   "created": "2026-10-15T21:26:29Z",
   "description": "Source issue: https://github.com/www-zaq-ai/zaq/issues/834\nParent contract: zaq-zqq (read before implementation).\n\nFunctional specifications covered with associated files to edit/add:\nlib/zaq/accounts/people.ex; new lib/zaq/engine/conversations/message_author.ex; lib/zaq/engine/channel_history_projection.ex and channel_history_admin.ex for shared lookup reuse without changing unrelated BO display policy. Existing person_summaries functions already query literal IDs plus merged_person_ids. Extract lookup semantics into People. MessageAuthor collects distinct trusted references, calls one batch query and attaches structured author metadata. Keep recorded author reference stable while using retained aliases to resolve current directory name. Missing merge redirects/deleted People resolve unknown, not by guessed ownership/channel name. Assistant labels use existing trusted agent metadata where available.\nTests to add before implementation: multiple messages per author, many authors with bounded query count, aliases across merges, removed alias/deleted Person, nil/blank/Unicode names, same-name participants, distinct roles; property test preserving message-to-author mapping under arbitrary order/repetition.\nBranches/paths validated: empty batch performs no query; one finite batch avoids N+1; directory failure is not mistaken for missing Person; current names resolved on read only. Inactive historical Person presentation must not grant execution rights. Preserve BO-specific fallbacks unless explicitly approved.\nMocking plan: real People/Repo including merge fixtures; no mocked domain lookup.\nDocumentations to update: People batch lookup and MessageAuthor moduledocs; Engine directory attribution contract.\nAction reuse assessment: extend People public read API, reuse existing alias lookup implementation, keep MessageAuthor a Conversations-owned projection helper. Inputs: trusted message references and roles; outputs: finite attribution map; no write effects or new permission grants. No independently exposed agent/workflow Action. Preserve BO consumers via regression tests.\nAcceptance: all attribution consumers share one batching/lookup policy without cloning People queries in leaf consumers.",
   "id": "zaq-zqq.3",
@@ -13,5 +15,5 @@
   "status": "open",
   "title": "[#834] Provide shared batched People lookup and attribution policy",
   "type": "task",
-  "updated_at": "2026-10-15T21:26:30Z"
+  "updated_at": "2026-10-15T21:26:31Z"
 }
