@@ -2,6 +2,8 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-10-15T12:36:11Z",
+  "close_reason": "Implemented and validated transient bridge-owned profile normalization with real widget dependency; final precommit passes.",
   "created": "2026-10-15T10:55:28Z",
   "description": "Extend existing WebBridge fetch_profile adapter seam and IdentityResolver sender enrichment; reuse People.find_or_create_from_channel email/phone matching. No Incoming or Engine discovery changes. Widget session dispatched separately. Action reuse: extend IdentityResolver existing maybe_enrich/discover_person and WebBridge adapter boundary, reuse People domain operation; mapping local to bridge, no new Action/tool. Verify scoped profile lookup, discovery/linking/conflicts and normalized identity continuity.",
   "id": "zaq-pp7",
@@ -17,8 +19,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Reuse profile discovery for verified web widget senders",
   "type": "task",
-  "updated_at": "2026-10-15T12:36:06Z"
+  "updated_at": "2026-10-15T12:36:11Z"
 }
