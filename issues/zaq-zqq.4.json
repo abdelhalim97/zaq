@@ -3,7 +3,9 @@
   "blocked_by": [
     "zaq-zqq.3"
   ],
-  "blocks": [],
+  "blocks": [
+    "zaq-zqq.5"
+  ],
   "created": "2026-10-15T21:26:30Z",
   "description": "Source issue: https://github.com/www-zaq-ai/zaq/issues/834\nParent contract: zaq-zqq (read before implementation).\n\nFunctional specifications covered with associated files to edit/add:\nlib/zaq/engine/conversations.ex, conversations/message.ex, conversations/transcript_history.ex, conversations/execution_history.ex and engine/api.ex. Enrich list_messages/2 (retain Message structs), canonical projected_messages and authorized execution/admission/queue responses. Carry author, raw content, timestamp value/provenance separately. Persisted provider_sent_at wins; otherwise inserted_at means recorded time. Canonical SQL currently omits inserted_at/history_context from its projection: select only needed facts, never private metadata wholesale. Add domain-owned reads matching the legacy HistoryLoader queries, including completed-message filtering and ordering/limits, rather than forcing differently scoped reads through one incompatible query.\nTests to add before implementation: identical attribution/time for live persisted and restored message; provider versus recorded time; nil source time; multiple participants; Direct/Shared/Replicated history; legacy completed filtering; permission denial; finite batch queries; queue receipt projection.\nBranches/paths validated: admission response excludes current message from prior history but still exposes its own presentation facts through the verified boundary; source cursors and dedup remain unchanged; no new global directory/message lookup surface. Non-persisted inputs use only trusted source time and otherwise no timestamp. Directory errors propagate through established error contracts.\nMocking plan: real authorized domain/database paths and NodeRouter dispatch; external transport only if necessary.\nDocumentations to update: Conversations/TranscriptHistory/ExecutionHistory/API contracts and docs/services/engine.md. Document author and timestamp provenance fields and backward compatibility.\nAction reuse assessment: extend existing Conversations read and confidential execution operations, preserving actor/binding checks, limits, return compatibility and side effects. Do not create an attribution Action or resolve names inside agent tools. Legacy read consolidation is domain ownership, not permission broadening.\nAcceptance: every supported message read has common attributed data without modifying persisted body or creating processing-time timestamps.",
   "id": "zaq-zqq.4",
@@ -13,5 +15,5 @@
   "status": "open",
   "title": "[#834] Expose attributed message projections through Conversations boundaries",
   "type": "task",
-  "updated_at": "2026-10-15T21:26:31Z"
+  "updated_at": "2026-10-15T21:26:33Z"
 }
