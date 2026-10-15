@@ -9,9 +9,15 @@
   "id": "zaq-atq.6",
   "labels": [],
   "parent": "zaq-atq",
+  "comments": [
+    {
+      "text": "Planner reconciled all 53 supplied lines against current source. 441-442 widget arm is unreachable through public ingress routing; 927 comment and 959/1035/1047 blank. Full four-file failure plan delegated, first incomplete one-file result rejected and sent back.",
+      "timestamp": "2026-10-15T07:31:38Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-atq] Add web-bridge missed-line tests",
   "type": "task",
-  "updated_at": "2026-10-15T07:28:41Z"
+  "updated_at": "2026-10-15T07:31:38Z"
 }
