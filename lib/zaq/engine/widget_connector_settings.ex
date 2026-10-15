@@ -10,6 +10,7 @@ defmodule Zaq.Engine.WidgetConnectorSettings do
   after persistence are pending warnings, never false rollbacks.
   """
 
+  alias Zaq.Channels.AgentRouting
   alias Zaq.ConnectorConfig.WidgetSettings
   alias Zaq.Engine.{ChannelConfig, ConnectorLifecycle, IncomingMessageRouting}
   alias Zaq.Event
@@ -198,23 +199,16 @@ defmodule Zaq.Engine.WidgetConnectorSettings do
   end
 
   defp persist_routing(id, %{"agent_id" => choice}) do
-    command = routing_command(id, choice)
-
-    case IncomingMessageRouting.apply_rule_commands([command]) do
-      {:ok, _} -> :ok
+    with {:ok, normalized} <- AgentRouting.validate_choice(choice),
+         command = AgentRouting.rule_attrs(%{channel_config_id: id}, normalized),
+         {:ok, _} <- IncomingMessageRouting.apply_rule_commands([command]) do
+      :ok
+    else
       {:error, _} -> {:error, :invalid_agent}
     end
   end
 
   defp persist_routing(_id, _params), do: :ok
-
-  defp routing_command(id, choice) when choice in [nil, ""],
-    do: %{channel_config_id: id, routing_mode: :clear}
-
-  defp routing_command(id, "__none__"), do: %{channel_config_id: id, routing_mode: :none}
-
-  defp routing_command(id, choice),
-    do: %{channel_config_id: id, routing_mode: :agent, configured_agent_id: choice}
 
   defp enablement(%{"enabled" => value}, opts) do
     case Ecto.Type.cast(:boolean, value) do
@@ -280,19 +274,11 @@ defmodule Zaq.Engine.WidgetConnectorSettings do
       key_present?: key_present?(config),
       key_rotated_at: Map.get(config.settings || %{}, "key_rotated_at"),
       revision: descriptor.revision,
-      agent_id: agent_choice(config.id)
+      agent_id: config |> ChannelConfig.get_provider_agent_choice() |> AgentRouting.select_value()
     }
   end
 
   defp key_present?(config), do: is_binary(config.token) and config.token != ""
-
-  defp agent_choice(id) do
-    case IncomingMessageRouting.get_rule(%{channel_config_id: id}) do
-      %{routing_mode: :none} -> "__none__"
-      %{routing_mode: :agent, configured_agent_id: agent_id} -> to_string(agent_id)
-      _ -> ""
-    end
-  end
 
   defp sync_runtime(before, saved, opts) do
     request = %{before_config: runtime_config(before), after_config: runtime_config(saved)}

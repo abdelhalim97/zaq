@@ -29,7 +29,7 @@ defmodule ZaqWeb.Live.BO.Communication.ChannelsIndexLive do
   @retrieval_cards [
     %{
       id: "web_widget",
-      label: "Web Widget",
+      label: ChannelProvider.label("web_widget"),
       color: "#027589",
       desc: "Embed authenticated conversations on your website with an external widget adapter."
     },

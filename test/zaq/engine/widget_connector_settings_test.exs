@@ -35,6 +35,27 @@ defmodule Zaq.Engine.WidgetConnectorSettingsTest do
 
   @opts [node_router: Router]
 
+  test "canonical NONE aliases persist and project consistently" do
+    for choice <- ["__none__", "none", :none] do
+      assert {:ok, result} =
+               save(:new, nil, %{
+                 "name" => "Canonical #{inspect(choice)}",
+                 "enabled" => false,
+                 "agent_id" => choice
+               })
+
+      selected = result.snapshot.selected
+      assert selected.agent_id == "__none__"
+
+      assert IncomingMessageRouting.get_rule(%{channel_config_id: selected.id}).routing_mode ==
+               :none
+
+      assert {:ok, cleared} = save(selected.id, selected.revision, %{"agent_id" => ""})
+      assert cleared.snapshot.selected.agent_id == ""
+      assert IncomingMessageRouting.get_rule(%{channel_config_id: selected.id}) == nil
+    end
+  end
+
   test "new settings default, roundtrip and partial edits preserve custom policy" do
     {:ok, created} = save(:new, nil, %{"name" => "Defaults", "enabled" => false})
     selected = created.snapshot.selected

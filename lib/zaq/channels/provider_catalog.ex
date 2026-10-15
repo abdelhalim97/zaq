@@ -35,6 +35,7 @@ defmodule Zaq.Channels.ProviderCatalog do
   ]
 
   @labels %{
+    "web_widget" => "Web Widget",
     "slack" => "Slack",
     "teams" => "Microsoft Teams",
     "microsoft_teams" => "Microsoft Teams",

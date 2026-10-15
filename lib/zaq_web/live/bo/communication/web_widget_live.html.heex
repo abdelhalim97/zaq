@@ -14,7 +14,7 @@
         items={[
           %{label: "Channels", to: ~p"/bo/channels"},
           %{label: "Communication", to: ~p"/bo/channels/retrieval"},
-          %{label: "Web Widget", current: true}
+          %{label: @page_title, current: true}
         ]}
       />
       <div class="flex flex-wrap gap-2">
@@ -30,7 +30,7 @@
         <ZaqWeb.Components.DesignSystem.ChannelConnectorCard.channel_connector_card
           id={"widget-connector-#{config.id}"}
           name={config.name}
-          provider="Web Widget"
+          provider={@page_title}
           url={"Widget ID: #{config.id}"}
           enabled={config.enabled}
           enabled_label="Enabled"
@@ -200,7 +200,7 @@
       :if={@modal_open}
       id="widget-config-modal"
       cancel_event="close_modal"
-      title={if @selected, do: "Edit Web Widget", else: "Add Web Widget"}
+      title={if @selected, do: "Edit #{@page_title}", else: "Add #{@page_title}"}
       max_width_class="zaq-modal--width-lg"
       body_class="space-y-6"
     >
@@ -231,7 +231,7 @@
           kind={:error}
           auto_dismiss={false}
           dismissible={false}
-          message="Web Widget adapter is not configured or cannot be reached. Ask your ZAQ administrator to install and configure the external adapter in the Channels service before enabling this widget or generating its installation script. You can still save this configuration disabled."
+          message={"#{@page_title} adapter is not configured or cannot be reached. Ask your ZAQ administrator to install and configure the external adapter in the Channels service before enabling this widget or generating its installation script. You can still save this configuration disabled."}
         />
       </div>
       <.configuration_recovery :if={@recovery_message} message={@recovery_message} />

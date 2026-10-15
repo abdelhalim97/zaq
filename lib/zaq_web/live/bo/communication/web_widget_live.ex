@@ -5,6 +5,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
   on_mount {ZaqWeb.Live.BO.Communication.ServiceGate, [:channels]}
 
   alias Zaq.Channels.AgentRouting
+  alias Zaq.Channels.ProviderCatalog, as: ChannelProvider
   alias Zaq.ConnectorConfig.WidgetSettings
   alias Zaq.Event
   alias Zaq.NodeRouter
@@ -21,7 +22,7 @@ defmodule ZaqWeb.Live.BO.Communication.WebWidgetLive do
     socket =
       socket
       |> assign(:current_path, "/bo/channels/retrieval/web_widget")
-      |> assign(:page_title, "Web Widget")
+      |> assign(:page_title, ChannelProvider.label("web_widget"))
       |> assign(:configs, [])
       |> assign(:selected, nil)
       |> assign(:modal_open, false)
