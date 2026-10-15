@@ -19,11 +19,15 @@
     {
       "text": "Human refreshed during native processing: same conversation restored, Assistant is working header visible, original answer arrived. UX gap is missing in-conversation running indicator for already-running turn. User approved presentation-only generic Preparing your answer fallback until real assistant update, without synthetic message IDs or pending-submission state. Dispatched widget session ses_ebfb14437ffeVUfBBcZDCG7SDf to implement on authorized current PR30 branch, return result for review/pin. Overall UX approval remains pending; no new feature E2E yet.",
       "timestamp": "2026-10-15T18:19:37Z"
+    },
+    {
+      "text": "Approved quick UI follow-up implemented upstream1114f771ad5e3baf5c83fcbc6e544dc093d70616(PR30 unmerged), reviewed no blocking findings and pinned here. Presentation-only ConversationProgress reuses localized WorkingIndicator while isTyping true and no running assistant row; actual running row suppresses fallback. No synthetic message/submission changes. Independently ran5UIunit tests green;62ZAQ host/recovery tests green. Final mix precommit after pin passes11134tests,263properties,48doctests,0failures,1skipped(125excluded). Coverage exception remains as approved. Await UX retest refresh indicator + eventual answer replacement; two-tab UX not yet approved. User config/dev.exs untouched, staging preserved, no commits/merges here.",
+      "timestamp": "2026-10-15T18:37:37Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-jdu] Human UX approval for reconnect recovery",
   "type": "task",
-  "updated_at": "2026-10-15T18:19:37Z"
+  "updated_at": "2026-10-15T18:37:37Z"
 }
