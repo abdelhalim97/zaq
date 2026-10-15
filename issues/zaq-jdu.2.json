@@ -15,11 +15,15 @@
     {
       "text": "ZAQ recovery read implemented via existing ServerManager runtime candidates and Factory.request_state/2, restricted to confidential Person calls and canonical input IDs obtained through existing authorized conversation restoration. Engine fan-outs to Agent nodes; unavailable/finalizing/truncated lookup -\u003e unknown. Real held-agent conformance test sees active while pending and idle after durable response. No Conversations edits/new runtime registry. Package correlation/reconciliation pending.",
       "timestamp": "2026-10-15T16:13:02Z"
+    },
+    {
+      "text": "Refined recovery to avoid first-history-page blind spot: Agent read returns canonical input IDs plus native processing states privately for current Person's existing leases. Engine restores/authorizes requested conversation and reuses Conversations.get_conversation_message for membership, then aggregates available Agent-node states. Public widget contract remains history.payload.processing active/idle/unknown. Regression covers input at position 101 outside displayed first 100; cross-conversation candidates ignored. No Conversations edits. Latest focused suite: 30 tests incl 1 property passed; mix q passed. Earlier full WebBridge/BO compatibility run 121 tests incl 7 properties passed; Agent control regression run 101 tests incl 2 properties passed.",
+      "timestamp": "2026-10-15T16:27:56Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-jdu] Recover authorized cross-page responses and processing",
   "type": "task",
-  "updated_at": "2026-10-15T16:13:02Z"
+  "updated_at": "2026-10-15T16:27:56Z"
 }
