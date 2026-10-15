@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T10:08:47Z",
+  "description": "Local-only LiveView timer names; reuse existing ingress refresh for all providers, preserve behavior and adapt test event names mechanically. No new Action. Validate index LiveView tests and mix q.",
+  "id": "zaq-5u4",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "[836] Generalize ingress refresh scheduling",
+  "type": "task",
+  "updated_at": "2026-10-15T10:08:47Z"
+}
