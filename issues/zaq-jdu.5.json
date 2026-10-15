@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T16:01:03Z",
+  "description": "Blocked on implemented UX approval. Author reload during agent processing with response arriving on new page without second refresh; two-tab same recipient; connector/person isolation and terminal races. Existing lower-level regression tests immediate. No E2E authoring before approval.",
+  "id": "zaq-jdu.5",
+  "labels": [],
+  "parent": "zaq-jdu",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-jdu] Consolidated reconnect browser regression",
+  "type": "task",
+  "updated_at": "2026-10-15T16:01:03Z"
+}
