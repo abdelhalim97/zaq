@@ -5,7 +5,8 @@
     "zaq-atq.2",
     "zaq-atq.3",
     "zaq-atq.4",
-    "zaq-atq.5"
+    "zaq-atq.5",
+    "zaq-atq.6"
   ],
   "blocks": [],
   "created": "2026-10-15T07:16:54Z",
@@ -17,5 +18,5 @@
   "status": "open",
   "title": "[zaq-atq] Review quality and targeted coverage",
   "type": "task",
-  "updated_at": "2026-10-15T07:16:58Z"
+  "updated_at": "2026-10-15T07:16:59Z"
 }
