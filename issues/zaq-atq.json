@@ -6,9 +6,15 @@
   "description": "User supplied missed lines for 16 files; skip full-suite coverage generation. One general planner per file, merge shared test ownership, mini-worker implementation, review, mix q, targeted edited-test coverage only. Preserve config/dev.exs (SHA1 35af91e150eeec65a533fbb7a130e08d2dca44c2). User approved staying on refactor/webbridge. PR https://github.com/www-zaq-ai/zaq/pull/836. Action reuse: not applicable — additive tests only, no executable operation changes. No existing test behavior changes authorized.",
   "id": "zaq-atq",
   "labels": [],
+  "comments": [
+    {
+      "text": "All 16 per-file plans reviewed; test ownership disjoint, no merges needed. WebBridge planner corrected supplied comment/blank lines and refined router fixture details. Mini-workers assigned full plans. Mix test runs serialized via flock. No initial/full coverage run per supplied-line mode. Review corrections: Response false option defaults through Validation.fetch and is not an invalid-version case; newly added test corrected. LiveView and WebBridge workers returned incomplete work and were sent back to complete all reachable scenarios.",
+      "timestamp": "2026-10-15T07:29:13Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-atq] Cover supplied sixteen-file WebBridge gaps",
   "type": "epic",
-  "updated_at": "2026-10-15T07:16:40Z"
+  "updated_at": "2026-10-15T07:29:13Z"
 }
