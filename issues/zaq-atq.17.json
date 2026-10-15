@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T07:16:54Z",
+  "description": "After all 16 file plans are implemented/reviewed, run mix q; delegate detailed repairs if needed. Then mix test only added/edited test files --cover, grep relevant source-file coverage. Do not rerun full suite for coverage. Preserve config/dev.exs. Record exceptions and final results.",
+  "id": "zaq-atq.17",
+  "labels": [],
+  "parent": "zaq-atq",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-atq] Review quality and targeted coverage",
+  "type": "task",
+  "updated_at": "2026-10-15T07:16:54Z"
+}
