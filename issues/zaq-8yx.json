@@ -6,9 +6,15 @@
   "description": "Reuse WebWidget.Endpoint callback at feea384; preserve force_ssl rewrite_on policy and remove custom Plug.call override. Pin published dependency, run existing host ingress tests, mix q and final precommit. Local-only transport normalization; no Action or agent tool.",
   "id": "zaq-8yx",
   "labels": [],
+  "comments": [
+    {
+      "text": "Pinned published web_widget feea384c16c5d3f9e6eac96e95b1c653efbe6e41. Replaced Endpoint call override with supported web_widget_normalize callback preserving runtime force_ssl rewrite_on. mix q passed; targeted host/bridge/UI suite 76 tests + 1 property passed. Final mix precommit: 48 doctests, 261 properties, 11121 tests, zero failures, 1 skipped, 125 excluded. git diff --check clean. No ZAQ commit/push. Browser/manual journeys not rerun; existing host integration covers HTTPS/WSS. Existing config/dev.exs user changes preserved.",
+      "timestamp": "2026-10-15T10:38:46Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[836] Adopt upstream endpoint normalization callback",
   "type": "task",
-  "updated_at": "2026-10-15T10:25:32Z"
+  "updated_at": "2026-10-15T10:38:46Z"
 }
