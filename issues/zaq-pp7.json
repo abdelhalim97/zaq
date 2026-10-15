@@ -10,11 +10,15 @@
     {
       "text": "User approved transient-profile direction via Go ahead: remove widget cache/lookup, pass opaque profile_context across Engine/Channels hops; bridge alone interprets fields. Test approval scope: replace cache/lifetime tests with transient-delivery assertions preserving authentication/isolation. New ZAQ profile tests updated accordingly; Incoming unchanged. Initial focused transient tests: 5 passing; mix q passed. Widget follow-up dispatched to existing session/branch.",
       "timestamp": "2026-10-15T12:19:34Z"
+    },
+    {
+      "text": "Completed agreed transient transport: Context.profile_context -\u003e confidential Channels ingress/Engine request -\u003e opaque resolver forwarding -\u003e Channels.Api -\u003e WebBridge normalization. Removed widget cache callback from ZAQ. People is sole durable owner; Incoming unchanged. Widget follow-up pushed on feat/verified-sender-profile at 2d46d0d18bdfd21275d0e7b9e2a1c93d7de1f705; dependency and lock updated. Real adapter init-\u003ePeople integration passes (29 tests, 2 properties). Final mix precommit exit 0: 11126 tests, 262 properties, 48 doctests, 0 failures, 1 skipped, 125 excluded. mix q and git diff --check pass. ZAQ changes remain uncommitted in current branch; unrelated config/dev.exs preserved.",
+      "timestamp": "2026-10-15T12:36:06Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Reuse profile discovery for verified web widget senders",
   "type": "task",
-  "updated_at": "2026-10-15T12:19:34Z"
+  "updated_at": "2026-10-15T12:36:06Z"
 }
