@@ -12,8 +12,8 @@
   "labels": [],
   "parent": "zaq-zqq",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[#834] Persist verified message authors and provider timestamps",
   "type": "task",
-  "updated_at": "2026-10-15T21:26:30Z"
+  "updated_at": "2026-10-15T21:30:24Z"
 }
