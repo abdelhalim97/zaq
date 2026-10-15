@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T10:07:05Z",
+  "description": "Reuse WebBridge final BO projection and Measurements/MessageHelpers; preserve latency and LLM/tool/turn counts across completion and history. Local-only response projection, no new Action or tool; widget projection remains public-only. Add parity regression; mix q and isolated tests.",
+  "id": "zaq-zlg",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "[836] Preserve BO completion measurements",
+  "type": "bug",
+  "updated_at": "2026-10-15T10:07:05Z"
+}
