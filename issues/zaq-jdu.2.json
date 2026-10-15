@@ -11,9 +11,15 @@
   "id": "zaq-jdu.2",
   "labels": [],
   "parent": "zaq-jdu",
+  "comments": [
+    {
+      "text": "ZAQ recovery read implemented via existing ServerManager runtime candidates and Factory.request_state/2, restricted to confidential Person calls and canonical input IDs obtained through existing authorized conversation restoration. Engine fan-outs to Agent nodes; unavailable/finalizing/truncated lookup -\u003e unknown. Real held-agent conformance test sees active while pending and idle after durable response. No Conversations edits/new runtime registry. Package correlation/reconciliation pending.",
+      "timestamp": "2026-10-15T16:13:02Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-jdu] Recover authorized cross-page responses and processing",
   "type": "task",
-  "updated_at": "2026-10-15T16:01:12Z"
+  "updated_at": "2026-10-15T16:13:02Z"
 }
