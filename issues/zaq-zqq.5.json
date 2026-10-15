@@ -12,8 +12,8 @@
   "labels": [],
   "parent": "zaq-zqq",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[#834] Add compact message renderer and Factory prompt integration",
   "type": "task",
-  "updated_at": "2026-10-15T21:26:35Z"
+  "updated_at": "2026-10-15T21:43:51Z"
 }
