@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T16:00:52Z",
+  "description": "Pin reviewed widget revision, exercise real new-page old-request delivery, two tabs and completion races. Run focused integration tests, mix q and final precommit after review/coverage lifecycle. Preserve config/dev.exs. Record blockers; no claimed success without tests. Update host protocol and installation guidance.",
+  "id": "zaq-jdu.3",
+  "labels": [],
+  "parent": "zaq-jdu",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-jdu] Validate and integrate widget reconnect dependency",
+  "type": "task",
+  "updated_at": "2026-10-15T16:00:52Z"
+}
