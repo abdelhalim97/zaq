@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T07:15:36Z",
+  "description": "User supplied missed lines for 16 files; skip full-suite coverage generation. One general planner per file, merge shared test ownership, mini-worker implementation, review, mix q, targeted edited-test coverage only. Preserve config/dev.exs (SHA1 35af91e150eeec65a533fbb7a130e08d2dca44c2). User approved staying on refactor/webbridge. PR https://github.com/www-zaq-ai/zaq/pull/836. Action reuse: not applicable — additive tests only, no executable operation changes. No existing test behavior changes authorized.",
+  "id": "zaq-atq",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "[#836] Cover supplied sixteen-file WebBridge gaps",
+  "type": "epic",
+  "updated_at": "2026-10-15T07:15:36Z"
+}
