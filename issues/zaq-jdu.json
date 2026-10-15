@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-15T16:00:34Z",
+  "description": "Approved plan in session: ZAQ resolves Person and returns private binding; widget subscribes before submissions, accepts authorized cross-page assistant events and recovers processing using existing runtime lookup. Preserve Conversations and config/dev.exs. Explicit approval received to replace page-isolation and local-submission-only test expectations. Action reuse: extend Engine.Api initialization, WebBridge Delivery and widget Protocol/Chat/Runtime; reuse IdentityResolver, Conversations.restore_channel_conversation and RequestControl/Factory request lookup. Transport binding and read-only runtime presentation are boundary-local operations, not agent/workflow Actions. No new store or agent exposure. Implementation followed by human UX approval then consolidated E2E authoring. No plan files.",
+  "id": "zaq-jdu",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Widget recipient delivery and reconnect recovery",
+  "type": "epic",
+  "updated_at": "2026-10-15T16:00:34Z"
+}
