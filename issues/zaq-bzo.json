@@ -7,8 +7,8 @@
   "id": "zaq-bzo",
   "labels": [],
   "priority": 2,
-  "status": "open",
-  "title": "CI native runners and PostgreSQL alignment",
+  "status": "in_progress",
+  "title": "[zaq-bzo] CI native runners and PostgreSQL alignment",
   "type": "epic",
-  "updated_at": "2026-10-16T16:32:19Z"
+  "updated_at": "2026-10-16T16:32:23Z"
 }
