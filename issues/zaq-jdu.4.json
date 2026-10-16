@@ -23,11 +23,15 @@
     {
       "text": "Approved quick UI follow-up implemented upstream1114f771ad5e3baf5c83fcbc6e544dc093d70616(PR30 unmerged), reviewed no blocking findings and pinned here. Presentation-only ConversationProgress reuses localized WorkingIndicator while isTyping true and no running assistant row; actual running row suppresses fallback. No synthetic message/submission changes. Independently ran5UIunit tests green;62ZAQ host/recovery tests green. Final mix precommit after pin passes11134tests,263properties,48doctests,0failures,1skipped(125excluded). Coverage exception remains as approved. Await UX retest refresh indicator + eventual answer replacement; two-tab UX not yet approved. User config/dev.exs untouched, staging preserved, no commits/merges here.",
       "timestamp": "2026-10-15T18:37:37Z"
+    },
+    {
+      "text": "Iteration approved: sync accepted user messages across same-conversation tabs, acknowledgement-driven input retained/disabled with Sending… until saved record. Sender-only draft clear via matching request; canonical UUID/position dedup. Overall UX approval remains pending for updated interaction.",
+      "timestamp": "2026-10-16T09:01:19Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-jdu] Human UX approval for reconnect recovery",
   "type": "task",
-  "updated_at": "2026-10-15T18:37:37Z"
+  "updated_at": "2026-10-16T09:01:19Z"
 }
