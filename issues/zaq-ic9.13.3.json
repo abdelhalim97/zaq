@@ -9,7 +9,7 @@
   "parent": "zaq-ic9.13",
   "priority": 2,
   "status": "open",
-  "title": "Authorize canonical redemption via existing conversation read",
+  "title": "[zaq-ic9.13.3] Authorize canonical redemption via existing conversation read",
   "type": "task",
-  "updated_at": "2026-10-16T12:52:46Z"
+  "updated_at": "2026-10-16T12:52:47Z"
 }
