@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-16T14:36:59Z",
+  "description": "Scope: named release startup only; defer lazy provider infrastructure lifecycle. Action reuse assessment: local-only OTP composition, reuse existing Channels supervisor option forwarding and WebBridge adapter_options; no business Action or agent tool is appropriate. Add regression tests before implementation for single-node named startup, membership overrides, invalid explicit membership, provider isolation and unchanged authentication settings. Supply widget default replica_nodes [node()] at runtime only when omitted, and wire application-configured channels_supervisor_options through Zaq.Application. Document explicit identical widget replica membership for multi-node widget deployments, never Node.list discovery. Preserve existing assertions. Validate isolated tests, mix q and final mix precommit.",
+  "id": "zaq-ozu",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Restore named-node widget startup with host-supplied topology",
+  "type": "bug",
+  "updated_at": "2026-10-16T14:36:59Z"
+}
