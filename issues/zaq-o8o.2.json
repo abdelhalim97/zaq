@@ -11,9 +11,15 @@
   "id": "zaq-o8o.2",
   "labels": [],
   "parent": "zaq-o8o",
+  "comments": [
+    {
+      "text": "Context transitions, protected fields, latest-default locked restore, stale-record handling and property tests implemented. 65 focused tests + 1 property pass, mix q passes; runtime still consumes body.",
+      "timestamp": "2026-10-16T19:33:01Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-o8o.2] Customization-aware template domain and restore",
   "type": "task",
-  "updated_at": "2026-10-16T19:21:11Z"
+  "updated_at": "2026-10-16T19:33:01Z"
 }
