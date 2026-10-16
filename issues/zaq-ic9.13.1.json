@@ -9,7 +9,7 @@
   "parent": "zaq-ic9.13",
   "priority": 2,
   "status": "open",
-  "title": "Reuse transcript authorization for canonical-message reads",
+  "title": "[zaq-ic9.13.1] Reuse transcript authorization for canonical-message reads",
   "type": "task",
-  "updated_at": "2026-10-16T12:52:42Z"
+  "updated_at": "2026-10-16T12:52:43Z"
 }
