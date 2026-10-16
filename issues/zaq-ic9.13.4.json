@@ -3,7 +3,9 @@
   "blocked_by": [
     "zaq-ic9.13.3"
   ],
-  "blocks": [],
+  "blocks": [
+    "zaq-ic9.13.5"
+  ],
   "created": "2026-10-16T12:52:48Z",
   "description": "## Test-first integration and properties\nReal Engine/DB/Channels plus existing DownloadDocument validated Action execution; stub only provider byte fetch. A uploads, B hydrates/downloads, then revoke all effective read grants and redeem SAME handle -\u003e denied before IO (also uploader). Provider grant removal with surviving manual grant remains allowed. Shared parent/thread and Direct/Replicated exact placements; outsider; inactive/deleted/conflicting actor; removed message/placement/descriptor; connector collisions; forged binding; missing/ambiguous source; old message outside recent window; infrastructure failure. Property tests: binding mutations never authorize unrelated attachment; effective grant combinations agree with shared transcript policy. Use SQL Sandbox/async-safe fixtures and per-call injections.\nPrimary suites: transcript_history_test.exs, execution_history_test.exs, communication_media_test.exs, canonical_message_read_test.exs and events_test.exs. Run existing materializer callback, agent media/alias, download-tool and email materialization suites. Preserve provider config enabled/archived behavior, UIDVALIDITY and size limits. Keep legacy display-only unavailability and rich pre-fix hydration compatibility.\nUpdate owning documentation only: docs/services/materialization.md, docs/services/channels.md, docs/services/engine.md. Explain current canonical policy, unchanged unscoped compatibility and rollout of all materializer roles together. No browser E2E needed for backend-only fix; reassess if UI scope appears.\nExisting-test approval: execution_history_test.exs unavailable-attachment scenario currently mismatches canonical author and source author. Replace cross-author denial with truthful A-message/B-requester success only after explicit approval; preserve malformed/legacy and transport errors separately. No weakening standalone legacy tests.\n\nPlanning only: leave open; implementation has not started. Follow docs/WORKFLOW_AGENT.md validation lifecycle, docs/testing-approach.md, docs/action-reuse.md and relevant Engine/Channels/materialization guides. Write tests before implementation; reuse existing helpers rather than duplicate permission, projection or source-validation logic. No migration, new tool, attachment ACL, provider membership query, generic invoke, or attachment-specific Engine event.\n",
   "id": "zaq-ic9.13.4",
@@ -13,5 +15,5 @@
   "status": "open",
   "title": "[zaq-ic9.13.4] Prove shared attachment access and document canonical permissions",
   "type": "task",
-  "updated_at": "2026-10-16T12:52:53Z"
+  "updated_at": "2026-10-16T12:52:54Z"
 }
