@@ -6,14 +6,15 @@
   "blocks": [
     "zaq-ozu.2"
   ],
+  "closed_at": "2026-10-16T15:14:02Z",
   "created": "2026-10-16T14:39:25Z",
   "description": "Reuse existing WebBridge infrastructure-options assembly and Channels option forwarding. Default membership only when absent; explicit invalid values fail closed. Application forwards channels_supervisor_options. Local-only OTP composition, no domain Action.",
   "id": "zaq-ozu.3",
   "labels": [],
   "parent": "zaq-ozu",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[zaq-ozu] Supply local widget topology and forward deployment options",
   "type": "task",
-  "updated_at": "2026-10-16T14:39:34Z"
+  "updated_at": "2026-10-16T15:14:02Z"
 }
