@@ -17,11 +17,15 @@
     {
       "text": "Human explicitly approved updating existing root noanswer test: old blanket refute PubSub now asserts two saved user broadcasts then still forbids all other events and checks no typing/assistant/pending response. Source: session question answered Approve test update. No original noanswer guarantee removed. New root installed canonical-user reducer/convergence regression passes against widget193f23f3; combined137tests+10properties had only that expected old blanket assertion failure.",
       "timestamp": "2026-10-16T10:19:26Z"
+    },
+    {
+      "text": "Reviewed/pinned widget193f23f3e05d4159b31796900c47ca929db79a33(PR30 unmerged). Canonical receipt/broadcast/history merge and sender-only SubmissionController draft clearing reviewed; unknown outcomes fail closed when process correlation lost. Independent14UIunit/controller tests pass;145root focused tests+12properties pass;mix q clean. Final precommit retry PASS:48doctests,264properties,11140tests,0failures,1skipped(125excluded),747.1s. Initial full attempt had two unchanged PeopleProfileGateway setup delete_all deadlocks and hit900s; all7unchanged tests pass isolated, full retry1200s budget clean. No test timeout/assertion loosening; only user-approved noanswer event assertion extension. Upstream CI38885518361 completed success. Coverage remains unverified under prior explicitly approved exception. No Conversations edits, no user config changes, no commits/merges here. Await human UX retest two-tabs distinct drafts, Sending… retention, sender-only clear, user visible once before response.",
+      "timestamp": "2026-10-16T10:51:23Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-jdu] Persisted user-message acknowledgement and cross-tab sync",
   "type": "task",
-  "updated_at": "2026-10-16T10:19:26Z"
+  "updated_at": "2026-10-16T10:51:23Z"
 }
