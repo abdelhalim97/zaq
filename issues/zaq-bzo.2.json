@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "zaq-bzo.3"
+  ],
   "created": "2026-10-16T16:32:34Z",
   "description": "Split Docker release build into native Ubuntu AMD64 and ubuntu-24.04-arm ARM64 matrix jobs, same release SHA. Push by digest and transfer digest artifacts to Linux merge job. Preserve all existing version/prerelease tag rules; publish only after both builds pass and verify manifest architectures. Add separate GHA BuildKit cache scopes. No application Action changes. Validate workflow expressions, matrix and manifest/tag invariants without publishing a release.",
   "id": "zaq-bzo.2",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-bzo] Build release images on native Linux runners",
   "type": "task",
-  "updated_at": "2026-10-16T16:32:34Z"
+  "updated_at": "2026-10-16T16:32:49Z"
 }
