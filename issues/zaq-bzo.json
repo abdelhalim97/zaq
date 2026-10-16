@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-16T16:32:19Z",
+  "description": "User approved WebKit on macOS, all E2E on PostgreSQL 18 with pgvector using the unit-test DBA initializer, and parallel native Linux AMD64/ARM64 release builds. No timing comparison. Work stays on feature/ci-native-runners in the current worktree. Action reuse assessment: not applicable to application Actions; changes are CI orchestration only. Reuse .github/scripts/provision-test-database.exs postgres, existing SQL bootstrap and release tagging semantics. No application or test assertion changes. Steps: E2E migration; independent release build split; validation depends on both, a DAG with no diamond.",
+  "id": "zaq-bzo",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "CI native runners and PostgreSQL alignment",
+  "type": "epic",
+  "updated_at": "2026-10-16T16:32:19Z"
+}
