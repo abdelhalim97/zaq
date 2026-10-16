@@ -28,11 +28,15 @@
     {
       "text": "Iteration approved: sync accepted user messages across same-conversation tabs, acknowledgement-driven input retained/disabled with Sending… until saved record. Sender-only draft clear via matching request; canonical UUID/position dedup. Overall UX approval remains pending for updated interaction.",
       "timestamp": "2026-10-16T09:01:19Z"
+    },
+    {
+      "text": "User-message cross-tab iteration ready for UX test: widget193f23f3 pinned, upstreamCI green, final precommit11140tests0failures. Verify two tabs same conversation each has draft: sending A retains/locks text with Sending…, both show saved user exactly once, only A clears, B draft preserved; response normal, noanswer no phantom assistant. Final human UX approval still pending.",
+      "timestamp": "2026-10-16T10:51:25Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "[zaq-jdu] Human UX approval for reconnect recovery",
   "type": "task",
-  "updated_at": "2026-10-16T09:13:50Z"
+  "updated_at": "2026-10-16T10:51:25Z"
 }
