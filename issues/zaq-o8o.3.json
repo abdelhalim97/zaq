@@ -11,9 +11,15 @@
   "id": "zaq-o8o.3",
   "labels": [],
   "parent": "zaq-o8o",
+  "comments": [
+    {
+      "text": "Restore editor implemented through Agent Events/NodeRouter with trusted BOActor; domain owns all persistence. LiveView regression tests pass. Native browser inspection at localhost:4002 verified draft replacement with latest default. Screenshot /private/var/folders/9p/mdzhcqxx7hs8bw_10vwjvfp00000gn/T/opencode/prompt-default-editor.png. Final human UX approval remains .5; no new E2E authored.",
+      "timestamp": "2026-10-16T19:34:48Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-o8o.3] Restore default BO integration",
   "type": "task",
-  "updated_at": "2026-10-16T19:33:03Z"
+  "updated_at": "2026-10-16T19:34:48Z"
 }
