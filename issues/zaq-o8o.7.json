@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Julien",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-10-16T20:05:16Z",
@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "zaq-o8o",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[zaq-o8o.7] Prompt defaults coverage handoff",
   "type": "task",
-  "updated_at": "2026-10-16T20:05:17Z"
+  "updated_at": "2026-10-16T20:05:18Z"
 }
