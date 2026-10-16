@@ -3,7 +3,9 @@
   "blocked_by": [
     "zaq-ic9.13.2"
   ],
-  "blocks": [],
+  "blocks": [
+    "zaq-ic9.13.4"
+  ],
   "created": "2026-10-16T12:52:46Z",
   "description": "## Test-first scope\nCommunicationMedia verifies/validates canonical claim after existing signature verification. Absent claim uses legacy behavior; present malformed/unknown/incomplete claim fails closed. Call Engine.Events canonical-message helper over :conversation with trusted actor/router/confidential context. Validate returned placement IDs and response shape; select stored attachment and compare identity plus entire durable source against signed locator using existing Channels source normalization/validation. Strip runtime canonical claim for source comparison/provider request. Reject missing/conflicting matches or different sources even if file IDs match. Never let source_author equality rescue canonical denial.\nAfter successful read AND source match, reuse :materialize_record/CommunicationBridge/provider fetch unchanged. No DB reads in Channels, no Engine provider knowledge, no cache of successful authorization, no locks spanning provider IO, no new tool or registry entry. Preserve existing legacy trusted-internal behavior without using skip_permissions for canonical sharing. Map denial/source mismatch to existing materialization authorization error; preserve infrastructure failure, fail closed without fetch.\n## Tests\ncommunication_media_test.exs and callback regressions: permission-before-fetch ordering; denial/unavailable/malformed response no IO; wrong placement/source, tampered signature, unknown scope versions; serialization roundtrip; unchanged unscoped author mismatch/nil; correct trusted actor/router propagation; runtime options cannot override signed claims.\n\nPlanning only: leave open; implementation has not started. Follow docs/WORKFLOW_AGENT.md validation lifecycle, docs/testing-approach.md, docs/action-reuse.md and relevant Engine/Channels/materialization guides. Write tests before implementation; reuse existing helpers rather than duplicate permission, projection or source-validation logic. No migration, new tool, attachment ACL, provider membership query, generic invoke, or attachment-specific Engine event.\n",
   "id": "zaq-ic9.13.3",
@@ -13,5 +15,5 @@
   "status": "open",
   "title": "[zaq-ic9.13.3] Authorize canonical redemption via existing conversation read",
   "type": "task",
-  "updated_at": "2026-10-16T12:52:52Z"
+  "updated_at": "2026-10-16T12:52:53Z"
 }
