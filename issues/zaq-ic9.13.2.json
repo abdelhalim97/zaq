@@ -6,14 +6,16 @@
   "blocks": [
     "zaq-ic9.13.3"
   ],
+  "closed_at": "2026-10-16T13:09:00Z",
+  "close_reason": "Implemented and validated with mix q and isolated regression suites; broader integration and landing tracked in dependent tasks.",
   "created": "2026-10-16T12:52:44Z",
   "description": "## Test-first scope\nEngine.Api currently drops existing per-message transcript_id/message_id when flattening attachments. Wrap each descriptor with these IDs and extend Channels.Events/Api and CommunicationMedia hydration contract. Reuse ExecutionHistory origin IDs; parent/root messages must not be bound to child projection ID. Sign versioned canonical_attachment claim containing both UUIDs with existing locator, separate from durable version-1 source metadata. Use Record sanitation/source helpers/handle issuance, not new serializers.\nScoped hydration follows an already-authorized Engine read and bypasses author equality by selecting the canonical policy, NOT by setting skip_permissions. No extra reverse Engine auth dispatch or provider IO at hydration. Preserve unscoped author-bound behavior, batch bounds/order, per-item unavailable descriptors, truthful transport failure, cursor semantics and unchanged stored messages. Confidentiality is not authentication; scope comes only from server-owned projection.\n## Modules/tests\nEngine.Api; Channels.Events; Channels.Api; CommunicationMedia. execution_history_test.exs admission/delta A/B, parent and Replicated placement; communication_media_test.exs scoped claim/schema and events_test.exs wrapper/actor/order. Assert no handles/claims persist and no IO. Resolve disclosed existing-test approval before changing that scenario; retain legacy malformed-source and transport-failure coverage.\n\nPlanning only: leave open; implementation has not started. Follow docs/WORKFLOW_AGENT.md validation lifecycle, docs/testing-approach.md, docs/action-reuse.md and relevant Engine/Channels/materialization guides. Write tests before implementation; reuse existing helpers rather than duplicate permission, projection or source-validation logic. No migration, new tool, attachment ACL, provider membership query, generic invoke, or attachment-specific Engine event.\n\nImplementation complete in current checkout. Evidence: mix q passes; targeted TranscriptHistory, ExecutionHistory and CommunicationMedia suites pass together: 6 properties, 104 tests, zero failures. Existing author-mismatch change explicitly approved by Julien through question tool in this session. Source comparison remains in Channels; canonical message read reuses :conversation and the shared history permission/projection helpers.",
   "id": "zaq-ic9.13.2",
   "labels": [],
   "parent": "zaq-ic9.13",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[zaq-ic9.13.2] Bind hydrated attachment handles to canonical message placement",
   "type": "task",
-  "updated_at": "2026-10-16T13:08:59Z"
+  "updated_at": "2026-10-16T13:09:00Z"
 }
