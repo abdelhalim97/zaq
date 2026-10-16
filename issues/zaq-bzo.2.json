@@ -4,14 +4,16 @@
   "blocks": [
     "zaq-bzo.3"
   ],
+  "closed_at": "2026-10-16T16:53:35Z",
+  "close_reason": "Implemented in .github/workflows/release.yml on feature/ci-native-runners: native ubuntu-24.04 AMD64 and ubuntu-24.04-arm ARM64, digest artifacts, architecture cache scopes, merge job preserving version/prerelease tags and manifest verification. QEMU removed. mix q, actionlint/ShellCheck and stable/prerelease merge/invalid digest contract checks pass. Publishing not attempted; final gate tracked by zaq-bzo.3.",
   "created": "2026-10-16T16:32:34Z",
   "description": "Split Docker release build into native Ubuntu AMD64 and ubuntu-24.04-arm ARM64 matrix jobs, same release SHA. Push by digest and transfer digest artifacts to Linux merge job. Preserve all existing version/prerelease tag rules; publish only after both builds pass and verify manifest architectures. Add separate GHA BuildKit cache scopes. No application Action changes. Validate workflow expressions, matrix and manifest/tag invariants without publishing a release.",
   "id": "zaq-bzo.2",
   "labels": [],
   "parent": "zaq-bzo",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[zaq-bzo] Build release images on native Linux runners",
   "type": "task",
-  "updated_at": "2026-10-16T16:32:49Z"
+  "updated_at": "2026-10-16T16:53:35Z"
 }
