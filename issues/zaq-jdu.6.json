@@ -13,11 +13,15 @@
     {
       "text": "ZAQ implementation/tests added first and red observed, then green: new accepted_message Engine operation reuses exact external_message_id canonical filter and conversation authorization; WebBridge emits response.user_message + direct identical saved record after route capture, no Conversations edits. New tests cover2subscriber processes, replay canonical identity(property), foreign scope, native held-response ordering, unavailable ack -\u003e unknown/no false broadcast;150prior protocol tests green. Root installed-widget regression red as expected until package revision. Discovered noanswer capture role external; normalized only at widget projection, persisted role unchanged. Docs updated. Widget Build session implements composer and idempotent user reducer in parallel. No old assertions changed in root.",
       "timestamp": "2026-10-16T09:13:46Z"
+    },
+    {
+      "text": "Human explicitly approved updating existing root noanswer test: old blanket refute PubSub now asserts two saved user broadcasts then still forbids all other events and checks no typing/assistant/pending response. Source: session question answered Approve test update. No original noanswer guarantee removed. New root installed canonical-user reducer/convergence regression passes against widget193f23f3; combined137tests+10properties had only that expected old blanket assertion failure.",
+      "timestamp": "2026-10-16T10:19:26Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-jdu] Persisted user-message acknowledgement and cross-tab sync",
   "type": "task",
-  "updated_at": "2026-10-16T09:13:50Z"
+  "updated_at": "2026-10-16T10:19:26Z"
 }
