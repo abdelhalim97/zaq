@@ -33,11 +33,15 @@
     {
       "text": "Fresh approved scoped coverage succeeded: mix coveralls.json over 30 affected suites, 274.7s, 6 doctests, 17 properties, 900 tests, 0 failures (21 excluded). Only after success, mix coverup passed. Scoped whole-repository total 26.0% is NOT full-suite coverage. New InputPrompt 100%, MessageAuthor 96.8%; HistoryLoader 96.2%, recall 96.9%, BO projection 100%, canonical transcript 96.3%. Existing large contexts have unexercised unrelated paths; Retrieval 0% here is docs-only change. Changed-line gaps are defensive/compatibility fallbacks (nil/negative recall limit path, invalid legacy binding, NaiveDateTime support, missing-role/unsupported canonical replay); no hidden successes claimed. Full-suite reports from two timed-out attempts rejected. Full strategy test checks exact header/body against persisted source time and directory author; production fixture directory names may differ from provider username. Final precommit pending.",
       "timestamp": "2026-10-16T12:47:23Z"
+    },
+    {
+      "text": "Final mix precommit passed against the final changes with 900000ms budget: 735.1s, 17 doctests, 189 properties, 9690 tests, zero failures, one skipped (117 excluded); formatting/Credo/warnings-as-errors compile passed. User authorization to commit/push remains explicit and scoped to feature/issue-834-message-attribution; no merge authorized. Approved scoped coverage exception and individual test behavior changes recorded above. Proceeding to commit/push; keep task/epic open for PR delivery, no issue-834 resolution claim.",
+      "timestamp": "2026-10-16T13:00:46Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[#834] Validate review coverage and prepare authorized landing",
   "type": "task",
-  "updated_at": "2026-10-16T12:47:23Z"
+  "updated_at": "2026-10-16T13:00:46Z"
 }
