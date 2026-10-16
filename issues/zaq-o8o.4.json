@@ -15,11 +15,15 @@
     {
       "text": "65 focused tests + 1 property pass; mix q passes. Existing ingestion/system_config E2E: clean Chromium 64 passed/1 skipped; Firefox+WebKit 127 passed/2 skipped/1 WebKit timezone beforeEach 30s timeout, isolated rerun of unchanged timezone scenario passed. Earlier shared server lifecycle run invalidated by server disconnects. No assertions changed. Python audit: production Pipeline forwards --prompt directly; no page-classification override is supplied. Representative real-provider image output evaluation still requires human review; no external paid inference performed.",
       "timestamp": "2026-10-16T19:34:51Z"
+    },
+    {
+      "text": "Final repeated mix q and isolated 65 tests + 1 property passed. Model-output evaluation remains an explicit limitation: no representative customer images/model inference supplied. Proceed with deterministic data-flow coverage; no hallucination-free claim.",
+      "timestamp": "2026-10-16T19:49:08Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-o8o.4] Prompt regression validation and documentation",
   "type": "task",
-  "updated_at": "2026-10-16T19:34:51Z"
+  "updated_at": "2026-10-16T19:49:08Z"
 }
