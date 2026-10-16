@@ -25,11 +25,15 @@
     {
       "text": "Additional explicit approval: user selected Approve 6,000-token fixture. Nested integration X/Y fixtures may set model_max_context_tokens=6000 instead of default 5000, preserving success/identity/permission/tool assertions and all production limits/guards. Diagnostic in-memory RequestTransformer instrumentation (no host file edits) measured parent continuation estimate=972 vs input budget=858 after shared instruction shortening. New metadata overhead causes expected fail-safe rejection; successful nested-exchange fixture needs explicit capacity. No production budgeting changes.",
       "timestamp": "2026-10-16T12:23:39Z"
+    },
+    {
+      "text": "Explicit approval: user selected Approve scoped validation. Approved two HistoryStrategyFullFlowTest assertion sites (channel bob/bob prefix -\u003e directory author headers), fresh affected-suite coverage instead of successful full-suite coverage, then precommit. Second full coverage attempt again ETIMEDOUT; partial summary 48 doctests, 228 properties, 9166 tests, six failures at those two old-author sites. Do not accept timeout status=0 as success or reuse reports. No coverage-upper agent is available in this harness; perform equivalent fresh coverage/coverup command workflow directly and report scope/limitations. Factory/nested/Mattermost suites now 37 tests, zero failures.",
+      "timestamp": "2026-10-16T12:39:29Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[#834] Validate review coverage and prepare authorized landing",
   "type": "task",
-  "updated_at": "2026-10-16T12:23:39Z"
+  "updated_at": "2026-10-16T12:39:29Z"
 }
