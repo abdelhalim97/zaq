@@ -9,7 +9,7 @@
   "parent": "zaq-ic9",
   "priority": 2,
   "status": "open",
-  "title": "Fix shared-channel attachments inheriting canonical transcript access",
+  "title": "[zaq-ic9.13] Fix shared-channel attachments inheriting canonical transcript access",
   "type": "bug",
-  "updated_at": "2026-10-16T12:52:40Z"
+  "updated_at": "2026-10-16T12:52:41Z"
 }
