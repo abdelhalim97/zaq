@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-16T14:46:09Z",
+  "description": "Resolve two conflict regions against main ebf82e6; preserve both test sets. Reuse MessageAuthor.project through a local private batch presentation helper shared by list/exact reads; retain shared authorization and query. No new Action: this is internal read projection/sanitization, no independent operation. Verify combined author/time/attachment regressions, existing suites, mix q and precommit. User requests current worktree and uncommitted resolutions: leave rebase paused, do not continue or push. Existing backup ref preserves d3654ce. Review and post-review coverage remain in .5.",
+  "id": "zaq-ic9.13.6",
+  "labels": [],
+  "parent": "zaq-ic9.13",
+  "priority": 2,
+  "status": "open",
+  "title": "Resolve attachment rebase with shared attribution projection",
+  "type": "task",
+  "updated_at": "2026-10-16T14:46:09Z"
+}
