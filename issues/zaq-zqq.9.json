@@ -21,11 +21,15 @@
     {
       "text": "Nested-agent reproduction: both T1/T2 fail in isolation with mandatory_payload_too_large. Fixtures use the ordinary configured-agent default model_max_context_tokens=5000; shared 414-character instruction adds mandatory prompt overhead. Correction will shorten the existing InputPrompt.system_instruction text without changing metadata meaning, roles, budgets, fixture scenarios or success assertions. Action reuse: extend existing renderer-owned instruction; no new operation/Action/generation path. Existing nested integration failures serve as red regressions.",
       "timestamp": "2026-10-16T12:16:30Z"
+    },
+    {
+      "text": "Additional explicit approval: user selected Approve 6,000-token fixture. Nested integration X/Y fixtures may set model_max_context_tokens=6000 instead of default 5000, preserving success/identity/permission/tool assertions and all production limits/guards. Diagnostic in-memory RequestTransformer instrumentation (no host file edits) measured parent continuation estimate=972 vs input budget=858 after shared instruction shortening. New metadata overhead causes expected fail-safe rejection; successful nested-exchange fixture needs explicit capacity. No production budgeting changes.",
+      "timestamp": "2026-10-16T12:23:39Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[#834] Validate review coverage and prepare authorized landing",
   "type": "task",
-  "updated_at": "2026-10-16T12:16:30Z"
+  "updated_at": "2026-10-16T12:23:39Z"
 }
