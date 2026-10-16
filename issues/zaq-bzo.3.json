@@ -6,13 +6,13 @@
   ],
   "blocks": [],
   "created": "2026-10-16T16:32:41Z",
-  "description": "Depends on E2E and release workflow changes. Validate YAML/actions/shell, matrix isolation, PostgreSQL setup, release digest merge and tags; run mix q and final mix precommit where possible and report blockers. Hosted macOS/ARM64 execution and release registry publishing cannot be simulated fully locally. No timing comparison or automatic commit/push/PR.",
+  "description": "Implementation complete in exactly two workflow YAML files on feature/ci-native-runners; no commit/push/PR authorized. Validation PASS: mix q; actionlint 1.7.12 with ShellCheck for both workflows; 21 isolated workflow contract checks (browser/OS/PG18 matrix, shared DBA init, required QA aggregator, native arch builds, stable/prerelease tags unchanged, manifest merge args, empty/missing/extra/malformed digest rejection); git diff --check. Coverage not applicable: no application code changed. FINAL GATE BLOCKED: mix precommit completed in 791 seconds with 48 doctests, 270 properties, 11180 tests, 13 failures, 1 skipped, 125 excluded. mix test --failed rerun: 13 tests, 12 failures (one original failure did not recur). Persistent failures in unchanged tests: storage/materializers/disk_document_test.exs:195; engine/api_test.exs:1107; person_conversation_source_integration_test.exs:53,87,163; history_live_test.exs:52,144; engine/channel_config_test.exs:255; channels/data_source_bridge_test.exs:2035,2049,2058; storage_test.exs:612. Related stale disk/Storage test debt already tracked by zaq-elu; do not weaken assertions or expand this CI task to repair unrelated application behavior without approval. Hosted WebKit/native PG18, Linux ARM64 image execution, and registry publishing remain untested until CI; no workflow dispatched/pushed and no release published. No timing comparison requested. Final approval not requested because precommit is not green.",
   "id": "zaq-bzo.3",
   "labels": [],
   "parent": "zaq-bzo",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[zaq-bzo] Validate native-runner CI workflows",
   "type": "task",
-  "updated_at": "2026-10-16T16:32:49Z"
+  "updated_at": "2026-10-16T16:53:47Z"
 }
