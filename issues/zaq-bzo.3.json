@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-16T16:32:41Z",
+  "description": "Depends on E2E and release workflow changes. Validate YAML/actions/shell, matrix isolation, PostgreSQL setup, release digest merge and tags; run mix q and final mix precommit where possible and report blockers. Hosted macOS/ARM64 execution and release registry publishing cannot be simulated fully locally. No timing comparison or automatic commit/push/PR.",
+  "id": "zaq-bzo.3",
+  "labels": [],
+  "parent": "zaq-bzo",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-bzo] Validate native-runner CI workflows",
+  "type": "task",
+  "updated_at": "2026-10-16T16:32:41Z"
+}
