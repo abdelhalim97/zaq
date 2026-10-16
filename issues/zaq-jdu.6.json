@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "zaq-jdu.4"
+  ],
   "created": "2026-10-16T09:01:10Z",
   "description": "Implement approved accepted-user-record contract at existing WebBridge/Engine boundary. Tests first: accepted event matches saved history/canonical ID and position; publish only after capture; no_answer supported; failed capture/foreign scope no publication; duplicate routing dedup canonical record; no Conversations edits. Reuse assessment: extend Engine channel_conversations history projection with exact external_message_id filter through existing Conversations.restore_channel_conversation/list_canonical_messages, existing HistoryIngress capture is sole persistence; WebBridge local-only public projection/publication via existing Delivery; no new Action/tool/store is justified for transport acknowledgement. Canonical row reused in direct receipt and response.user_message on existing recipient PubSub. Widget project owns correlation/composer changes; root reviews/pins revision then focused tests,mix q,final precommit. Docs owner docs/services/web-bridge.md. No new browser E2E until zaq-jdu.4 approval; add two-tab accepted-user scenario to zaq-jdu.5. Existing-test behavior approval required if new assertions conflict.",
   "id": "zaq-jdu.6",
@@ -17,5 +19,5 @@
   "status": "in_progress",
   "title": "[zaq-jdu] Persisted user-message acknowledgement and cross-tab sync",
   "type": "task",
-  "updated_at": "2026-10-16T09:13:46Z"
+  "updated_at": "2026-10-16T09:13:50Z"
 }

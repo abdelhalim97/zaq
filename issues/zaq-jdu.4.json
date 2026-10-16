@@ -1,7 +1,8 @@
 {
   "assignee": "",
   "blocked_by": [
-    "zaq-jdu.3"
+    "zaq-jdu.3",
+    "zaq-jdu.6"
   ],
   "blocks": [
     "zaq-jdu.5"
@@ -33,5 +34,5 @@
   "status": "open",
   "title": "[zaq-jdu] Human UX approval for reconnect recovery",
   "type": "task",
-  "updated_at": "2026-10-16T09:01:19Z"
+  "updated_at": "2026-10-16T09:13:50Z"
 }
