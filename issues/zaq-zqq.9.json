@@ -13,11 +13,15 @@
     {
       "text": "User approved implementation and authorized commit/push. Fresh full mix coveralls.json attempted with 600000ms budget; inner process timed out (ETIMEDOUT), so report is not accepted and mix coverup was not run. Run reported 43 doctests, 242 properties, 9587 tests, 16 failures, 1 skipped before termination. Isolated follow-up across factory_runtime_failure, mattermost_shared_history_integration, history_strategy_full_flow, nested_run_agent_integration: 37 tests, 9 failures. Confirmed 2 Factory tests expect job-only prompt; 5 Mattermost cases expect old channel author prefix/casing; 2 nested-agent tests fail with mandatory_payload_too_large (requires investigation, no weakened assertion). Additional exact existing-test changes need approval. No source/test changes made in this follow-up; commit and push paused pending validation blockers.",
       "timestamp": "2026-10-16T12:02:01Z"
+    },
+    {
+      "text": "Explicit approval received via question: user selected Fix and validate (Recommended). Approved scope: Factory retry tests expect original job plus shared instruction; Mattermost history assertions expect directory-author headers instead of channel prefix/casing, preserving retry/privacy/order/tool assertions. Investigate nested-agent context-window failures without weakening success assertions. Commit/push authorization remains active after successful validation.",
+      "timestamp": "2026-10-16T12:15:39Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[#834] Validate review coverage and prepare authorized landing",
   "type": "task",
-  "updated_at": "2026-10-16T12:02:01Z"
+  "updated_at": "2026-10-16T12:15:39Z"
 }
