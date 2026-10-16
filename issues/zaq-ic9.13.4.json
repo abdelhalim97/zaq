@@ -9,7 +9,7 @@
   "parent": "zaq-ic9.13",
   "priority": 2,
   "status": "open",
-  "title": "Prove shared attachment access and document canonical permissions",
+  "title": "[zaq-ic9.13.4] Prove shared attachment access and document canonical permissions",
   "type": "task",
-  "updated_at": "2026-10-16T12:52:48Z"
+  "updated_at": "2026-10-16T12:52:49Z"
 }
