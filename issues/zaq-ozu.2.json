@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "zaq-ozu.3"
+  ],
   "blocks": [],
   "created": "2026-10-16T14:39:22Z",
   "description": "Document single widget-serving-node default and explicit multi-node configuration. Focused tests plus mix q then final mix precommit. No UI behavior changes, E2E not applicable.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-ozu] Document topology configuration and validate startup fix",
   "type": "task",
-  "updated_at": "2026-10-16T14:39:22Z"
+  "updated_at": "2026-10-16T14:39:34Z"
 }
