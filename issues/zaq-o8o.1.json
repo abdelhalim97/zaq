@@ -9,9 +9,15 @@
   "id": "zaq-o8o.1",
   "labels": [],
   "parent": "zaq-o8o",
+  "comments": [
+    {
+      "text": "Migration and schema implemented; isolated private-schema replay plus domain/LiveView regressions pass (40 tests + 1 property). mix q passes. Dependency graph inspected: linear .1 -\u003e .2 -\u003e .3 -\u003e .4 -\u003e .5 -\u003e .6. Source implementation spans migration/schema and domain compatibility to keep schema transition runnable.",
+      "timestamp": "2026-10-16T19:15:15Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-o8o.1] Persistence and one-time default migration",
   "type": "task",
-  "updated_at": "2026-10-16T19:09:35Z"
+  "updated_at": "2026-10-16T19:15:15Z"
 }
