@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Julien",
   "blocked_by": [
     "zaq-o8o.5"
   ],
@@ -10,8 +10,8 @@
   "labels": [],
   "parent": "zaq-o8o",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[zaq-o8o.6] Consolidated prompt defaults E2E and landing gates",
   "type": "task",
-  "updated_at": "2026-10-16T19:09:46Z"
+  "updated_at": "2026-10-16T19:49:11Z"
 }
