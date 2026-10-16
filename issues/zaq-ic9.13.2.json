@@ -9,7 +9,7 @@
   "parent": "zaq-ic9.13",
   "priority": 2,
   "status": "open",
-  "title": "Bind hydrated attachment handles to canonical message placement",
+  "title": "[zaq-ic9.13.2] Bind hydrated attachment handles to canonical message placement",
   "type": "task",
-  "updated_at": "2026-10-16T12:52:44Z"
+  "updated_at": "2026-10-16T12:52:45Z"
 }
