@@ -7,8 +7,8 @@
   "id": "zaq-ozu",
   "labels": [],
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "Restore named-node widget startup with host-supplied topology",
   "type": "bug",
-  "updated_at": "2026-10-16T14:36:59Z"
+  "updated_at": "2026-10-16T14:37:06Z"
 }
