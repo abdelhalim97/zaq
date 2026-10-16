@@ -17,11 +17,15 @@
     {
       "text": "Explicit approval received via question: user selected Fix and validate (Recommended). Approved scope: Factory retry tests expect original job plus shared instruction; Mattermost history assertions expect directory-author headers instead of channel prefix/casing, preserving retry/privacy/order/tool assertions. Investigate nested-agent context-window failures without weakening success assertions. Commit/push authorization remains active after successful validation.",
       "timestamp": "2026-10-16T12:15:39Z"
+    },
+    {
+      "text": "Nested-agent reproduction: both T1/T2 fail in isolation with mandatory_payload_too_large. Fixtures use the ordinary configured-agent default model_max_context_tokens=5000; shared 414-character instruction adds mandatory prompt overhead. Correction will shorten the existing InputPrompt.system_instruction text without changing metadata meaning, roles, budgets, fixture scenarios or success assertions. Action reuse: extend existing renderer-owned instruction; no new operation/Action/generation path. Existing nested integration failures serve as red regressions.",
+      "timestamp": "2026-10-16T12:16:30Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[#834] Validate review coverage and prepare authorized landing",
   "type": "task",
-  "updated_at": "2026-10-16T12:15:39Z"
+  "updated_at": "2026-10-16T12:16:30Z"
 }
