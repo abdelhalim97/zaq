@@ -2,6 +2,7 @@
   "assignee": "Julien",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-10-16T20:22:19Z",
   "created": "2026-10-16T20:05:16Z",
   "description": "Read .opencode/agents/coverage-upper.md and policies; user approved code-review gate for PR #851 via question tool. Fresh mix coveralls.json with exact 600000ms timeout; only on success run mix coverup. Initial handoff is source-read-only: return precise gaps or blocker, do not change source/test behavior or delegate edits until parent reviews scope. Isolated scratch worktree per delegation rules.",
   "id": "zaq-o8o.7",
@@ -18,8 +19,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[zaq-o8o.7] Prompt defaults coverage handoff",
   "type": "task",
-  "updated_at": "2026-10-16T20:22:18Z"
+  "updated_at": "2026-10-16T20:22:19Z"
 }
