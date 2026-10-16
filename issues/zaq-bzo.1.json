@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "zaq-bzo.3"
+  ],
   "created": "2026-10-16T16:32:29Z",
   "description": "Keep Chromium/Firefox on Ubuntu; run WebKit on macos-15. Use pgvector/pgvector:pg18 on Linux and native PostgreSQL 18 + pgvector on macOS; reuse provision-test-database.exs postgres. Preserve suites, assertions, isolation and required QA aggregator. OS/architecture-specific caches and bounded native DB startup/cleanup. User explicitly approved DB scenario change in this session. No timing comparison. Validate workflow structure and shell syntax, mix q, and existing suites where environment allows.",
   "id": "zaq-bzo.1",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[zaq-bzo] Move WebKit to macOS and align E2E PostgreSQL",
   "type": "task",
-  "updated_at": "2026-10-16T16:32:29Z"
+  "updated_at": "2026-10-16T16:32:45Z"
 }
