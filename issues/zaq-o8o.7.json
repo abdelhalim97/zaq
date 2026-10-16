@@ -7,9 +7,15 @@
   "id": "zaq-o8o.7",
   "labels": [],
   "parent": "zaq-o8o",
+  "comments": [
+    {
+      "text": "2026-10-16 coverage handoff BLOCKED in isolated chore/prompt-defaults-coverage worktree at 9142ffbfe. Provisioned branch-specific zaq_test_chore_prompt_defaults_coverage via MIX_ENV=test mix ecto.create, mix db.extensions, mix ecto.migrate (all succeeded). Ran fresh MIX_ENV=test mix coveralls.json through Context Mode with exact 600000ms timeout; indexed output stops without an ExUnit completion summary/success metadata, after at least 15 failures (seed 330768; excluded :integration/:paradedb/:real_browser). Examples: image_dedup_crawler_test.exs:12 expects missing scratch .venv/bin/python3; offline_conversion_contract_test.exs:28 conversion cases lack markitdown/jdk4py/usable Java; disk_document_test.exs:195 returns :enoent instead of expected :disk_channel_config_not_found; person_conversation_source_integration_test.exs:53 receives 404 instead of 200. No successful fresh report: per Phase 6/coverage-upper do not inspect any existing report or run mix coverup. Changed-file percentages/uncovered lines and test ownership cannot yet be certified. No source/test edits or gap-fix delegation performed; parent should review blocker/scope before retry.",
+      "timestamp": "2026-10-16T20:17:40Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[zaq-o8o.7] Prompt defaults coverage handoff",
   "type": "task",
-  "updated_at": "2026-10-16T20:05:18Z"
+  "updated_at": "2026-10-16T20:17:40Z"
 }
