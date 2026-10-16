@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-10-16T14:39:19Z",
+  "description": "Regression-first test step. Reproduced the container failure in a separate named BEAM VM before production changes; baseline 3 failures. Additive tests only; existing test behavior unchanged.",
+  "id": "zaq-ozu.1",
+  "labels": [],
+  "parent": "zaq-ozu",
+  "priority": 2,
+  "status": "open",
+  "title": "[zaq-ozu] Verify named-node boot and topology option invariants",
+  "type": "task",
+  "updated_at": "2026-10-16T14:39:19Z"
+}
