@@ -37,11 +37,15 @@
     {
       "text": "Final mix precommit passed against the final changes with 900000ms budget: 735.1s, 17 doctests, 189 properties, 9690 tests, zero failures, one skipped (117 excluded); formatting/Credo/warnings-as-errors compile passed. User authorization to commit/push remains explicit and scoped to feature/issue-834-message-attribution; no merge authorized. Approved scoped coverage exception and individual test behavior changes recorded above. Proceeding to commit/push; keep task/epic open for PR delivery, no issue-834 resolution claim.",
       "timestamp": "2026-10-16T13:00:46Z"
+    },
+    {
+      "text": "Committed and pushed with explicit user authorization: 71ae4f74c fix(agent): preserve message authors and source timestamps. origin/feature/issue-834-message-attribution tracks upstream; working tree clean. Commit hooks (qf/docs/Credo/message) and push format hook passed. PR not created and merge not performed; task/epic remain open for PR delivery. Final precommit and scoped coverage results/exception recorded above.",
+      "timestamp": "2026-10-16T13:02:16Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[#834] Validate review coverage and prepare authorized landing",
   "type": "task",
-  "updated_at": "2026-10-16T13:00:46Z"
+  "updated_at": "2026-10-16T13:02:16Z"
 }
