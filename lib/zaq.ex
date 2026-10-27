@@ -1,4 +1,6 @@
 defmodule Zaq do
+  use Boundary, check: [in: false, out: false]
+
   @moduledoc """
   Zaq keeps the contexts that define your domain
   and business logic.
