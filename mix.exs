@@ -22,7 +22,12 @@ defmodule Zaq.MixProject do
         # This will use your ignore file
         ignore_warnings: ".dialyzer_ignore.exs"
       ],
-      compilers: [:phoenix_live_view] ++ Mix.compilers(),
+      compilers: extra_compilers(Mix.env()) ++ [:phoenix_live_view] ++ Mix.compilers(),
+      boundary: [
+        default: [
+          type: :relaxed
+        ]
+      ],
       listeners: [Phoenix.CodeReloader],
       test_coverage: [tool: ExCoveralls],
       docs: docs()
@@ -53,6 +58,9 @@ defmodule Zaq.MixProject do
       ]
     ]
   end
+
+  defp extra_compilers(env) when env in [:dev, :test], do: [:boundary]
+  defp extra_compilers(_env), do: []
 
   # Specifies which paths to compile per environment.
   defp elixirc_paths(:dev), do: ["lib", "lib/dev"]
@@ -179,6 +187,7 @@ defmodule Zaq.MixProject do
        override: true},
 
       # Dev/Test
+      {:boundary, "~> 0.11.0", runtime: false},
       {:credo, "~> 1.7.13", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40", only: [:dev, :docs], runtime: false},
       {:ex_dna, "~> 1.4", only: [:dev, :test], runtime: false},
